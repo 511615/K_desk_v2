@@ -12,6 +12,13 @@ if (-not (Test-Path -LiteralPath $Python)) {
 $env:KDESK_V2_ROOT = $Root.Path
 $env:KDESK_PROFILE = "dev"
 $env:KDESK_RUNTIME_DIR = $Runtime
+$env:KDESK_DATABASE = Join-Path $Runtime "kdesk.sqlite"
+$env:KDESK_QUEUE_DATABASE = Join-Path $Runtime "jobs.sqlite"
+$env:KDESK_ARTIFACT_DIR = Join-Path $Runtime "artifacts"
+$env:KDESK_UPLOAD_DIR = Join-Path $Runtime "uploads"
+$env:KDESK_LOG_DIR = $LogDir
+$env:KDESK_BOOTSTRAP_XLSX = Join-Path $Runtime "import\problematic_accounts.xlsx"
+$env:KDESK_LEGACY_TRADE_DATABASE = "D:\risk\output_data\account_trade_lookup\trades.sqlite"
 $env:KDESK_ACCOUNT_PORT = "8877"
 $env:KDESK_KLINE_PORT = "8866"
 $env:KDESK_UI_MODE = "vue"

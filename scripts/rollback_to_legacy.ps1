@@ -22,6 +22,11 @@ foreach ($required in @($V2Python, $LegacyLedger, $LegacyStart)) {
 $env:KDESK_PROFILE = "prod"
 $env:KDESK_V2_ROOT = $Root
 $env:KDESK_RUNTIME_DIR = $ProdRuntime
+$env:KDESK_DATABASE = Join-Path $ProdRuntime "kdesk.sqlite"
+$env:KDESK_QUEUE_DATABASE = Join-Path $ProdRuntime "jobs.sqlite"
+$env:KDESK_ARTIFACT_DIR = Join-Path $ProdRuntime "artifacts"
+$env:KDESK_UPLOAD_DIR = Join-Path $ProdRuntime "uploads"
+$env:KDESK_LOG_DIR = Join-Path $ProdRuntime "logs"
 & (Join-Path $Root "scripts\stop_prod.ps1")
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Export) | Out-Null

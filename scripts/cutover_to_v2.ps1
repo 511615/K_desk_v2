@@ -60,6 +60,13 @@ Get-ChildItem -LiteralPath $LegacyRoot -File -Recurse -ErrorAction SilentlyConti
 $env:KDESK_V2_ROOT = $Root
 $env:KDESK_PROFILE = "prod"
 $env:KDESK_RUNTIME_DIR = $ProdRuntime
+$env:KDESK_DATABASE = Join-Path $ProdRuntime "kdesk.sqlite"
+$env:KDESK_QUEUE_DATABASE = Join-Path $ProdRuntime "jobs.sqlite"
+$env:KDESK_ARTIFACT_DIR = Join-Path $ProdRuntime "artifacts"
+$env:KDESK_UPLOAD_DIR = Join-Path $ProdRuntime "uploads"
+$env:KDESK_LOG_DIR = Join-Path $ProdRuntime "logs"
+$env:KDESK_BOOTSTRAP_XLSX = Join-Path $ProdRuntime "import\problematic_accounts.xlsx"
+$env:KDESK_LEGACY_TRADE_DATABASE = "D:\risk\output_data\account_trade_lookup\trades.sqlite"
 $env:KDESK_ACCOUNT_PORT = "8777"
 $env:KDESK_KLINE_PORT = "8766"
 $env:KDESK_UI_MODE = "vue"
