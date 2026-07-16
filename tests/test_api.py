@@ -48,3 +48,26 @@ def test_account_validation_rejects_unsafe_path_data(tmp_path: Path) -> None:
     with TestClient(app) as client:
         response = client.post("/api/accounts/mark", json={"account": "../bad"})
         assert response.status_code == 400
+
+
+def test_job_polling_keeps_legacy_and_v2_contracts(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        created = app.state.database.create_job("toxic_check", {"account": "302360"})
+        app.state.database.update_job(
+            created["id"],
+            status="done",
+            progress=100,
+            result={
+                "status": "done",
+                "percent": 100,
+                "message": "Toxic 检测完成",
+                "result": {"account": "302360", "results": [{"type": "market_pushing", "score": 62.1}]},
+            },
+        )
+        payload = client.get(f"/api/toxic/jobs/{created['id']}").json()
+        assert payload["status"] == "done"
+        assert payload["progress"] == 100
+        assert payload["job"]["percent"] == 100
+        assert payload["job"]["message"] == "Toxic 检测完成"
+        assert payload["job"]["result"]["results"][0]["type"] == "market_pushing"

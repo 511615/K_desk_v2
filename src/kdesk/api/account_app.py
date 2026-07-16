@@ -39,6 +39,25 @@ def _frontend_file(settings: Settings, relative: str = "index.html") -> Path | N
     return None
 
 
+def _legacy_job_view(job: dict) -> dict:
+    """Expose a persistent job through the legacy page polling contract."""
+    stored_result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    view = dict(job)
+    percent = stored_result.get("percent", job.get("progress", 0))
+    events = job.get("events") if isinstance(job.get("events"), list) else []
+    last_event = events[-1].get("message", "") if events and isinstance(events[-1], dict) else ""
+    view["percent"] = min(max(int(percent or 0), 0), 100)
+    view["message"] = str(stored_result.get("message") or last_event or job.get("error") or "")
+    for key in ("elapsedSeconds", "cached", "chart", "summary", "results", "outputDir", "stage"):
+        if key in stored_result:
+            view[key] = stored_result[key]
+    if job.get("kind") == "toxic_check" and isinstance(stored_result.get("result"), dict):
+        view["result"] = stored_result["result"]
+    else:
+        view["result"] = stored_result
+    return view
+
+
 def _fallback_page(title: str, body: str) -> str:
     return f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>{title}</title><style>body{{font-family:Arial,'Microsoft YaHei',sans-serif;margin:40px;background:#07111f;color:#d9e7f5}}a{{color:#53b9ff}}.card{{max-width:760px;padding:24px;background:#0d1d31;border:1px solid #24415f;border-radius:10px}}</style></head><body><div class='card'>{body}</div></body></html>"""
 
@@ -329,7 +348,14 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         job = database.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="任务不存在")
-        return {"ok": True, **job}
+        legacy_job = _legacy_job_view(job)
+        return {
+            "ok": True,
+            **job,
+            "percent": legacy_job["percent"],
+            "message": legacy_job["message"],
+            "job": legacy_job,
+        }
 
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: str) -> dict:

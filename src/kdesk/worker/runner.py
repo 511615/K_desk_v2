@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -108,7 +109,12 @@ class Worker:
     def _kline_from_database(self, job: dict) -> dict:
         payload = job["payload"]
         legacy = self.legacy.module()
-        legacy.run_db_kline_job(job["id"], payload["account"], {key: payload.get(key, "") for key in ("platform", "server", "symbol", "start", "end")})
+        filters = {key: payload.get(key, "") for key in ("platform", "server", "symbol", "start", "end")}
+        self._run_legacy_monitored(
+            job,
+            lambda: legacy.run_db_kline_job(job["id"], payload["account"], filters),
+            lambda: legacy.get_kline_job(job["id"]),
+        )
         result = legacy.get_kline_job(job["id"])
         if result.get("status") != "done":
             raise RuntimeError(result.get("message") or "K线生成失败")
@@ -120,11 +126,44 @@ class Worker:
         mode = str(payload.get("mode") or "selected")
         type_ids = [str(item) for item in payload.get("types") or []]
         filters = {key: str(payload.get(key, "")) for key in ("platform", "server", "symbol", "start", "end")}
-        legacy.run_toxic_job(job["id"], payload["account"], mode, type_ids, filters)
+        self._run_legacy_monitored(
+            job,
+            lambda: legacy.run_toxic_job(job["id"], payload["account"], mode, type_ids, filters),
+            lambda: legacy.get_toxic_job(job["id"]),
+        )
         result = legacy.get_toxic_job(job["id"])
         if result.get("status") != "done":
             raise RuntimeError(result.get("message") or "Toxic 检测失败")
         return result
+
+    def _run_legacy_monitored(self, job: dict, target, snapshot) -> None:
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                target()
+            except BaseException as exc:  # Propagate worker-thread failures to the job runner.
+                failures.append(exc)
+
+        thread = threading.Thread(target=run, name=f"legacy-job-{job['id']}", daemon=True)
+        thread.start()
+        last_update: tuple[int, str, str] | None = None
+        while thread.is_alive():
+            current = snapshot() or {}
+            progress = min(max(int(current.get("percent") or 5), 5), 99)
+            message = str(current.get("message") or "任务执行中")
+            signature = (progress, message, str(current.get("status") or "running"))
+            if signature != last_update:
+                self.database.update_job(job["id"], progress=progress, event_message=message)
+                last_update = signature
+            thread.join(timeout=0.4)
+        thread.join()
+        if failures:
+            raise failures[0]
+        latest = self.database.get_job(job["id"])
+        if latest and latest.get("cancel_requested"):
+            self.database.update_job(job["id"], status="cancelled", event_message="任务已取消")
+            raise RuntimeError("任务已取消")
 
     def _push_discovery(self, job: dict) -> dict:
         payload = job["payload"]
