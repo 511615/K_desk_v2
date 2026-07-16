@@ -71,8 +71,8 @@ Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kde
 Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
 
 $workers = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*K_desk_v2*" -and
-    $_.CommandLine -like "*kdesk.worker.runner*" -and $_.CommandLine -like "*--profile prod*"
+    $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
+    $_.CommandLine -like "*--profile prod*"
 })
 if ($workers.Count -eq 0) {
     Start-KDeskProductionProcess -Name "worker" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod")

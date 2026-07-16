@@ -6,7 +6,7 @@ foreach ($port in @(8777, 8766)) {
     $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
     foreach ($listener in $listeners) {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
-        if ($process.CommandLine -like "*$Root*" -and $process.CommandLine -like "*$expectedModule*") {
+        if ($process.CommandLine -like "*$expectedModule*") {
             Stop-Process -Id $listener.OwningProcess -Force
         } else {
             throw "Refusing to stop port $port because it is not owned by K_desk_v2 $expectedModule"
@@ -15,8 +15,8 @@ foreach ($port in @(8777, 8766)) {
 }
 
 $workers = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*$Root*" -and
-    $_.CommandLine -like "*kdesk.worker.runner*" -and $_.CommandLine -like "*--profile prod*"
+    $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
+    $_.CommandLine -like "*--profile prod*"
 })
 foreach ($worker in $workers) {
     Stop-Process -Id $worker.ProcessId -Force
