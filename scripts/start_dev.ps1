@@ -57,10 +57,11 @@ Start-KDeskProcess -Name "account-web" -Port 8877 -Arguments @("-m", "uvicorn", 
 Start-KDeskProcess -Name "kline-web" -Port 8866 -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8866", "--workers", "1")
 
 $worker = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*K_desk_v2*" -and $_.CommandLine -like "*kdesk.worker.runner*"
+    $_.Name -eq "python.exe" -and $_.CommandLine -like "*K_desk_v2*" -and
+    $_.CommandLine -like "*kdesk.worker.runner*" -and $_.CommandLine -like "*--profile dev*"
 }
 if (-not $worker) {
-    Start-KDeskProcess -Name "worker" -Arguments @("-m", "kdesk.worker.runner")
+    Start-KDeskProcess -Name "worker" -Arguments @("-m", "kdesk.worker.runner", "--profile", "dev")
 }
 
 Start-Sleep -Seconds 2

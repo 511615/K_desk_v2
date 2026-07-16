@@ -300,13 +300,48 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         job = database.create_job("kline_from_database", clean_payload, idempotency_key=key)
         return {"ok": True, "job": job}
 
+    @app.post("/api/push-discovery/start")
+    def start_push_discovery(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            days = int(payload.get("days", 7))
+            max_orders = int(payload.get("maxOrders", 200))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="扫描参数格式无效") from exc
+        if not 1 <= days <= 30:
+            raise HTTPException(status_code=400, detail="扫描天数必须在1到30之间")
+        if not 20 <= max_orders <= 1000:
+            raise HTTPException(status_code=400, detail="最大订单数必须在20到1000之间")
+        clean_payload = {
+            "days": days,
+            "maxOrders": max_orders,
+            "smallOrderPriority": min(max_orders, 200),
+            "deepLimit": 50,
+            "workers": 4,
+        }
+        key = "push-discovery:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
+        job = database.create_job("push_discovery", clean_payload, idempotency_key=key, max_attempts=1)
+        return {"ok": True, "job": job}
+
     @app.get("/api/kline/jobs/{job_id}")
     @app.get("/api/toxic/jobs/{job_id}")
+    @app.get("/api/push-discovery/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
         job = database.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="任务不存在")
         return {"ok": True, **job}
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: str) -> dict:
+        job = database.request_job_cancel(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        return {"ok": True, **job}
+
+    @app.get("/api/toxic/check-types")
+    def toxic_check_types() -> dict:
+        types = getattr(legacy.module(), "TOXIC_CHECK_TYPES", [])
+        return {"ok": True, "types": types}
 
     @app.post("/api/accounts/by-login/{login}/toxic-checks")
     def toxic_checks(login: str, payload: dict = Body(default_factory=dict)) -> dict:

@@ -14,7 +14,9 @@ foreach ($port in @(8877, 8866)) {
 }
 
 $workers = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*K_desk_v2*" -and $_.CommandLine -like "*kdesk.worker.runner*"
+    $_.Name -eq "python.exe" -and $_.CommandLine -like "*K_desk_v2*" -and
+    $_.CommandLine -like "*kdesk.worker.runner*" -and
+    ($_.CommandLine -like "*--profile dev*" -or $_.CommandLine -notlike "*--profile*")
 }
 foreach ($worker in $workers) {
     Stop-Process -Id $worker.ProcessId -Force

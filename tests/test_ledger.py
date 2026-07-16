@@ -58,6 +58,20 @@ def test_queued_job_can_be_cancelled(tmp_path: Path) -> None:
     assert database.claim_next_job() is None
 
 
+def test_job_idempotency_only_deduplicates_active_runs(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    first = database.create_job("push_discovery", {"days": 7}, idempotency_key="push:7")
+    duplicate = database.create_job("push_discovery", {"days": 7}, idempotency_key="push:7")
+    assert duplicate["id"] == first["id"]
+
+    claimed = database.claim_next_job()
+    assert claimed is not None
+    database.update_job(claimed["id"], status="done", progress=100, result={"ok": True})
+    rerun = database.create_job("push_discovery", {"days": 7}, idempotency_key="push:7")
+    assert rerun["id"] != first["id"]
+
+
 def test_ledger_service_batch_import_preview_and_delete(tmp_path: Path) -> None:
     source_database = Database(tmp_path / "source.sqlite")
     source_database.create_schema()

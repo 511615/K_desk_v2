@@ -48,7 +48,16 @@ class Worker:
             line = process.stdout.readline()
             if line:
                 output.append(line)
-                self.database.update_job(job_id, event_message=line.rstrip())
+                event_message = line.rstrip()
+                progress = None
+                if event_message.startswith("PROGRESS "):
+                    try:
+                        payload = json.loads(event_message[len("PROGRESS ") :])
+                        progress = min(max(int(payload.get("percent", 0)), 0), 99)
+                        event_message = str(payload.get("message") or payload.get("stage") or event_message)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        progress = None
+                self.database.update_job(job_id, progress=progress, event_message=event_message)
             if process.poll() is not None:
                 output.extend(process.stdout.readlines())
                 break
@@ -117,12 +126,59 @@ class Worker:
             raise RuntimeError(result.get("message") or "Toxic 检测失败")
         return result
 
+    def _push_discovery(self, job: dict) -> dict:
+        payload = job["payload"]
+        output_root = (self.settings.runtime_dir / "push_discovery").resolve()
+        script = self.settings.legacy_root / "scripts" / "run_platform_push_discovery.py"
+        command = [
+            sys.executable,
+            str(script),
+            "--days", str(payload["days"]),
+            "--max-orders", str(payload["maxOrders"]),
+            "--small-order-priority", str(payload["smallOrderPriority"]),
+            "--deep-limit", str(payload["deepLimit"]),
+            "--workers", str(payload["workers"]),
+            "--output-root", str(output_root),
+        ]
+        output = self._run_process(job["id"], command, timeout=7200)
+        matches = re.findall(r"^RESULT\s+(.+?summary\.json)\s*$", output, flags=re.MULTILINE)
+        if not matches:
+            raise RuntimeError("全平台扫描未返回结果文件")
+        summary_path = Path(matches[-1].strip()).resolve()
+        try:
+            summary_path.relative_to(output_root)
+        except ValueError as exc:
+            raise RuntimeError("扫描结果路径不在开发运行目录") from exc
+        if not summary_path.is_file():
+            raise RuntimeError("扫描结果文件不存在")
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        deep_path = summary_path.parent / "deep_results.json"
+        deep_results = json.loads(deep_path.read_text(encoding="utf-8")) if deep_path.is_file() else []
+        results = [{
+            "deepRank": int(item.get("deepRank") or 0),
+            "platform": str(item.get("platform") or ""),
+            "server": str(item.get("server") or ""),
+            "account": str(item.get("login") or ""),
+            "orders": int(item.get("exactOrders") or item.get("closedOrders") or 0),
+            "periodNetRaw": float(item.get("periodNetRaw") or 0),
+            "initialScore": float(item.get("initialScore") or 0),
+            "deepScore": float(item.get("deepScore") or 0),
+            "level": str(item.get("deepLevel") or ""),
+            "tickAvailable": bool(item.get("tickAvailable")),
+            "coordinatedMatchedRatio": float(item.get("coordinatedMatchedRatio") or 0),
+            "headline": str(item.get("headline") or ""),
+            "routeReasons": list(item.get("routeReasons") or []),
+            "suspectedAccomplices": list(item.get("suspectedAccomplices") or []),
+        } for item in deep_results[:200]]
+        return {"summary": summary, "results": results, "outputDir": str(summary_path.parent)}
+
     def process(self, job: dict) -> None:
         handlers = {
             "kline_inspect": self._kline_inspect,
             "kline_generate": self._kline_generate,
             "kline_from_database": self._kline_from_database,
             "toxic_check": self._toxic_check,
+            "push_discovery": self._push_discovery,
         }
         handler = handlers.get(job["kind"])
         if handler is None:
@@ -167,8 +223,11 @@ class Worker:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--profile", choices=("dev", "test", "prod"), default="")
     args = parser.parse_args()
-    config = default_settings
+    if args.profile:
+        os.environ["KDESK_PROFILE"] = args.profile
+    config = Settings.load() if args.profile else default_settings
     config.ensure_runtime()
     Worker(config).run(once=args.once)
 

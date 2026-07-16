@@ -293,7 +293,7 @@ class Database:
                 existing = session.scalar(
                     select(JobRunRow).where(
                         JobRunRow.idempotency_key == idempotency_key,
-                        JobRunRow.status.in_(["queued", "running", "done"]),
+                        JobRunRow.status.in_(["queued", "running"]),
                     ).order_by(JobRunRow.created_at.desc())
                 )
                 if existing:
