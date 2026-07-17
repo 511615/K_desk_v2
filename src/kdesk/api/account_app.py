@@ -10,12 +10,13 @@ from urllib.parse import unquote
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
 from kdesk.application.ledger_service import LedgerService
+from kdesk.build_info import build_metadata
 from kdesk.infrastructure.database import Database
 from kdesk.infrastructure.excel_io import export_audit_json
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
@@ -30,6 +31,21 @@ def _safe_login(login: str) -> str:
     if not login or len(login) > 64 or not re.fullmatch(r"[0-9A-Za-z_.-]+", login):
         raise HTTPException(status_code=400, detail="账号格式无效")
     return login
+
+
+def _payload_bool(payload: dict, key: str, default: bool) -> bool:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    raise ValueError(f"{key} 必须是布尔值")
 
 
 def _frontend_file(settings: Settings, relative: str = "index.html") -> Path | None:
@@ -48,6 +64,10 @@ def _legacy_job_view(job: dict) -> dict:
     last_event = events[-1].get("message", "") if events and isinstance(events[-1], dict) else ""
     view["percent"] = min(max(int(percent or 0), 0), 100)
     view["message"] = str(stored_result.get("message") or last_event or job.get("error") or "")
+    if not view["message"] and job.get("status") == "queued":
+        view["message"] = "已提交，等待后台执行"
+    elif not view["message"] and job.get("status") == "running":
+        view["message"] = "任务执行中"
     for key in ("elapsedSeconds", "cached", "chart", "summary", "results", "outputDir", "stage"):
         if key in stored_result:
             view[key] = stored_result[key]
@@ -125,7 +145,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         return {
             "ok": True,
             "service": "K_desk v2",
-            "version": __version__,
+            **build_metadata(config),
             "profile": config.profile,
             "ports": {"account": config.account_port, "kline": config.kline_port},
             "storage": {"database": str(config.database_path), "artifacts": str(config.artifact_dir)},
@@ -142,14 +162,9 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         return HTMLResponse(_fallback_page("K_desk v2", "<h1>K_desk v2</h1><p>前端尚未构建。兼容工作台：<a href='/?legacy=1'>打开</a></p>"))
 
     @app.get("/account/{login}", response_class=HTMLResponse)
-    async def account_page(login: str, request: Request):
+    async def account_page(login: str):
         login = _safe_login(login)
-        if request.query_params.get("legacy") == "1" or config.ui_mode == "legacy":
-            return HTMLResponse(await run_in_threadpool(legacy.account_page, login))
-        index = _frontend_file(config)
-        if index:
-            return FileResponse(index)
-        return RedirectResponse(f"/account/{login}?legacy=1")
+        return HTMLResponse(await run_in_threadpool(legacy.account_page, login))
 
     @app.get("/api/accounts")
     def accounts() -> dict:
@@ -250,6 +265,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def copy_group_profit(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_copy_group_profit_payload", _safe_login(login), legacy_filters(request.query_params))
 
+    @app.get("/api/accounts/by-login/{login}/ea-comment-profit")
+    async def ea_comment_profit(login: str, request: Request):
+        return await run_in_threadpool(legacy.call, "account_ea_comment_profit_payload", _safe_login(login), legacy_filters(request.query_params))
+
     @app.get("/api/accounts/by-login/{login}/login-ips")
     async def login_ips(login: str):
         return await run_in_threadpool(legacy.call, "account_login_ips_payload", _safe_login(login))
@@ -292,6 +311,31 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def account_logs(account: str, start: str, end: str):
         return await run_in_threadpool(legacy.call, "account_logs_payload", _safe_login(account), start, end)
 
+    @app.get("/api/rebate-churning/accounts/{account}")
+    async def rebate_churning_account_audit(
+        account: str,
+        start: str = "",
+        end: str = "",
+        environment: str = "",
+        serverCode: str = "",
+    ):
+        try:
+            return await run_in_threadpool(
+                legacy.call,
+                "rebate_churning_account_audit_payload",
+                _safe_login(account),
+                start,
+                end,
+                environment,
+                serverCode,
+            )
+        except ValueError as exc:
+            candidates = getattr(exc, "candidates", None)
+            payload = {"ok": False, "error": str(exc)}
+            if candidates:
+                payload["candidates"] = candidates
+            return JSONResponse(payload, status_code=409 if candidates else 400)
+
     @app.get("/api/hierarchy-products")
     async def hierarchy_products():
         return await run_in_threadpool(legacy.call, "hierarchy_products_payload")
@@ -323,18 +367,47 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     def start_push_discovery(payload: dict = Body(default_factory=dict)) -> dict:
         try:
             days = int(payload.get("days", 7))
+            deep_limit = int(payload.get("deepLimit", 50))
             max_orders = int(payload.get("maxOrders", 200))
+            min_max_lot = float(payload.get("minMaxLot", 0.01))
+            max_deposit = float(payload.get("maxDeposit", 2000))
+            max_active_ratio = float(payload.get("maxActiveRatio", 30))
+            require_period_profit = _payload_bool(payload, "requirePeriodProfit", True)
+            limit_orders = _payload_bool(payload, "limitOrders", True)
+            require_max_lot = _payload_bool(payload, "requireMaxLot", True)
+            require_total_profit = _payload_bool(payload, "requireTotalProfit", True)
+            limit_deposit = _payload_bool(payload, "limitDeposit", True)
+            limit_active_ratio = _payload_bool(payload, "limitActiveRatio", True)
+            exclude_handled = _payload_bool(payload, "excludeHandled", True)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="扫描参数格式无效") from exc
         if not 1 <= days <= 30:
             raise HTTPException(status_code=400, detail="扫描天数必须在1到30之间")
-        if not 20 <= max_orders <= 1000:
-            raise HTTPException(status_code=400, detail="最大订单数必须在20到1000之间")
+        if not 1 <= deep_limit <= 300:
+            raise HTTPException(status_code=400, detail="深检账号上限必须在1到300之间")
+        if not 1 <= max_orders <= 1000:
+            raise HTTPException(status_code=400, detail="最大订单数必须在1到1000之间")
+        if not 0 <= min_max_lot <= 100_000:
+            raise HTTPException(status_code=400, detail="最大手数筛选值必须在0到100000之间")
+        if not 0 <= max_deposit <= 10_000_000:
+            raise HTTPException(status_code=400, detail="累计入金上限必须在0到10000000之间")
+        if not 0 <= max_active_ratio <= 100:
+            raise HTTPException(status_code=400, detail="活跃天数占比必须在0到100之间")
         clean_payload = {
             "days": days,
             "maxOrders": max_orders,
-            "smallOrderPriority": min(max_orders, 200),
-            "deepLimit": 50,
+            "requirePeriodProfit": require_period_profit,
+            "limitOrders": limit_orders,
+            "requireMaxLot": require_max_lot,
+            "minMaxLot": min_max_lot,
+            "requireTotalProfit": require_total_profit,
+            "limitDeposit": limit_deposit,
+            "maxDeposit": max_deposit,
+            "limitActiveRatio": limit_active_ratio,
+            "maxActiveRatio": max_active_ratio,
+            "excludeHandled": exclude_handled,
+            "smallOrderPriority": min(max_orders, 200) if limit_orders else 200,
+            "deepLimit": deep_limit,
             "workers": 4,
         }
         key = "push-discovery:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)

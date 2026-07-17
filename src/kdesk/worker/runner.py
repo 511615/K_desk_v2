@@ -17,10 +17,17 @@ from kdesk.settings import settings as default_settings
 
 
 class Worker:
-    def __init__(self, settings: Settings):
+    QUEUE_KINDS = {
+        "interactive": ("kline_inspect", "kline_generate", "kline_from_database", "toxic_check"),
+        "discovery": ("push_discovery",),
+    }
+
+    def __init__(self, settings: Settings, *, queue: str = "all"):
         self.settings = settings
         self.database = Database(settings.database_path)
         self.legacy = LegacyBridge(settings)
+        self.queue = queue
+        self.kinds = self.QUEUE_KINDS.get(queue)
         self.running = True
 
     def _generator(self) -> Path:
@@ -174,11 +181,25 @@ class Worker:
             str(script),
             "--days", str(payload["days"]),
             "--max-orders", str(payload["maxOrders"]),
+            "--min-max-lot", str(payload.get("minMaxLot", 0.01)),
+            "--max-deposit", str(payload.get("maxDeposit", 2000)),
+            "--max-active-ratio", str(payload.get("maxActiveRatio", 30)),
             "--small-order-priority", str(payload["smallOrderPriority"]),
             "--deep-limit", str(payload["deepLimit"]),
             "--workers", str(payload["workers"]),
             "--output-root", str(output_root),
         ]
+        boolean_options = (
+            ("requirePeriodProfit", "require-period-profit"),
+            ("limitOrders", "limit-orders"),
+            ("requireMaxLot", "require-max-lot"),
+            ("requireTotalProfit", "require-total-profit"),
+            ("limitDeposit", "limit-deposit"),
+            ("limitActiveRatio", "limit-active-ratio"),
+            ("excludeHandled", "exclude-handled"),
+        )
+        for payload_key, option_name in boolean_options:
+            command.append(f"--{option_name}" if payload.get(payload_key, True) else f"--no-{option_name}")
         output = self._run_process(job["id"], command, timeout=7200)
         matches = re.findall(r"^RESULT\s+(.+?summary\.json)\s*$", output, flags=re.MULTILINE)
         if not matches:
@@ -193,22 +214,45 @@ class Worker:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         deep_path = summary_path.parent / "deep_results.json"
         deep_results = json.loads(deep_path.read_text(encoding="utf-8")) if deep_path.is_file() else []
-        results = [{
-            "deepRank": int(item.get("deepRank") or 0),
-            "platform": str(item.get("platform") or ""),
-            "server": str(item.get("server") or ""),
-            "account": str(item.get("login") or ""),
-            "orders": int(item.get("exactOrders") or item.get("closedOrders") or 0),
-            "periodNetRaw": float(item.get("periodNetRaw") or 0),
-            "initialScore": float(item.get("initialScore") or 0),
-            "deepScore": float(item.get("deepScore") or 0),
-            "level": str(item.get("deepLevel") or ""),
-            "tickAvailable": bool(item.get("tickAvailable")),
-            "coordinatedMatchedRatio": float(item.get("coordinatedMatchedRatio") or 0),
-            "headline": str(item.get("headline") or ""),
-            "routeReasons": list(item.get("routeReasons") or []),
-            "suspectedAccomplices": list(item.get("suspectedAccomplices") or []),
-        } for item in deep_results[:200]]
+        results = []
+        for item in deep_results[:200]:
+            suspected = item.get("suspectedPushIntervals") or {}
+            results.append({
+                "deepRank": int(item.get("deepRank") or 0),
+                "platform": str(item.get("platform") or ""),
+                "server": str(item.get("server") or ""),
+                "account": str(item.get("login") or ""),
+                "orders": int(item.get("exactOrders") or item.get("closedOrders") or 0),
+                "maxLot": float(item.get("maxLot") or 0),
+                "deepOrders": int(item.get("deepOrders") or item.get("exactOrders") or 0),
+                "deepAnalysisOrders": int(item.get("deepAnalysisOrders") or item.get("analysisOrders") or 0),
+                "deepScope": str(item.get("deepScope") or "window"),
+                "periodNetRaw": float(item.get("periodNetRaw") or 0),
+                "periodNet": float(item.get("periodNet") or 0),
+                "totalNet": float(item.get("totalNet") or 0),
+                "depositTotal": float(item.get("depositTotal") or 0),
+                "activeDays": int(item.get("activeDays") or 0),
+                "registrationDays": int(item.get("registrationDays") or 0),
+                "activeRatio": float(item.get("activeRatio") or 0),
+                "currency": str(item.get("currency") or ""),
+                "suspectedIntervalCount": int(suspected.get("intervalCount") or 0),
+                "suspectedIntervalOrders": int(suspected.get("orders") or 0),
+                "suspectedIntervalOrderRatio": float(suspected.get("orderRatio") or 0),
+                "suspectedIntervalGrossProfit": float(suspected.get("grossProfit") or 0),
+                "suspectedIntervalNetProfit": float(suspected.get("netProfit") or 0),
+                "suspectedIntervalCosts": float(suspected.get("costs") or 0),
+                "suspectedIntervalBasis": str(suspected.get("basis") or "none"),
+                "suspectedIntervalConfirmed": bool(suspected.get("confirmed")),
+                "initialScore": float(item.get("initialScore") or 0),
+                "deepScore": float(item.get("deepScore") or 0),
+                "level": str(item.get("deepLevel") or ""),
+                "scoreBasis": dict(item.get("scoreBasis") or {}),
+                "tickAvailable": bool(item.get("tickAvailable")),
+                "coordinatedMatchedRatio": float(item.get("coordinatedMatchedRatio") or 0),
+                "headline": str(item.get("headline") or ""),
+                "routeReasons": list(item.get("routeReasons") or []),
+                "suspectedAccomplices": list(item.get("suspectedAccomplices") or []),
+            })
         return {"summary": summary, "results": results, "outputDir": str(summary_path.parent)}
 
     def process(self, job: dict) -> None:
@@ -231,9 +275,9 @@ class Worker:
 
     def run(self, *, once: bool = False, poll_seconds: float = 0.7) -> None:
         self.database.create_schema()
-        self.database.recover_interrupted_jobs()
+        self.database.recover_interrupted_jobs(kinds=self.kinds)
         while self.running:
-            job = self.database.claim_next_job()
+            job = self.database.claim_next_job(kinds=self.kinds)
             if not job:
                 if once:
                     return
@@ -263,12 +307,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--profile", choices=("dev", "test", "prod"), default="")
+    parser.add_argument("--queue", choices=("all", "interactive", "discovery"), default="all")
     args = parser.parse_args()
     if args.profile:
         os.environ["KDESK_PROFILE"] = args.profile
     config = Settings.load() if args.profile else default_settings
     config.ensure_runtime()
-    Worker(config).run(once=args.once)
+    Worker(config, queue=args.queue).run(once=args.once)
 
 
 if __name__ == "__main__":

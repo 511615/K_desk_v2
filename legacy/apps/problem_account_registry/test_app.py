@@ -167,15 +167,61 @@ class HierarchyNetDepositTests(unittest.TestCase):
 
 
 class MoneyScalingTests(unittest.TestCase):
-    def test_ac_mt5_sources_cover_gb_and_cn(self):
+    def test_ac_mt5_sources_cover_gb_cn_and_cn_live3(self):
         sources = {source["name"]: source["schema"] for source in app.MYSQL_SOURCES}
         self.assertEqual(sources["AC GB MT5"], "int_sass_crm_ac_mt5_live_new")
         self.assertEqual(sources["AC CN MT5"], "sass_crm_ac_mt5_live")
+        self.assertEqual(sources["AC CN MT5 live3"], "sass_crm_ac_mt5_live3")
+        live3 = next(source for source in app.MYSQL_SOURCES if source["name"] == "AC CN MT5 live3")
+        self.assertEqual(app.source_crm_routes(live3), [
+            {"schema": "sass_crm_ac", "mt_server_code": "3"},
+        ])
 
-    def test_ac_mt4_uses_crm_server_code_for_rebates(self):
-        source = next(source for source in app.MYSQL_SOURCES if source["name"] == "AC MT4")
-        self.assertEqual(source["crm_schema"], "sass_crm_ac")
-        self.assertEqual(source["mt_server_code"], "2")
+    def test_rebate_routes_are_isolated_for_shared_trade_schemas(self):
+        sources = {source["name"]: source for source in app.MYSQL_SOURCES}
+        self.assertEqual(app.source_crm_routes(sources["AC MT4"]), [
+            {"schema": "sass_crm_ac", "mt_server_code": "2"},
+        ])
+        self.assertEqual(app.source_crm_routes(sources["AC GB MT4"]), [
+            {"schema": "int_sass_crm_ac", "mt_server_code": "2"},
+        ])
+        self.assertEqual(app.source_crm_routes(sources["DBG MT5"]), [
+            {"schema": "crm_cn", "mt_server_code": "4"},
+        ])
+        self.assertEqual(app.source_crm_routes(sources["DBG GB MT5"]), [
+            {"schema": "crm_vn", "mt_server_code": "2"},
+        ])
+        self.assertEqual(app.source_crm_routes(sources["DBG MT4 CN2"]), [
+            {"schema": "crm_cn", "mt_server_code": "3"},
+        ])
+
+    def test_account_rebate_sums_all_configured_crm_routes(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {"RebateRows": 3, "RebateAmount": "12.50"},
+            {"RebateRows": 2, "RebateAmount": "7.25"},
+        ]
+        rows, amount = app.query_account_rebate(cursor, {
+            "crm_routes": [
+                {"schema": "crm_cn", "mt_server_code": "4"},
+                {"schema": "crm_vn", "mt_server_code": "2"},
+            ],
+        }, "2012060")
+
+        self.assertEqual(rows, 5)
+        self.assertEqual(amount, 19.75)
+        self.assertIn("`crm_cn`.`rebate_task_detail`", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("`crm_vn`.`rebate_task_detail`", cursor.execute.call_args_list[1].args[0])
+
+    def test_source_account_route_rejects_wrong_crm_server(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        source = {"account_route": {"schema": "crm_cn", "mt_server_code": "4"}}
+
+        self.assertFalse(app.source_account_exists(cursor, source, "10002"))
+        sql, args = cursor.execute.call_args.args
+        self.assertIn("`crm_cn`.`mt_users_account`", sql)
+        self.assertEqual(args, (10002, "4"))
 
     @staticmethod
     def deals():
@@ -246,7 +292,7 @@ class AccountLookupPerformanceTests(unittest.TestCase):
              patch.object(app, "TRADE_DB_SOURCE", "mysql"):
             matches = app.account_lookup_databases("532573")
         self.assertEqual([(row["latestSource"]["platform"], row["latestSource"]["server"]) for row in matches], [
-            ("MT5", "AC GB MT5"), ("MT4", "AC MT4"),
+            ("MT5", "AC GB MT5"), ("MT4", "AC CN MT4"),
         ])
 
     def test_detail_scopes_source_and_reuses_rows_without_detail_filters(self):
@@ -283,6 +329,36 @@ class AccountLookupPerformanceTests(unittest.TestCase):
         self.assertEqual(payload["workflowStatus"], "观察中")
         self.assertEqual(payload["comprehensiveProfit"], 37918.02)
         self.assertEqual(payload["currency"], "USD")
+
+    def test_lookup_finance_old_ac_mt4_alias_uses_server_resolved_from_rows(self):
+        cn_source = {"name": "AC MT4", "platform": "MT4", "server": "AC CN MT4", "aliases": ["AC MT4"], "kind": "mt4_trades"}
+        gb_source = {"name": "AC GB MT4", "platform": "MT4", "server": "AC GB MT4", "kind": "mt4_trades"}
+        trade = {"data_source": "mysql", "platform": "MT4", "server": "AC GB MT4", "profit": 10}
+        finance = {"comprehensiveProfit": 243.38, "displayCurrency": "USD"}
+        with patch.object(app, "MYSQL_SOURCES", [cn_source, gb_source]), \
+             patch.object(app, "query_db_trades", return_value=[trade]), \
+             patch.object(app, "query_mysql_trade_costs", return_value=None), \
+             patch.object(app, "query_mt4_finance_panel", return_value=finance) as finance_query, \
+             patch.object(app, "query_mt4_database_statuses", return_value={"5010772": "Enabled"}), \
+             patch.object(app, "ledger_record_for_login", return_value=None):
+            app.account_lookup_finance_payload("5010772", "MT4", "AC MT4")
+
+        finance_query.assert_called_once_with(gb_source, "5010772", [trade], unittest.mock.ANY)
+
+    def test_lookup_finance_old_dbg_mt5_alias_uses_server_resolved_from_rows(self):
+        cn_source = {"name": "DBG MT5", "platform": "MT5", "server": "DBG CN MT5", "aliases": ["DBG MT5"], "kind": "mt5_deals"}
+        gb_source = {"name": "DBG GB MT5", "platform": "MT5", "server": "DBG GB MT5", "kind": "mt5_deals"}
+        trade = {"data_source": "mysql", "platform": "MT5", "server": "DBG GB MT5", "profit": 10}
+        finance = {"comprehensiveProfit": 15.25, "displayCurrency": "USD"}
+        with patch.object(app, "MYSQL_SOURCES", [cn_source, gb_source]), \
+             patch.object(app, "query_db_trades", return_value=[trade]), \
+             patch.object(app, "query_mysql_trade_costs", return_value=None), \
+             patch.object(app, "query_mt5_finance_panel", return_value=finance) as finance_query, \
+             patch.object(app, "query_mt5_database_statuses", return_value={"3067746": "Enabled"}), \
+             patch.object(app, "ledger_record_for_login", return_value=None):
+            app.account_lookup_finance_payload("3067746", "MT5", "DBG MT5")
+
+        finance_query.assert_called_once_with(gb_source, "3067746", [trade], unittest.mock.ANY)
 
 
 class TradeMetricsTests(unittest.TestCase):
@@ -484,6 +560,25 @@ class RiskPanelTests(unittest.TestCase):
         self.assertEqual(result["depositTotal"], 1000)
         self.assertEqual(result["withdrawalTotal"], 250)
 
+    def test_classifies_riskdash_cashflow_prefixes(self):
+        mt5 = app.classify_mt5_cashflows([
+            {"Action": 2, "Profit": 100, "Comment": "CRM-DP-NePayV2-1"},
+            {"Action": 2, "Profit": -40, "Comment": "CRM-CW123"},
+        ])
+        self.assertEqual(mt5["netDeposit"], 60)
+        self.assertEqual(mt5["depositTotal"], 100)
+        self.assertEqual(mt5["withdrawalTotal"], 40)
+
+        mt4 = app.classify_mt4_cashflows([
+            {"CMD": 6, "PROFIT": 100, "COMMENT": "DEP-1"},
+            {"CMD": 6, "PROFIT": 1.65, "COMMENT": "CPS_260525"},
+            {"CMD": 6, "PROFIT": 2.79, "COMMENT": "CCB-Reward"},
+        ])
+        self.assertEqual(mt4["netDeposit"], 100)
+        self.assertEqual(mt4["compensation"], 1.65)
+        self.assertEqual(mt4["negativeBalanceClear"], 2.79)
+        self.assertEqual(mt4["reward"], 0)
+
     def test_cashflow_timing_measures_withdrawal_after_trading(self):
         cashflows = {
             "depositTotal": 5000, "withdrawalTotal": 3500, "depositCount": 1, "withdrawalCount": 1,
@@ -594,18 +689,43 @@ class OrderListTests(unittest.TestCase):
             {"account": "700001", "platform": "MT5", "server": "Live", "ticket": "348815929", "matchedOrderIds": ["348815929"], "time": "2026-07-01 10:00:00", "symbol": "XAUUSD", "comment": "source"},
             {"account": "700001", "platform": "MT5", "server": "Live", "ticket": "348821201", "matchedOrderIds": ["348821201"], "time": "2026-07-01 10:05:00", "symbol": "XAUUSD", "comment": "source"},
         ]
+        follower_rows = [
+            {"account": "700002", "platform": "MT5", "server": "Live", "ticket": "5001", "matchedSourceOrderIds": ["348815929"], "openTime": "2026-07-01 10:00:01", "closeTime": "2026-07-01 10:01:01", "symbol": "XAUUSD", "volume": 0.2, "grossProfit": 12, "commission": -1, "swap": 0, "taxes": 0, "netProfit": 11, "currency": "USD", "displayCurrency": "USD"},
+            {"account": "700003", "platform": "MT5", "server": "Live", "ticket": "5002", "matchedSourceOrderIds": ["348815929", "348821201"], "openTime": "2026-07-01 10:00:02", "closeTime": "2026-07-01 10:01:02", "symbol": "XAUUSD", "volume": 0.3, "grossProfit": -4, "commission": -1, "swap": -0.5, "taxes": 0, "netProfit": -5.5, "currency": "USD", "displayCurrency": "USD"},
+        ]
         with patch.object(app, "query_db_trades", return_value=copied_rows), \
              patch.object(app, "MYSQL_SOURCES", [source]), \
-             patch.object(app, "query_copy_origin_source", return_value=candidates) as origin_query:
+             patch.object(app, "query_copy_origin_source", return_value=candidates) as origin_query, \
+             patch.object(app, "query_copy_followers_source", return_value={"rows": follower_rows, "sourceOrdersScanned": 2, "sourceOrdersTruncated": False, "candidateRowsTruncated": False}):
             payload = app.account_copy_origins_payload("700002", {"platform": "MT5", "server": "Live"})
 
         self.assertTrue(payload["detected"])
         self.assertEqual(payload["primaryOrigin"]["account"], "700001")
         self.assertEqual(payload["primaryOrigin"]["matchedOrders"], 2)
         self.assertEqual(payload["primaryOrigin"]["sampleOrderIds"], ["348815929", "348821201"])
+        self.assertEqual(len(payload["primaryOrigin"]["sourceOrders"]), 2)
         self.assertEqual(payload["primaryOrigin"]["orders"], 1)
         self.assertEqual(payload["primaryOrigin"]["copyOrderRatio"], 100)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["accounts"], 2)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["orders"], 2)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["netProfit"], 5.5)
+        self.assertTrue(payload["primaryOrigin"]["followers"][0]["isCurrentAccount"])
+        self.assertEqual(payload["primaryOrigin"]["followers"][1]["matchedSourceOrders"], 2)
         origin_query.assert_called_once_with(source, ["348815929", "348821201"])
+
+    def test_copy_source_windows_are_hour_bounded_and_limited(self):
+        orders = [
+            {"orderId": "100", "time": "2026-07-01 10:00:00"},
+            {"orderId": "101", "time": "2026-07-01 10:30:00"},
+            {"orderId": "102", "time": "2026-07-01 11:00:00"},
+        ]
+        windows, truncated = app._copy_source_windows(orders, limit=2)
+
+        self.assertTrue(truncated)
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0][2], {"100", "101"})
+        self.assertEqual(windows[0][0].strftime("%H:%M:%S"), "09:55:00")
+        self.assertEqual(windows[0][1].strftime("%H:%M:%S"), "10:35:00")
 
     def test_copy_origin_lookup_lists_each_source_with_ratio_and_profit(self):
         copied_rows = [
@@ -689,6 +809,46 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(app.signal_in_tag("Signal #5009780 IN extra"), "Signal #5009780 IN")
         self.assertEqual(app.signal_in_identifier("manual account"), "")
 
+    def test_ea_comment_parser_keeps_exact_ea_name_and_rejects_generic_or_copy_comments(self):
+        self.assertEqual(app.ea_comment_parts("ChanGold V33 / tp"), ["ChanGold V33"])
+        self.assertEqual(app.ea_comment_parts("KLine_Breakout[tp]"), ["KLine_Breakout"])
+        self.assertEqual(app.ea_comment_parts("AlphaBot / AlphaBot"), ["AlphaBot"])
+        self.assertEqual(app.ea_comment_parts("EA"), [])
+        self.assertEqual(app.ea_comment_parts("CPT-SS#348815929"), [])
+        self.assertEqual(app.ea_comment_parts("Signal #5009780 IN"), [])
+        self.assertEqual(app.ea_comment_parts("from #27060824"), [])
+
+    def test_ea_comment_totals_list_account_profit_and_costs_separately(self):
+        totals = app.ea_comment_totals([
+            {"orders": 2, "volume": 0.3, "grossProfit": 12, "commission": -1, "swap": -0.5, "taxes": 0, "netProfit": 10.5, "currency": "USD"},
+            {"orders": 1, "volume": 0.2, "grossProfit": -4, "commission": -1, "swap": 0, "taxes": 0, "netProfit": -5, "currency": "USD"},
+        ])
+        self.assertEqual(totals["accounts"], 2)
+        self.assertEqual(totals["profitableAccounts"], 1)
+        self.assertEqual(totals["losingAccounts"], 1)
+        self.assertEqual(totals["orders"], 3)
+        self.assertEqual(totals["volume"], 0.5)
+        self.assertEqual(totals["grossProfit"], 8)
+        self.assertEqual(totals["commission"], -2)
+        self.assertEqual(totals["netProfit"], 5.5)
+
+    def test_ea_comment_profit_payload_uses_isolated_service(self):
+        expected = {"ok": True, "account": "700002", "detected": True, "groups": [{"comment": "ChanGold V33"}]}
+        with patch.object(app.EaCommentGroupService, "payload", return_value=expected) as payload_query:
+            payload = app.account_ea_comment_profit_payload("700002", {"platform": "MT5", "server": "DBG MT5"})
+
+        self.assertEqual(payload["groups"][0]["comment"], "ChanGold V33")
+        payload_query.assert_called_once_with("700002", {"platform": "MT5", "server": "DBG MT5"})
+
+    def test_account_detail_ui_exposes_ea_query_next_to_copy_query(self):
+        copy_index = app.ACCOUNT_DETAIL_HTML.index('id="copyOriginBtn"')
+        ea_index = app.ACCOUNT_DETAIL_HTML.index('id="eaCommentBtn"')
+        toxic_index = app.ACCOUNT_DETAIL_HTML.index('id="toxicBtn"')
+        self.assertLess(copy_index, ea_index)
+        self.assertLess(ea_index, toxic_index)
+        self.assertIn("/ea-comment-profit", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("相同 Comment 的 EA 账户收益", app.ACCOUNT_DETAIL_HTML)
+
     def test_signal_group_totals_separates_trade_profit_and_rebate(self):
         rows = [
             {"status": "L", "closedOrders": 10, "openOrders": 1, "closedLots": 2, "closedNetProfit": -100, "floatingNetProfit": 10, "combinedNetProfit": -90, "rebate": 50},
@@ -703,6 +863,35 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(totals["rebatePerLot"], 25)
         self.assertEqual(totals["estimatedPlatformAfterRebate"], -5)
         self.assertEqual(totals["statusCounts"], {"L": 1, "未填": 1})
+
+    def test_signal_group_rebates_sum_all_configured_crm_routes(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [{"Login": 2012060, "Rebate": "100.25"}],
+            [{"Login": 2012060, "Rebate": "20.50"}],
+        ]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        runtime = SimpleNamespace(
+            normalize_text=app.normalize_text,
+            numeric_value=app.numeric_value,
+            source_crm_routes=app.source_crm_routes,
+            mysql_trade_connect=MagicMock(return_value=connection),
+        )
+        service = app.SignalCopyGroupService(runtime)
+        rebates, error = service.query_rebates({
+            "crm_routes": [
+                {"schema": "crm_cn", "mt_server_code": "4"},
+                {"schema": "crm_vn", "mt_server_code": "2"},
+            ],
+        }, [2012060])
+
+        self.assertEqual(error, "")
+        self.assertEqual(rebates, {"2012060": 120.75})
+        self.assertEqual(cursor.execute.call_count, 2)
 
     def test_copy_group_profit_payload_returns_signal_groups_without_raw_comments(self):
         group = {
@@ -1787,6 +1976,44 @@ class ToxicDetectionTests(unittest.TestCase):
         self.assertEqual(target_symbols, {"XAUUSD"})
         self.assertEqual(target_directions, {"buy"})
 
+    def test_cross_account_sync_exposes_order_pair_comparisons_for_recurring_peers(self):
+        rows = [
+            {
+                "ticket": "T-1", "data_source": "mysql", "platform": "MT4", "server": "AC MT4",
+                "symbol": "XAUUSD.P", "type": "buy", "open_time": "2026-07-01 10:00:00",
+                "close_time": "2026-07-01 10:00:05", "volume": 0.1,
+            },
+            {
+                "ticket": "T-2", "data_source": "mysql", "platform": "MT4", "server": "AC MT4",
+                "symbol": "XAUUSD.P", "type": "buy", "open_time": "2026-07-01 11:00:00",
+                "close_time": "2026-07-01 11:00:05", "volume": 0.2,
+            },
+        ]
+        candidates = [
+            {
+                "login": "AC MT4/7002718", "account": "7002718", "platform": "MT4", "server": "AC MT4",
+                "position": 101, "direction": "buy", "symbol": "XAUUSD", "volume": 0.1,
+                "opened": app.parse_trade_time("2026-07-01 10:00:01"),
+                "closed": app.parse_trade_time("2026-07-01 10:00:06"),
+            },
+            {
+                "login": "AC MT4/7002718", "account": "7002718", "platform": "MT4", "server": "AC MT4",
+                "position": 102, "direction": "buy", "symbol": "XAUUSD", "volume": 0.3,
+                "opened": app.parse_trade_time("2026-07-01 11:00:02"),
+                "closed": app.parse_trade_time("2026-07-01 11:00:09"),
+            },
+        ]
+        source = {"name": "AC MT4", "platform": "MT4", "server": "AC MT4"}
+        with patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "toxic_sync_candidates_for_source", return_value=candidates):
+            result = app.toxic_cross_account_sync("7002769", rows)
+        self.assertEqual(result["comparisonTotal"], 2)
+        self.assertEqual(result["comparisonRows"][0]["peerAccount"], "7002718")
+        self.assertEqual(result["comparisonRows"][0]["peerTicket"], "101")
+        self.assertTrue(result["comparisonRows"][0]["closeSynchronized"])
+        self.assertFalse(result["comparisonRows"][1]["closeSynchronized"])
+        self.assertEqual(result["comparisonRows"][1]["closeDeltaSeconds"], 4)
+
     def test_recurring_sync_peers_are_returned_as_suspected_accounts(self):
         with patch.object(app, "MYSQL_SOURCES", [{"platform": "MT4", "server": "AC MT4"}]):
             suspected = app.toxic_suspected_accounts(
@@ -1816,6 +2043,8 @@ class ToxicDetectionTests(unittest.TestCase):
     def test_account_detail_ui_renders_suspected_accomplices(self):
         self.assertIn("疑似同伙账户", app.ACCOUNT_DETAIL_HTML)
         self.assertIn("suspectedAccomplices", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("同步订单逐笔对比", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("comparisonRows", app.ACCOUNT_DETAIL_HTML)
 
     def test_workbench_exposes_configurable_push_discovery_order_limit(self):
         self.assertIn('id="pushDiscoveryMaxOrders"', app.WORKBENCH_HTML)

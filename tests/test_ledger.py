@@ -72,6 +72,34 @@ def test_job_idempotency_only_deduplicates_active_runs(tmp_path: Path) -> None:
     assert rerun["id"] != first["id"]
 
 
+def test_job_queues_claim_only_their_assigned_kinds(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    discovery = database.create_job("push_discovery", {"days": 7})
+    toxic = database.create_job("toxic_check", {"account": "239453"})
+
+    interactive_claim = database.claim_next_job(kinds=("toxic_check", "kline_from_database"))
+    discovery_claim = database.claim_next_job(kinds=("push_discovery",))
+
+    assert interactive_claim is not None
+    assert interactive_claim["id"] == toxic["id"]
+    assert discovery_claim is not None
+    assert discovery_claim["id"] == discovery["id"]
+
+
+def test_worker_recovery_is_scoped_to_its_queue(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    discovery = database.create_job("push_discovery", {"days": 7})
+    toxic = database.create_job("toxic_check", {"account": "239453"})
+    database.claim_next_job(kinds=("push_discovery",))
+    database.claim_next_job(kinds=("toxic_check",))
+
+    assert database.recover_interrupted_jobs(kinds=("toxic_check",)) == 1
+    assert database.get_job(toxic["id"])["status"] == "queued"
+    assert database.get_job(discovery["id"])["status"] == "running"
+
+
 def test_ledger_service_batch_import_preview_and_delete(tmp_path: Path) -> None:
     source_database = Database(tmp_path / "source.sqlite")
     source_database.create_schema()

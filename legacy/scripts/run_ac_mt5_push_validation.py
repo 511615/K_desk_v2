@@ -7,9 +7,8 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "apps" / "problem_account_registry"
@@ -17,7 +16,6 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 import app  # noqa: E402
-
 
 AC_MT5_SOURCE_NAMES = {"AC GB MT5", "AC CN MT5"}
 DEAL_COLUMNS = """
@@ -214,6 +212,30 @@ def load_recent_closed_trades(source: dict, login: str, start: datetime, end: da
     }
 
 
+def load_all_closed_trades(source: dict, login: str) -> dict:
+    """Reconstruct every closed MT5 position for one account without a date cap."""
+    deals_sql = f"""
+        select {DEAL_COLUMNS}
+        from `{source['schema']}`.`{source['table']}`
+        where Login = %s and Action in (0, 1) and Entry in (0, 1, 2, 3)
+          and PositionID is not null and PositionID <> 0
+        order by PositionID, Time, Deal
+    """
+    with app.mysql_trade_connect(source) as conn:
+        with conn.cursor() as cur:
+            cur.execute(deals_sql, (int(login),))
+            deals = cur.fetchall()
+            account_meta = app.query_mysql_mt5_account_meta(cur, source, login)
+    rows = corrected_mt5_positions(deals, source, login, account_meta)
+    return {
+        "rows": rows,
+        "positionCount": len(rows),
+        "accountMeta": account_meta,
+        "loadedDealCount": len(deals),
+        "multiDealPositions": sum(1 for row in rows if app.mysql_int(row.get("raw_deal_count")) > 2),
+    }
+
+
 def behavior_strength(behavior: dict) -> float:
     return app.rounded(
         app.numeric_value(behavior.get("concentratedCoreVolumeRatio")) * 0.35
@@ -364,7 +386,7 @@ def main() -> int:
     args = parse_args()
     if args.days <= 0 or args.max_orders <= 0 or args.top <= 0 or args.workers <= 0:
         raise ValueError("days, max-orders, top and workers must be positive")
-    end = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    end = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     start = end - timedelta(days=args.days)
     run_id = f"ac_mt5_push_{end:%Y%m%d_%H%M%S}_utc"
     output_dir = args.output_root.resolve() / run_id

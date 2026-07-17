@@ -1,0 +1,2 @@
+#!/bin/sh
+exec pwsh -NoLogo -NoProfile -NonInteractive -File scripts/verify_change.ps1 -Mode Fast

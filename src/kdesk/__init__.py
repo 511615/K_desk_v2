@@ -1,3 +1,11 @@
-"""K_desk v2 modular application package."""
+"""K_desk modular application package."""
 
-__version__ = "0.1.0"
+from pathlib import Path
+
+
+def _read_version() -> str:
+    version_path = Path(__file__).resolve().parents[2] / "VERSION"
+    return version_path.read_text(encoding="utf-8").strip()
+
+
+__version__ = _read_version()

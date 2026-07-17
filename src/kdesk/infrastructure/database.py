@@ -359,9 +359,14 @@ class Database:
             ]
             return payload
 
-    def claim_next_job(self) -> dict | None:
+    def claim_next_job(self, *, kinds: tuple[str, ...] | None = None) -> dict | None:
+        if kinds is not None and not kinds:
+            return None
         with self.session() as session:
-            row = session.scalar(select(JobRunRow).where(JobRunRow.status == "queued").order_by(JobRunRow.created_at))
+            statement = select(JobRunRow).where(JobRunRow.status == "queued")
+            if kinds is not None:
+                statement = statement.where(JobRunRow.kind.in_(kinds))
+            row = session.scalar(statement.order_by(JobRunRow.created_at))
             if not row:
                 return None
             row.status = "running"
@@ -403,10 +408,15 @@ class Database:
             session.flush()
             return self._job_dict(row)
 
-    def recover_interrupted_jobs(self) -> int:
+    def recover_interrupted_jobs(self, *, kinds: tuple[str, ...] | None = None) -> int:
+        if kinds is not None and not kinds:
+            return 0
         recovered = 0
         with self.session() as session:
-            rows = session.scalars(select(JobRunRow).where(JobRunRow.status == "running")).all()
+            statement = select(JobRunRow).where(JobRunRow.status == "running")
+            if kinds is not None:
+                statement = statement.where(JobRunRow.kind.in_(kinds))
+            rows = session.scalars(statement).all()
             for row in rows:
                 if row.cancel_requested:
                     row.status = "cancelled"

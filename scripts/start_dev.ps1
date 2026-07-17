@@ -63,12 +63,14 @@ function Start-KDeskProcess {
 Start-KDeskProcess -Name "account-web" -Port 8877 -Arguments @("-m", "uvicorn", "kdesk.api.account_app:app", "--host", "127.0.0.1", "--port", "8877", "--workers", "1")
 Start-KDeskProcess -Name "kline-web" -Port 8866 -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8866", "--workers", "1")
 
-$worker = Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
-    $_.CommandLine -like "*--profile dev*"
-}
-if (-not $worker) {
-    Start-KDeskProcess -Name "worker" -Arguments @("-m", "kdesk.worker.runner", "--profile", "dev")
+foreach ($queue in @("interactive", "discovery")) {
+    $workers = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
+        $_.CommandLine -like "*--profile dev*" -and $_.CommandLine -like "*--queue $queue*"
+    })
+    if ($workers.Count -eq 0) {
+        Start-KDeskProcess -Name "worker-$queue" -Arguments @("-m", "kdesk.worker.runner", "--profile", "dev", "--queue", $queue)
+    }
 }
 
 Start-Sleep -Seconds 2

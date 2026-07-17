@@ -21,6 +21,7 @@ const showToxic = ref(false)
 const selectedToxic = ref<string[]>([])
 const toxicMode = ref('selected')
 const toxicJob = ref<any>(null)
+const syncPeerFilter = ref('')
 const klineJob = ref<any>(null)
 const klineForm = reactive({ start: '', end: '' })
 const copyGroupRequested = ref(false)
@@ -53,6 +54,12 @@ const sameName = computed<any[]>(() => panels.value.sameName || [])
 const sameNameTotals = computed(() => panels.value.sameNameTotals || {})
 const automationCopy = computed(() => automation.data.value?.copy || {})
 const automationEa = computed(() => automation.data.value?.ea || {})
+const pushSync = computed(() => toxicJob.value?.result?.pushSync || {})
+const syncComparisonRows = computed<any[]>(() => {
+  const rows = Array.isArray(pushSync.value.comparisonRows) ? pushSync.value.comparisonRows : []
+  const filtered = syncPeerFilter.value ? rows.filter((row: any) => String(row.peerAccount) === syncPeerFilter.value) : rows
+  return filtered.slice(0, 200)
+})
 const form = reactive({ action: '', group: '', tags: '', note: '', status: '待复核', owner: '' })
 
 watch(() => ledger.data.value?.record, record => {
@@ -89,6 +96,11 @@ function optionValue(item: unknown): string {
 function percent(value: unknown): string { const parsed = Number(value); return Number.isFinite(parsed) ? `${parsed.toFixed(1)}%` : '-' }
 function valueClass(value: unknown): string { return Number(value) > 0 ? 'positive' : Number(value) < 0 ? 'negative' : '' }
 function jobMessage(job: any): string { return job?.events?.length ? job.events[job.events.length - 1].message : job?.error || ({ queued: '任务已提交', running: '任务执行中', done: '任务完成', failed: '任务失败', cancelled: '任务已取消' } as any)[job?.status] || '' }
+function syncDelta(value: unknown): string {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? `${parsed > 0 ? '+' : ''}${parsed.toFixed(3).replace(/\.000$/, '')} 秒` : '-'
+}
+function syncDirection(value: unknown): string { return String(value) === 'buy' ? '买入' : String(value) === 'sell' ? '卖出' : String(value || '-') }
 
 async function applyFilters() {
   orderPage.value = 1
@@ -132,6 +144,7 @@ async function startKline() {
 }
 async function startToxic() {
   if (toxicMode.value === 'selected' && !selectedToxic.value.length) return
+  syncPeerFilter.value = ''
   toxicJob.value = { status: 'queued', progress: 0 }
   try {
     const response = await api<any>(`/api/accounts/by-login/${encodeURIComponent(login.value)}/toxic-checks`, { method: 'POST', body: JSON.stringify({ mode: toxicMode.value, types: selectedToxic.value, ...filters, ...dateFilters }) })
@@ -166,7 +179,7 @@ onBeforeUnmount(() => pollingTimers.forEach(timer => window.clearTimeout(timer))
         <div v-if="saveState && !['saving','saved'].includes(saveState)" class="inline-error">{{ saveState }}</div>
       </div>
 
-      <div class="filter-zone"><label>平台<select v-model="filters.platform"><option value="">全部平台</option><option v-for="item in database.platforms || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><label>服务器<select v-model="filters.server"><option value="">全部服务器</option><option v-for="item in database.servers || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><label>品种<select v-model="filters.symbol"><option value="">全部品种</option><option v-for="item in database.symbols || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><button class="primary" @click="applyFilters">刷新指标</button><button @click="requestCopyGroups">跟单查询</button><button class="toxic-button" @click="showToxic=!showToxic">Toxic 检测</button></div>
+      <div class="filter-zone"><label>平台<select v-model="filters.platform"><option value="">全部平台</option><option v-for="item in database.platforms || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><label>服务器<select v-model="filters.server"><option value="">全部服务器</option><option v-for="item in database.servers || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><label>品种<select v-model="filters.symbol"><option value="">全部品种</option><option v-for="item in database.symbols || []" :key="optionValue(item)" :value="optionValue(item)">{{ optionValue(item) }}</option></select></label><label>检测开始<input v-model="dateFilters.start" type="datetime-local" step="1"></label><label>检测结束<input v-model="dateFilters.end" type="datetime-local" step="1"></label><button class="primary" @click="applyFilters">刷新指标</button><button @click="requestCopyGroups">跟单查询</button><button class="toxic-button" @click="showToxic=!showToxic">Toxic 检测</button></div>
     </section>
 
     <section v-if="showToxic" class="panel toxic-panel">
@@ -174,7 +187,24 @@ onBeforeUnmount(() => pollingTimers.forEach(timer => window.clearTimeout(timer))
       <div class="toxic-modes"><label><input v-model="toxicMode" value="screen" type="radio">快速筛查</label><label><input v-model="toxicMode" value="selected" type="radio">指定项目深检</label></div>
       <div class="toxic-options" :class="{muted:toxicMode==='screen'}"><label v-for="item in toxicTypes.data.value?.types || []" :key="item.id"><input v-model="selectedToxic" :value="item.id" type="checkbox" :disabled="toxicMode==='screen'">{{ item.label }}<small v-if="item.requiresTick">需要 Tick</small></label></div>
       <div class="task-actions"><button class="toxic-button" :disabled="toxicJob && ['queued','running'].includes(toxicJob.status)" @click="startToxic">开始检测</button><button v-if="toxicJob && ['queued','running'].includes(toxicJob.status)" @click="cancelJob(toxicJob)">取消任务</button></div>
-      <div v-if="toxicJob" class="job-card"><div class="job-head"><b>{{ jobMessage(toxicJob) }}</b><span>{{ toxicJob.progress || 0 }}%</span></div><div class="progress"><i :style="{width:`${toxicJob.progress || 0}%`}" /></div><div v-if="toxicJob.error" class="inline-error">{{ toxicJob.error }}</div><div v-if="toxicJob.result?.results?.length" class="toxic-results"><article v-for="(item,index) in toxicJob.result.results" :key="item.id || index"><div><b>{{ item.label || item.type || item.id }}</b><span :class="item.detected || item.hit ? 'negative' : 'positive'">{{ item.conclusion || (item.detected || item.hit ? '命中' : '未命中') }}</span></div><p>{{ item.summary || item.message || '' }}</p><pre v-if="item.evidence">{{ JSON.stringify(item.evidence, null, 2) }}</pre></article></div><details v-else-if="toxicJob.status==='done'"><summary>查看完整检测结果</summary><pre>{{ JSON.stringify(toxicJob.result, null, 2) }}</pre></details></div>
+      <div v-if="toxicJob" class="job-card">
+        <div class="job-head"><b>{{ jobMessage(toxicJob) }}</b><span>{{ toxicJob.progress || 0 }}%</span></div>
+        <div class="progress"><i :style="{width:`${toxicJob.progress || 0}%`}" /></div>
+        <div v-if="toxicJob.error" class="inline-error">{{ toxicJob.error }}</div>
+        <div v-if="toxicJob.result?.results?.length" class="toxic-results"><article v-for="(item,index) in toxicJob.result.results" :key="item.id || index"><div><b>{{ item.label || item.type || item.id }}</b><span :class="Number(item.score)>=60 ? 'negative' : 'positive'">{{ item.conclusion || item.level || (Number(item.score)>=60 ? '命中' : '未命中') }}</span></div><p>{{ item.summary || item.message || '' }}</p><pre v-if="item.evidence">{{ JSON.stringify(item.evidence, null, 2) }}</pre></article></div>
+        <details v-else-if="toxicJob.status==='done'"><summary>查看完整检测结果</summary><pre>{{ JSON.stringify(toxicJob.result, null, 2) }}</pre></details>
+
+        <section v-if="pushSync.available" class="sync-comparison-section">
+          <div class="sync-section-head"><div><h3>同步订单逐笔对比</h3><small>同品种、同方向且开仓相差不超过2秒；平仓时间差单独判断</small></div><span>抽样 {{ pushSync.sampledOrders || 0 }} 单</span></div>
+          <div class="sync-kpis"><div><span>任意开仓匹配</span><b>{{ percent(pushSync.matchedRatio) }}</b></div><div><span>反复账户协调开仓</span><b>{{ percent(pushSync.coordinatedMatchedRatio) }}</b></div><div><span>协调手数覆盖</span><b>{{ percent(pushSync.coordinatedVolumeRatio) }}</b></div><div><span>协调平仓</span><b>{{ percent(pushSync.coordinatedCloseRatio) }}</b></div><div><span>反复关联账户</span><b>{{ pushSync.recurringPeerAccounts || 0 }}</b></div><div><span>重复门槛</span><b>{{ pushSync.recurringMinMatches || 0 }} 单</b></div></div>
+
+          <div class="table-wrap sync-peer-wrap"><table><thead><tr><th>关联账户</th><th>服务器</th><th>同步开仓</th><th>同步平仓</th><th>开仓覆盖</th><th>平仓覆盖</th></tr></thead><tbody><tr v-for="peer in pushSync.suspectedAccounts || []" :key="`${peer.server}-${peer.account}`"><td><RouterLink :to="`/account/${peer.account}?platform=${peer.platform}&server=${encodeURIComponent(peer.server)}`">{{ peer.account }}</RouterLink></td><td>{{ peer.server }}</td><td>{{ peer.matches }} 单</td><td>{{ peer.closeMatches }} 单</td><td>{{ percent(peer.matchRatio) }}</td><td>{{ percent(peer.closeMatchRatio) }}</td></tr></tbody></table></div>
+
+          <div class="sync-detail-head"><div><h3>相似订单明细</h3><small>当前显示 {{ syncComparisonRows.length }} / {{ pushSync.comparisonTotal || 0 }} 组</small></div><label>关联账户<select v-model="syncPeerFilter"><option value="">全部账户</option><option v-for="peer in pushSync.suspectedAccounts || []" :key="peer.account" :value="String(peer.account)">{{ peer.account }} · {{ peer.matches }} 单</option></select></label></div>
+          <div class="table-wrap sync-detail-wrap"><table class="sync-compare-table"><thead><tr><th>同步结论</th><th>主体订单</th><th>关联订单</th><th>品种 / 方向</th><th>手数对比</th><th>开仓时间对比</th><th>平仓时间对比</th></tr></thead><tbody><tr v-for="row in syncComparisonRows" :key="`${row.targetTicket}-${row.peerServer}-${row.peerAccount}-${row.peerTicket}`"><td><span class="sync-state" :class="row.closeSynchronized ? 'full' : 'open-only'">{{ row.closeSynchronized ? '开平仓同步' : '仅开仓同步' }}</span></td><td><b>{{ row.targetAccount }}</b><small>#{{ row.targetTicket }}</small></td><td><RouterLink :to="`/account/${row.peerAccount}?platform=${row.peerPlatform}&server=${encodeURIComponent(row.peerServer)}`">{{ row.peerAccount }}</RouterLink><small>#{{ row.peerTicket }} · {{ row.peerServer }}</small></td><td><b>{{ row.targetSymbol }}</b><small>{{ syncDirection(row.targetDirection) }}</small></td><td><b>{{ number(row.targetVolume, 2) }} / {{ number(row.peerVolume, 2) }}</b><small>主体 / 关联</small></td><td><b>{{ syncDelta(row.openDeltaSeconds) }}</b><small>{{ row.targetOpened }}</small><small>{{ row.peerOpened }}</small></td><td><b :class="row.closeSynchronized ? 'positive' : 'negative'">{{ syncDelta(row.closeDeltaSeconds) }}</b><small>{{ row.targetClosed || '-' }}</small><small>{{ row.peerClosed || '-' }}</small></td></tr><tr v-if="!syncComparisonRows.length"><td colspan="7" class="empty-cell">该关联账户暂无可展示的订单对</td></tr></tbody></table></div>
+          <p v-if="pushSync.comparisonTruncated" class="tool-note">对照记录较多，后端仅保留前 {{ pushSync.comparisonLimit }} 组；可按关联账户筛选查看。</p>
+        </section>
+      </div>
     </section>
 
     <section class="panel same-name-panel"><div class="section-head"><div><h2>同名账户</h2><small>{{ sameName.length }} 个关联账号 · 仅展示账号和交易数据</small></div></div><PanelState :loading="risk.isLoading.value" :error="risk.error.value as Error" :empty="!sameName.length"><div class="table-wrap"><table><thead><tr><th>服务器</th><th>账号</th><th>数据库状态</th><th>本地标记</th><th>账户余额</th><th>净值</th><th>净入金</th><th>持仓盈亏</th><th>平仓净盈亏</th><th>清零+补偿+奖励</th><th>返佣</th><th>综合盈利</th><th>最高持仓量</th></tr></thead><tbody><tr v-for="row in sameName" :key="`${row.platform}-${row.server}-${row.account}`"><td>{{ row.platform }} · {{ row.server }}</td><td><RouterLink :to="`/account/${row.account}?platform=${row.platform}&server=${encodeURIComponent(row.server)}`">{{ row.account }}</RouterLink> · {{ row.currency }}</td><td>{{ row.databaseStatus || '-' }}</td><td>{{ row.localStatus || '-' }}</td><td>{{ money(row.balance) }}</td><td>{{ money(row.equity) }}</td><td :class="valueClass(row.netDeposit)">{{ money(row.netDeposit) }}</td><td :class="valueClass(row.holdingProfit)">{{ money(row.holdingProfit) }}</td><td :class="valueClass(row.closedNetProfit)">{{ money(row.closedNetProfit) }}</td><td>{{ money(row.adjustments) }}</td><td>{{ money(row.rebate) }}</td><td :class="valueClass(row.comprehensiveProfit)">{{ money(row.comprehensiveProfit) }}</td><td>{{ number(row.highestHoldingVolume,2) }}</td></tr><tr class="total-row"><td></td><td>合计</td><td>-</td><td>-</td><td>{{ money(sameNameTotals.balance) }}</td><td>{{ money(sameNameTotals.equity) }}</td><td>{{ money(sameNameTotals.netDeposit) }}</td><td>{{ money(sameNameTotals.holdingProfit) }}</td><td>{{ money(sameNameTotals.closedNetProfit) }}</td><td>{{ money(sameNameTotals.adjustments) }}</td><td>{{ money(sameNameTotals.rebate) }}</td><td>{{ money(sameNameTotals.comprehensiveProfit) }}</td><td>-</td></tr></tbody></table></div></PanelState></section>

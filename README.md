@@ -1,46 +1,24 @@
-# K_desk v2
+# K_desk
 
-K_desk v2 is the isolated modular successor to the active services in `D:\risk\K_desk_ai_dev`.
-Production ports `8777` and `8766` are not modified during development. The v2 development services use:
+K_desk is the production modular risk workbench running on this Windows host. The account service
+uses `127.0.0.1:8777`, the K-line service uses `127.0.0.1:8766`, and persistent background workers
+process K-line, Toxic and discovery jobs. Account detail URLs continue to render the legacy detail
+page through the governed `LegacyBridge` compatibility boundary.
 
-- Account workbench: `http://127.0.0.1:8877`
-- K-line service: `http://127.0.0.1:8866`
-- Persistent worker: no listening port
+## Maintenance entry point
 
-## Architecture
+Read [docs/README.md](docs/README.md) before changing the system. Every feature addition, behavior
+change, bug fix, deletion, refactor or UI interaction change must:
 
-```text
-Vue/TypeScript -> FastAPI interfaces -> application use cases -> domain
-                                      -> infrastructure adapters
-                                      -> SQLite authoritative local state
-                                      -> read-only MySQL / MT4 / MT5 sources
-FastAPI -> persistent job table -> worker -> K-line / Toxic / AI adapters
-```
+1. identify or create a Feature ID;
+2. update the feature's current-state document;
+3. add an immutable file under `docs/changes/unreleased/`;
+4. run `pwsh -File scripts/verify_change.ps1 -Mode Fast` at minimum.
 
-The current implementation is retained under `legacy/` and can only be imported through
-`LegacyBridge`. This is the strangler boundary: each analytics use case moves into `domain/`
-and `application/` without changing the public URL or response contract.
-
-## Development Setup
+Production startup remains:
 
 ```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\bootstrap_dev.ps1
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\snapshot_production_ledger.ps1
-.venv\Scripts\python.exe -m kdesk.cli import-preview runtime\dev\import\problematic_accounts.xlsx
-.venv\Scripts\python.exe -m kdesk.cli import-excel runtime\dev\import\problematic_accounts.xlsx
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\start_dev.ps1
+pwsh -NoLogo -NoProfile -NonInteractive -File D:\risk\K_desk_v2\scripts\start_prod.ps1
 ```
 
-The snapshot command only reads the production workbook. Development writes remain under
-`runtime\dev`. Remote trade databases and MT5 integrations are read-only.
-
-## Verification
-
-```powershell
-.venv\Scripts\python.exe -m pytest
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts\health_check_dev.ps1
-```
-
-Use `?legacy=1` on v2 pages to compare against the complete legacy UI while panels are migrated.
-The rollback script is guarded by the literal `ROLLBACK-KDESK` confirmation and must not be run
-until an explicitly approved production cutover.
+Development writes stay under `runtime/dev`. Remote MySQL and MT4/MT5 integrations are read-only.

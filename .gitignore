@@ -9,11 +9,17 @@ htmlcov/
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
 runtime/**
 !runtime/dev/
 !runtime/dev/.gitkeep
 !runtime/test/
 !runtime/test/.gitkeep
+!runtime/prod/
+runtime/prod/**
+!runtime/prod/contracts/
+!runtime/prod/contracts/.gitkeep
 *.log
 *.err.log
 .env

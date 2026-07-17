@@ -40,11 +40,13 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /api/accounts/by-login/{login}/automation-analysis`
 - `GET /api/accounts/by-login/{login}/copy-origins`
 - `GET /api/accounts/by-login/{login}/copy-group-profit`
+- `GET /api/accounts/by-login/{login}/ea-comment-profit`
 - `GET /api/accounts/by-login/{login}/login-ips`
 - `GET /api/accounts/by-login/{login}/orders`
 - `GET /api/account-lookup`
 - `GET /api/account-lookup-finance`
 - `GET /api/account-logs`
+- `GET /api/rebate-churning/accounts/{account}`
 - `GET /api/trades/summary`
 - `GET /api/hierarchy-products`
 - `GET /api/hierarchy-net-deposit`

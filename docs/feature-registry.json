@@ -1,0 +1,350 @@
+{
+  "schemaVersion": 1,
+  "registryVersion": "060b56701387",
+  "features": [
+    {
+      "feature_id": "ACC-DETAIL-001",
+      "title": "Legacy account detail page",
+      "module": "account",
+      "status": "active",
+      "apis": [
+        "GET /account/{login}",
+        "GET /api/accounts/by-login/{login}/detail",
+        "GET /api/accounts/by-login/{login}/risk-panels"
+      ],
+      "code": [
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py",
+        "frontend/src/main.ts"
+      ],
+      "tests": [
+        "tests/test_api.py",
+        "legacy/apps/problem_account_registry/test_app.py",
+        "frontend/e2e/legacy-account.spec.ts"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001",
+        "FIN-COMP-001",
+        "AUT-COPY-001",
+        "TOX-PUSH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/account/account-detail-legacy.md"
+    },
+    {
+      "feature_id": "ACC-SEARCH-001",
+      "title": "Account search and source routing",
+      "module": "account",
+      "status": "active",
+      "apis": [
+        "GET /api/account-lookup",
+        "GET /api/account-lookup-finance"
+      ],
+      "code": [
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "tests/test_api.py",
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "FIN-COMP-001",
+        "FIN-REBATE-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/account/account-search.md"
+    },
+    {
+      "feature_id": "AUT-COPY-001",
+      "title": "Copy origin query",
+      "module": "automation",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/copy-origins"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/automation/copy-origin-query.md"
+    },
+    {
+      "feature_id": "AUT-EA-001",
+      "title": "EA comment group profit",
+      "module": "automation",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/ea-comment-profit"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/ea_comment_group.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/automation/ea-comment-profit.md"
+    },
+    {
+      "feature_id": "AUT-FOLLOWER-001",
+      "title": "Follower profit by copy source",
+      "module": "automation",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/copy-origins",
+        "GET /api/accounts/by-login/{login}/copy-group-profit"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/app.py",
+        "legacy/apps/problem_account_registry/signal_copy_group.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "AUT-COPY-001",
+        "FIN-REBATE-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/automation/follower-profit.md"
+    },
+    {
+      "feature_id": "FIN-COMP-001",
+      "title": "Comprehensive profit calculation",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/risk-panels",
+        "GET /api/account-lookup-finance"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001",
+        "FIN-REBATE-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/finance/comprehensive-profit.md"
+    },
+    {
+      "feature_id": "FIN-REBATE-001",
+      "title": "Rebate aggregation and display",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/risk-panels"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/app.py",
+        "legacy/apps/problem_account_registry/signal_copy_group.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/finance/rebate-display.md"
+    },
+    {
+      "feature_id": "FIN-REBATE-AUDIT-001",
+      "title": "Rebate churning account audit",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "GET /api/rebate-churning/accounts/{account}"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/rebate_churning.py",
+        "src/kdesk/api/account_app.py",
+        "frontend/src/components/RebateAuditPanel.vue",
+        "frontend/src/components/RebateTreeNode.vue",
+        "frontend/src/pages/WorkbenchPage.vue"
+      ],
+      "tests": [
+        "tests/test_rebate_churning.py",
+        "tests/test_api.py"
+      ],
+      "depends_on": [
+        "FIN-REBATE-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/finance/rebate-churning-audit.md"
+    },
+    {
+      "feature_id": "GOV-LIFECYCLE-001",
+      "title": "Feature documentation lifecycle",
+      "module": "governance",
+      "status": "active",
+      "apis": [
+        "GET /api/meta"
+      ],
+      "code": [
+        "src/kdesk/__init__.py",
+        "src/kdesk/build_info.py",
+        "scripts/governance.py",
+        "scripts/verify_change.ps1",
+        "scripts/verify_live_matrix.py",
+        "scripts/backup_sqlite.py",
+        "scripts/generate_governance_artifacts.ps1",
+        "scripts/install_git_hooks.ps1",
+        "scripts/install_maintenance_skill.ps1",
+        "scripts/publish_change.ps1",
+        "scripts/release_prod.ps1",
+        "skills/kdesk-maintenance",
+        "frontend/playwright.config.ts",
+        "frontend/vite.config.ts",
+        "frontend/pnpm-lock.yaml",
+        "runtime/prod/contracts",
+        ".githooks",
+        ".github/workflows",
+        "AGENTS.md"
+      ],
+      "tests": [
+        "tests/test_governance.py",
+        "tests/test_architecture.py"
+      ],
+      "depends_on": [],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/governance/feature-lifecycle.md"
+    },
+    {
+      "feature_id": "JOB-RECOVERY-001",
+      "title": "Persistent job progress and recovery",
+      "module": "jobs",
+      "status": "active",
+      "apis": [
+        "GET /api/kline/jobs/{job_id}",
+        "GET /api/toxic/jobs/{job_id}",
+        "GET /api/push-discovery/jobs/{job_id}",
+        "POST /api/jobs/{job_id}/cancel"
+      ],
+      "code": [
+        "src/kdesk/infrastructure/database.py",
+        "src/kdesk/worker/runner.py",
+        "src/kdesk/api/account_app.py",
+        "scripts/start_dev.ps1",
+        "scripts/start_prod.ps1",
+        "scripts/stop_prod.ps1"
+      ],
+      "tests": [
+        "tests/test_api.py",
+        "tests/test_ledger.py",
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/jobs/job-progress-recovery.md"
+    },
+    {
+      "feature_id": "KLN-DB-001",
+      "title": "Database K-line generation",
+      "module": "kline",
+      "status": "active",
+      "apis": [
+        "POST /api/kline/generate-from-db",
+        "POST /api/uploads",
+        "POST /api/jobs/{job_id}/generate",
+        "GET /output/{name}"
+      ],
+      "code": [
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kline_app.py",
+        "src/kdesk/worker/runner.py"
+      ],
+      "tests": [
+        "tests/test_api.py"
+      ],
+      "depends_on": [
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/kline/database-generation.md"
+    },
+    {
+      "feature_id": "LED-ACCOUNT-001",
+      "title": "Account ledger and history",
+      "module": "ledger",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts",
+        "POST /api/accounts/mark",
+        "PUT /api/accounts/{record_id}",
+        "GET /api/accounts/{record_id}/history"
+      ],
+      "code": [
+        "src/kdesk/domain/ledger.py",
+        "src/kdesk/application/ledger_service.py",
+        "src/kdesk/infrastructure/database.py"
+      ],
+      "tests": [
+        "tests/test_ledger.py",
+        "tests/test_api.py"
+      ],
+      "depends_on": [],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/ledger/account-ledger.md"
+    },
+    {
+      "feature_id": "TOX-PUSH-001",
+      "title": "Market-pushing detection",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "POST /api/accounts/by-login/{login}/toxic-checks",
+        "GET /api/toxic/jobs/{job_id}",
+        "POST /api/push-discovery/start"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/app.py",
+        "legacy/scripts/run_ac_mt5_push_validation.py",
+        "legacy/scripts/run_platform_push_discovery.py",
+        "src/kdesk/worker/runner.py",
+        "frontend/src/pages/AccountPage.vue",
+        "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/styles.css"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py",
+        "legacy/scripts/test_run_platform_push_discovery.py"
+      ],
+      "depends_on": [
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-17",
+      "document": "docs/features/toxic/market-pushing.md"
+    }
+  ]
+}

@@ -175,27 +175,27 @@ class SignalCopyGroupService:
 
     def query_rebates(self, source: dict, logins: list[int]) -> tuple[dict[str, float], str]:
         r = self.runtime
-        crm_schema = r.normalize_text(source.get("crm_schema"))
-        mt_server_code = r.normalize_text(source.get("mt_server_code"))
-        if not crm_schema or not mt_server_code or not logins:
+        routes = r.source_crm_routes(source)
+        if not routes or not logins:
             return {}, "当前服务器未配置 CRM 返佣数据源"
         rebates: dict[str, float] = defaultdict(float)
         try:
             with r.mysql_trade_connect(source) as conn:
                 with conn.cursor() as cur:
-                    for batch in _batches(logins):
-                        placeholders = ",".join(["%s"] * len(batch))
-                        cur.execute(
-                            f"""
-                                select trade_mt_login as Login, sum(rebate_amount) as Rebate
-                                from `{crm_schema}`.`rebate_task_detail`
-                                where mt_server_code = %s and trade_mt_login in ({placeholders})
-                                group by trade_mt_login
-                            """,
-                            [mt_server_code, *batch],
-                        )
-                        for row in cur.fetchall():
-                            rebates[r.normalize_text(row.get("Login"))] += r.numeric_value(row.get("Rebate"))
+                    for route in routes:
+                        for batch in _batches(logins):
+                            placeholders = ",".join(["%s"] * len(batch))
+                            cur.execute(
+                                f"""
+                                    select trade_mt_login as Login, sum(rebate_amount) as Rebate
+                                    from `{route['schema']}`.`rebate_task_detail`
+                                    where mt_server_code = %s and trade_mt_login in ({placeholders})
+                                    group by trade_mt_login
+                                """,
+                                [route["mt_server_code"], *batch],
+                            )
+                            for row in cur.fetchall():
+                                rebates[r.normalize_text(row.get("Login"))] += r.numeric_value(row.get("Rebate"))
         except Exception as exc:
             return {}, f"返佣查询失败：{exc}"
         return dict(rebates), ""

@@ -1,46 +1,54 @@
-# K_desk v2 Architecture
+# K_desk architecture
 
-## Dependency Rule
-
-Dependencies point inward:
+## Runtime
 
 ```text
-api / cli / worker -> application -> domain
-                          ^
-                          |
+Vue workbench / legacy account page
+                 |
+        Account FastAPI :8777       K-line FastAPI :8766
+                 |                         |
+                 +---- application -------+
+                           |
+                         domain
+                           ^
+                           |
                     infrastructure
+                           |
+       SQLite / files / read-only MySQL and MT quote providers
+
+FastAPI -> SQLite job queue -> interactive/discovery workers -> governed adapters
 ```
 
-- `domain` contains deterministic business rules and data models.
-- `application` coordinates use cases and transaction boundaries.
-- `infrastructure` implements SQLite, Excel, MySQL, MT5, files, IP and AI providers.
-- `api`, `cli` and `worker` are composition roots. They do not implement risk calculations.
-- `LegacyBridge` is the only module allowed to import the copied monolith.
+K_desk is a modular monolith. It deliberately remains a single-host system and is not split into
+microservices. Web services use one Uvicorn worker each; durable jobs are executed by separate
+worker processes.
 
-## Runtime Processes
+## Dependency rule
 
-| Process | Development | Production after cutover | Responsibility |
-| --- | ---: | ---: | --- |
-| Account web | 8877 | 8777 | Vue assets, account APIs, ledger commands |
-| K-line web | 8866 | 8766 | Uploads, artifacts, K-line job APIs |
-| Worker | none | none | K-line, AI and Toxic long-running tasks |
+Dependencies point inward: `api|worker|cli -> application -> domain`; infrastructure implements
+ports required by application/domain. API and worker composition roots may use infrastructure but
+must not contain financial calculations. Domain code must not import HTTP, SQLAlchemy, filesystem,
+MySQL or MT libraries.
 
-All processes share the authoritative SQLite database. Web processes never create anonymous
-background threads. Jobs and events remain visible after a restart.
+`src/kdesk/infrastructure/legacy_bridge.py` is the only v2 module permitted to load code under
+`legacy/`. This strangler boundary preserves the old account page and response contracts while
+vertical features move into application/domain modules.
 
-## Data Ownership
+## Compatibility boundary
 
-- SQLite owns accounts, account history, quick actions, IP observations and jobs.
-- Excel is an import/export format. `runtime/*/legacy_compat/problematic_accounts.xlsx` is a generated compatibility snapshot, not an authority.
-- Remote MySQL and MT4/MT5 sources are read-only. No write method exists in v2 adapters.
-- Development writes are restricted to `runtime/dev`; legacy chart output is mounted read-only.
+- `/account/{login}` always renders the legacy account detail HTML.
+- Existing URLs, parameters and JSON fields remain compatible.
+- The Vue workbench may call native v2 APIs and legacy-backed analytics independently.
+- Breaking behavior requires a documented deprecation and replacement before removal.
 
-## Migration Slices
+## Data and process ownership
 
-1. Ledger, history and quick actions: native v2, completed.
-2. Account API composition and Vue panel shell: native v2 with legacy analytics adapters, completed.
-3. Finance, trade metrics and automation rules: covered by compatibility tests, extraction pending.
-4. Toxic, hierarchy and copy analysis: covered by legacy tests, extraction pending.
-5. K-line and AI internals: persistent v2 orchestration completed; generator internals remain behind the worker adapter.
+SQLite is authoritative for ledger records, history, quick actions, observations and jobs. Remote
+trade and CRM databases and MT quote terminals are read-only providers. Excel is import/export and
+backup compatibility, not a second authority. See `DATA_AND_ROUTING.md`.
 
-No production cutover is allowed while a required slice is still marked pending.
+## Evolution rule
+
+New business behavior is implemented in application/domain code. Existing legacy behavior is
+extracted one feature at a time with contract parity; no big-bang rewrite is allowed. Architecture
+decisions are immutable records under `docs/ADR/`.

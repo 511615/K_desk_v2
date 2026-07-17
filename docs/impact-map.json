@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "paths": ["src/kdesk/api/", "frontend/src/"],
+      "required_change": true,
+      "authorities": ["docs/PORTS_AND_APIS.md"],
+      "authority_when": "public API or user-visible behavior changes"
+    },
+    {
+      "paths": ["src/kdesk/domain/", "src/kdesk/application/"],
+      "required_change": true,
+      "authorities": ["docs/ARCHITECTURE.md", "docs/BUSINESS_RULES.md"],
+      "authority_when": "responsibility or business behavior changes"
+    },
+    {
+      "paths": ["src/kdesk/infrastructure/database.py", "migrations/"],
+      "required_change": true,
+      "authorities": ["docs/DATA_AND_ROUTING.md", "docs/OPERATIONS.md"],
+      "authority_when": "schema, ownership or migration behavior changes"
+    },
+    {
+      "paths": ["legacy/apps/problem_account_registry/"],
+      "required_change": true,
+      "authorities": ["docs/BUSINESS_RULES.md", "docs/DATA_AND_ROUTING.md"],
+      "authority_when": "business formulas or source routing changes"
+    },
+    {
+      "paths": ["src/kdesk/worker/", "legacy/scripts/run_platform_push_discovery.py"],
+      "required_change": true,
+      "authorities": ["docs/OPERATIONS.md", "docs/TEST_STRATEGY.md"],
+      "authority_when": "queue, recovery, job or discovery behavior changes"
+    },
+    {
+      "paths": ["scripts/", ".github/workflows/"],
+      "required_change": true,
+      "authorities": ["docs/OPERATIONS.md", "docs/TEST_STRATEGY.md"],
+      "authority_when": "release, verification or runtime operations change"
+    }
+  ],
+  "ignored_paths": [
+    "docs/",
+    "tests/",
+    "README.md",
+    "frontend/src/api.spec.ts",
+    ".githooks/",
+    ".gitignore",
+    ".gitattributes"
+  ]
+}

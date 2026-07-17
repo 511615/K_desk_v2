@@ -19,5 +19,7 @@ $workers = @(Get-CimInstance Win32_Process | Where-Object {
     $_.CommandLine -like "*--profile prod*"
 })
 foreach ($worker in $workers) {
-    Stop-Process -Id $worker.ProcessId -Force
+    if (Get-Process -Id $worker.ProcessId -ErrorAction SilentlyContinue) {
+        Stop-Process -Id $worker.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 }

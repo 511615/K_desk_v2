@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kdesk-v2"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Modular local risk workbench"
 requires-python = ">=3.12"
 dependencies = [
@@ -34,6 +34,9 @@ kdesk = "kdesk.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "kdesk.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

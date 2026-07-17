@@ -70,12 +70,14 @@ function Start-KDeskProductionProcess {
 Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kdesk.api.account_app" -Arguments @("-m", "uvicorn", "kdesk.api.account_app:app", "--host", "127.0.0.1", "--port", "8777", "--workers", "1")
 Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
 
-$workers = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
-    $_.CommandLine -like "*--profile prod*"
-})
-if ($workers.Count -eq 0) {
-    Start-KDeskProductionProcess -Name "worker" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod")
+foreach ($queue in @("interactive", "discovery")) {
+    $workers = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
+        $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*"
+    })
+    if ($workers.Count -eq 0) {
+        Start-KDeskProductionProcess -Name "worker-$queue" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod", "--queue", $queue)
+    }
 }
 
 Start-Sleep -Seconds 2
