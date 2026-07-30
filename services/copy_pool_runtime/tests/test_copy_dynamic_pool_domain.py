@@ -77,6 +77,38 @@ class DynamicStateTests(unittest.TestCase):
         self.assertEqual(active.tier, PoolTier.ACTIVE)
         self.assertGreater(active.effective_weight, 0)
 
+    def test_demo_fast_activation_uses_one_qualification_and_two_minute_shadow(self) -> None:
+        shadow = update_rank_state(
+            self.state,
+            self.row,
+            NOW,
+            active_zone=True,
+            qualified_zone=True,
+            required_active_qualifications=1,
+            entry_shadow_duration=timedelta(minutes=2),
+        )
+        self.assertEqual(shadow.tier, PoolTier.ENTRY_SHADOW)
+        self.assertEqual(shadow.consecutive_active_qualifications, 1)
+        self.assertEqual(shadow.shadow_ends_at, NOW + timedelta(minutes=2))
+        self.assertEqual(
+            advance_shadow_state(
+                shadow,
+                NOW + timedelta(minutes=1),
+                shadow_health_ok=True,
+                entry_shadow_duration=timedelta(minutes=2),
+            ).tier,
+            PoolTier.ENTRY_SHADOW,
+        )
+        self.assertEqual(
+            advance_shadow_state(
+                shadow,
+                NOW + timedelta(minutes=2),
+                shadow_health_ok=True,
+                entry_shadow_duration=timedelta(minutes=2),
+            ).tier,
+            PoolTier.ACTIVE,
+        )
+
     def test_two_qualified_falls_hard_fail_weight_limit_release_and_frozen_budget(self) -> None:
         active = SleeveDynamicState(day_start_base_weight=.10, effective_weight=.10, tier=PoolTier.ACTIVE, frozen_daily_loss_budget=15)
         once = update_rank_state(active, self.row, NOW, active_zone=True, qualified_zone=False)
@@ -125,10 +157,31 @@ class DynamicStateTests(unittest.TestCase):
         shadow = update_rank_state(first, self.row, NOW + timedelta(minutes=15), active_zone=True, qualified_zone=True)
         with self.assertRaises(TypeError):
             advance_shadow_state(shadow, NOW + timedelta(minutes=25))  # type: ignore[call-arg]
+        unhealthy_at = NOW + timedelta(minutes=16)
         unhealthy = advance_shadow_state(
-            shadow, NOW + timedelta(minutes=25), shadow_health_ok=False,
+            shadow, unhealthy_at, shadow_health_ok=False,
         )
-        self.assertEqual(unhealthy.tier, PoolTier.MONITOR)
+        self.assertEqual(unhealthy.tier, PoolTier.ENTRY_SHADOW)
+        self.assertEqual(unhealthy.consecutive_active_qualifications, 2)
+        self.assertEqual(unhealthy.shadow_started_at, unhealthy_at)
+        self.assertEqual(unhealthy.shadow_ends_at, unhealthy_at + timedelta(minutes=10))
+        self.assertEqual(unhealthy.effective_weight, 0)
+        premature = advance_shadow_state(
+            unhealthy, unhealthy_at + timedelta(minutes=9), shadow_health_ok=True,
+        )
+        self.assertEqual(premature.tier, PoolTier.ENTRY_SHADOW)
+        promoted = advance_shadow_state(
+            premature, unhealthy_at + timedelta(minutes=10), shadow_health_ok=True,
+        )
+        self.assertEqual(promoted.tier, PoolTier.ACTIVE)
+
+        disqualified = advance_shadow_state(
+            shadow, unhealthy_at, still_qualified=False, shadow_health_ok=True,
+        )
+        self.assertEqual(disqualified.tier, PoolTier.MONITOR)
+        self.assertEqual(disqualified.consecutive_active_qualifications, 0)
+        self.assertIsNone(disqualified.shadow_started_at)
+        self.assertIsNone(disqualified.shadow_ends_at)
 
     def test_entry_exit_expiry_are_separate_and_suspend_after_three(self) -> None:
         state = self.state

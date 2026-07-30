@@ -307,9 +307,15 @@ def update_rank_state(
     active_zone: bool,
     qualified_zone: bool,
     target_weight: float | None = None,
+    required_active_qualifications: int = 2,
+    entry_shadow_duration: timedelta = timedelta(minutes=10),
 ) -> SleeveDynamicState:
     """Apply one 15-minute rank decision without leaking client budget across sleeves."""
     now = _ensure_aware(now)
+    if required_active_qualifications < 1:
+        raise ValueError("required_active_qualifications must be positive")
+    if entry_shadow_duration <= timedelta(0):
+        raise ValueError("entry_shadow_duration must be positive")
     # Ranking feeds can replay after a restart or arrive out of order. A rank
     # cycle is a state transition, so replaying it must not advance counters or
     # consume another weight-increase allowance.
@@ -359,9 +365,9 @@ def update_rank_state(
 
     qualifications = state.consecutive_active_qualifications + 1 if active_ok else 0
     staged = replace(state, consecutive_active_qualifications=qualifications, last_ranked_at=now)
-    if qualifications >= 2:
+    if qualifications >= required_active_qualifications:
         return replace(staged, tier=PoolTier.ENTRY_SHADOW, shadow_started_at=now,
-                       shadow_ends_at=now + timedelta(minutes=10))
+                       shadow_ends_at=now + entry_shadow_duration)
     return staged
 
 
@@ -369,13 +375,22 @@ def advance_shadow_state(
     state: SleeveDynamicState, now: datetime, *, still_qualified: bool = True,
     shadow_health_ok: bool,
     target_weight: float | None = None,
+    entry_shadow_duration: timedelta = timedelta(minutes=10),
 ) -> SleeveDynamicState:
     """Advance shadows only after an explicitly healthy observation window."""
     now = _ensure_aware(now)
+    if entry_shadow_duration <= timedelta(0):
+        raise ValueError("entry_shadow_duration must be positive")
     if state.tier == PoolTier.ENTRY_SHADOW:
-        if not still_qualified or not shadow_health_ok:
+        if not still_qualified:
             return replace(_reduce_weight(state, 0.0, now), tier=PoolTier.MONITOR,
                            consecutive_active_qualifications=0, shadow_started_at=None, shadow_ends_at=None)
+        if not shadow_health_ok:
+            return replace(
+                _reduce_weight(state, 0.0, now),
+                shadow_started_at=now,
+                shadow_ends_at=now + entry_shadow_duration,
+            )
         recent_rank = state.last_ranked_at is not None and now - state.last_ranked_at <= timedelta(minutes=15)
         if state.shadow_ends_at is not None and now >= state.shadow_ends_at and recent_rank:
             promoted = replace(state, tier=PoolTier.ACTIVE, consecutive_qualified_falls=0)

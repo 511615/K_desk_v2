@@ -117,6 +117,10 @@ UNKNOWN_HOURLY_PUBLIC_COLUMNS = HOURLY_EVIDENCE_COLUMNS | {
     "recent_net_1h_usd",
     "recent_net_4h_usd",
 }
+DEFAULT_ENTRY_QUALIFICATIONS = 2
+DEFAULT_ENTRY_SHADOW_DURATION = timedelta(minutes=10)
+DEMO_FAST_ENTRY_QUALIFICATIONS = 1
+DEMO_FAST_ENTRY_SHADOW_DURATION = timedelta(minutes=2)
 
 
 def has_complete_hourly_evidence(pool: pd.DataFrame) -> bool:
@@ -915,17 +919,42 @@ class MultiSourceLiveService(LiveService):
                 self.run_hourly_discovery()
                 now = utc_now()
                 due = scheduler_due(self.scheduler_state, now)
+        fast_activation = (
+            self._demo_fast_activation_enabled() if due.risk or due.rank else False
+        )
+        required_qualifications = (
+            DEMO_FAST_ENTRY_QUALIFICATIONS
+            if fast_activation else DEFAULT_ENTRY_QUALIFICATIONS
+        )
+        entry_shadow_duration = (
+            DEMO_FAST_ENTRY_SHADOW_DURATION
+            if fast_activation else DEFAULT_ENTRY_SHADOW_DURATION
+        )
         if due.risk:
             healthy = self.operational_gates_ready()
             for key, state in list(self.sleeve_states.items()):
                 state = advance_expiry_recovery(state, now)
                 if state.tier in (PoolTier.ENTRY_SHADOW, PoolTier.RECOVERY_SHADOW):
                     row = self.sleeve_rows.get(key, {})
+                    current_product = self.portfolio.product_comprehensive_pnl_usd.get(
+                        key, float(row.get("comprehensive_net_20d_usd", 0.0) or 0.0)
+                    )
+                    still_qualified = (
+                        bool(row.get("factor_ready", False))
+                        and bool(
+                            row.get(
+                                "daily_activity_eligible",
+                                row.get("activity_eligible", False),
+                            )
+                        )
+                        and current_product > 0.0
+                    )
                     state = advance_shadow_state(
                         state, now,
-                        still_qualified=bool(row.get("factor_ready", False)),
+                        still_qualified=still_qualified,
                         shadow_health_ok=healthy,
                         target_weight=float(row.get("live_base_weight", 0.0) or 0.0),
+                        entry_shadow_duration=entry_shadow_duration,
                     )
                 self.sleeve_states[key] = state
             self.scheduler_state = mark_scheduler_run(
@@ -989,6 +1018,8 @@ class MultiSourceLiveService(LiveService):
                     active_zone=active_zone,
                     qualified_zone=qualified_zone,
                     target_weight=float(row.get("live_base_weight", 0.0) or 0.0),
+                    required_active_qualifications=required_qualifications,
+                    entry_shadow_duration=entry_shadow_duration,
                 )
             total_effective = sum(
                 state.effective_weight for state in self.sleeve_states.values()
@@ -1047,6 +1078,18 @@ class MultiSourceLiveService(LiveService):
         return (
             bool(getattr(getattr(self, "args", None), "allow_demo_min_lot_override", False))
             and str(getattr(account, "server", "")) == ALLOWED_SERVER
+            and str(getattr(self.args, "mode", "")) == "StagedLive"
+        )
+
+    def _demo_fast_activation_enabled(self, account: Any | None = None) -> bool:
+        requested = bool(
+            getattr(getattr(self, "args", None), "demo_fast_activation", False)
+        )
+        if not requested:
+            return False
+        account = account or self.mt.account()
+        return (
+            str(getattr(account, "server", "")) == ALLOWED_SERVER
             and str(getattr(self.args, "mode", "")) == "StagedLive"
         )
 
@@ -1374,6 +1417,7 @@ class MultiSourceLiveService(LiveService):
         status = super().public_status()
         assert self.portfolio is not None
         account = self.mt.account()
+        fast_activation = self._demo_fast_activation_enabled(account)
         portfolio_targets = self.portfolio.targets(float(account.equity))
         actual = self.mt.signed_positions()
         execution_weights = {
@@ -1462,6 +1506,18 @@ class MultiSourceLiveService(LiveService):
                 "portfolio_stress_budget_usd": float(account.equity) * 0.015,
                 "execution_model": "independent_customer_positions_v2",
                 "demo_minimum_lot_override": self._demo_minimum_lot_override_enabled(account),
+                "demo_fast_activation_requested": bool(
+                    getattr(self.args, "demo_fast_activation", False)
+                ),
+                "demo_fast_activation_enabled": fast_activation,
+                "entry_rank_qualifications_required": (
+                    DEMO_FAST_ENTRY_QUALIFICATIONS
+                    if fast_activation else DEFAULT_ENTRY_QUALIFICATIONS
+                ),
+                "entry_shadow_minutes": (
+                    DEMO_FAST_ENTRY_SHADOW_DURATION.total_seconds() / 60.0
+                    if fast_activation else DEFAULT_ENTRY_SHADOW_DURATION.total_seconds() / 60.0
+                ),
                 "active_weights": sum(execution_weights.values()),
                 "monitor_sleeves": len(self.pool_frame),
                 "active_copy_clients": len(active_accounts),
@@ -2282,6 +2338,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-seconds", type=float, default=0.0)
     parser.add_argument("--enable-live-trading", action="store_true")
     parser.add_argument("--allow-demo-min-lot-override", action="store_true")
+    parser.add_argument("--demo-fast-activation", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--force-rebuild", action="store_true")
     args = parser.parse_args()

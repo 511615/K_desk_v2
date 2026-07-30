@@ -255,6 +255,14 @@ to preserve execution suspension while resetting the old-position boundary. Vers
 tests additionally require hourly membership to survive restart, missing hourly values to remain
 unknown, zero-member sources to report idle rather than failed and the explicit Demo minimum-lot
 exception to retain portfolio stress, direction and margin limits.
+Entry-shadow regressions require the first pending source-reconciliation frame to preserve the
+two-of-two ranking qualification while restarting a full ten-minute healthy window. They also pin
+immediate monitor fallback on factor disqualification and prohibit promotion before continuous
+health completes. The same fallback is required when current comprehensive product profit becomes
+non-positive or activity eligibility is lost during shadow.
+Fast-activation regressions require an explicit option, `ACCMGlobal-Demo`, and `StagedLive` together;
+they pin one ranking plus two healthy minutes, status projection of requested/effective policy and
+the unchanged two-ranking/ten-minute default elsewhere.
 
 ## Release acceptance
 

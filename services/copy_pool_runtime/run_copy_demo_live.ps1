@@ -20,6 +20,8 @@ param(
 
     [switch] $AllowDemoMinLotOverride,
 
+    [switch] $DemoFastActivation,
+
     [switch] $PreflightOnly,
 
     [switch] $ForceRebuild,
@@ -186,6 +188,9 @@ try {
     }
     if ($AllowDemoMinLotOverride) {
         $arguments += '--allow-demo-min-lot-override'
+    }
+    if ($DemoFastActivation) {
+        $arguments += '--demo-fast-activation'
     }
     if ($PreflightOnly) {
         $arguments += '--preflight-only'
