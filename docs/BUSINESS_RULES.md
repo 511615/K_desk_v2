@@ -66,6 +66,11 @@
   Open, add, reduce, close and reverse events may touch only those Tickets. Opposing customers remain
   independently open; combination risk may reject or shrink additions but never nets customer
   Tickets. Startup and shadow-observed source positions are monitor-only and never chased.
+- The explicit Demo minimum-lot exception has stable ownership. Once a qualifying source Position
+  owns the only minimum lot for a product/direction, later reconciliations preserve that Ticket while
+  eligibility remains true; a sibling source Position cannot alternate into the slot. Eight open
+  requests are permitted in a rolling 60-second window; the next request hard-stops execution and
+  flattens strategy Tickets instead of allowing an order storm.
 - Independent Demo comments must fit the server's 16-character retained limit. Ownership state is
   persisted immediately before and after an execution. An unpersisted actual Ticket may be recovered
   only by a unique exact comment-plus-product match to a persisted source position; otherwise the
@@ -84,6 +89,9 @@
 - MT5 balance, credit and other non-trading ledger actions advance the per-source cursor so polling
   cannot stall, but they contribute no position change, intraday trading P/L, dynamic-weight change
   or executable signal. A duplicate or out-of-order cursor is ignored within that physical source.
+- MT4 snapshot signal age attaches UTC to raw `OPEN_TIME` for every physical MT4 source. The database
+  session's `+08:00` rendering of Unix timestamps is observation evidence, not the timezone of the
+  raw platform datetime.
 - Pool quality uses same-product closed trading net plus current same-product floating P/L for the
   strict positive candidate gate. Current floating profit cannot hide later account-risk failures or
   increase a dynamic weight. Current floating loss at or above 10% of equity or margin usage at or

@@ -105,6 +105,8 @@ SOURCE_CLOSE_LIMIT_SECONDS = 24 * 60 * 60
 PORTFOLIO_MARGIN_SOFT_FRACTION = 0.15
 PORTFOLIO_MARGIN_HARD_FRACTION = 0.25
 PORTFOLIO_CLUSTER_RISK_FRACTION = 0.40
+OPEN_REQUEST_WINDOW_SECONDS = 60.0
+OPEN_REQUEST_LIMIT = 8
 PORTFOLIO_CLIENT_RISK_FRACTION = 0.20
 HOURLY_EVIDENCE_COLUMNS = {
     "hourly_score",
@@ -182,6 +184,7 @@ class MultiSourceLiveService(LiveService):
         self.current_targets: dict[str, float] = {}
         self.product_execution: dict[str, dict[str, Any]] = {}
         self.product_order_counter: dict[str, int] = {}
+        self.open_request_times: list[float] = []
         self.copy_book = IndependentCopyBook()
         self.copy_recovery_shadow_started = 0.0
         self.last_client_risk_refresh = 0.0
@@ -1159,6 +1162,23 @@ class MultiSourceLiveService(LiveService):
                 clients[account_key] = clients.get(account_key, 0.0) + stress
         return total, clusters, clients
 
+    def _reserve_open_request(self) -> None:
+        now = time.monotonic()
+        recent = [
+            stamp
+            for stamp in getattr(self, "open_request_times", [])
+            if now - stamp < OPEN_REQUEST_WINDOW_SECONDS
+        ]
+        self.open_request_times = recent
+        if len(recent) >= OPEN_REQUEST_LIMIT:
+            error = RuntimeError(
+                f"Order storm guard blocked more than {OPEN_REQUEST_LIMIT} open requests "
+                f"within {OPEN_REQUEST_WINDOW_SECONDS:.0f} seconds."
+            )
+            self.execution_hard_stop("order_storm_guard", error)
+            raise error
+        recent.append(now)
+
     def _desired_copy_lots(
         self,
         position: IndependentCopyPosition,
@@ -1237,7 +1257,6 @@ class MultiSourceLiveService(LiveService):
             target_abs < minimum - 1e-12
             and proportional > 0.0
             and allow_increase
-            and current_abs < minimum - 1e-12
             and self._demo_minimum_lot_override_enabled(account)
             and total_stress + minimum * stress_per_lot <= cycle_budget + 1e-12
             and clusters.get((position.product, position.side), 0.0) < 1e-12
@@ -1345,6 +1364,7 @@ class MultiSourceLiveService(LiveService):
             )
             if can_open:
                 delta = target - before
+                self._reserve_open_request()
                 result = self.mt.open_position(
                     delta,
                     position.product,

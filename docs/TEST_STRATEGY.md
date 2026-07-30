@@ -243,6 +243,11 @@ reject both unowned actual Tickets and missing persisted Tickets. Exact offsetti
 must still flatten for outage, Friday, daily/equity/margin hard stops. Client tests cover the
 20/50/80/100% loss curve, two-hour pause, 15-minute recovery shadow, slow weight recovery, minimum
 risk-lot rejection, 12/24-hour rules, 40% cluster cap and 15%/25% margin gates.
+The Demo minimum-lot regression must keep one source Position's Ticket unchanged across repeated
+reconciliation while a same-direction sibling remains unfilled. A rolling order-storm fixture must
+hard-stop before a ninth open request in 60 seconds. MT4 adapter tests attach UTC to a naive raw
+`OPEN_TIME`, and a snapshot observed three seconds later must remain within the five-second budget
+instead of receiving an artificial eight-hour delay.
 Producer regressions also pin the broker-retained 16-character independent comment, migrate older
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched

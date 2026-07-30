@@ -15,7 +15,7 @@ from copy_independent_execution import (
     slow_weight_increase,
 )
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
-from copy_trading_multi_demo import MultiSourceLiveService, parse_args
+from copy_trading_multi_demo import OPEN_REQUEST_LIMIT, MultiSourceLiveService, parse_args
 from copy_pool_multisource import sleeve_key
 from copy_dynamic_pool_domain import PoolTier, SchedulerState, SleeveDynamicState, mark_scheduler_run
 
@@ -838,6 +838,49 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         with patch.object(service, "_position_hold_seconds", return_value=0.0):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
+
+    def test_demo_minimum_override_keeps_one_owner_without_reconcile_churn(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="StagedLive",
+        )
+        service.copy_book.clients["route:1"].loss_budget_usd = 5.0
+        _action, first = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 78, 0.0, 10.0, NOW
+        )
+        _action, second = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 79, 0.0, 10.0, NOW
+        )
+        assert first is not None and second is not None
+        first.copy_eligible = True
+        second.copy_eligible = True
+
+        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+            service._sync_independent_position(first, "first", allow_increase=True)
+            service._sync_independent_position(second, "second", allow_increase=True)
+            service.reconcile_independent_copies(allow_increase=True)
+            service.reconcile_independent_copies(allow_increase=True)
+
+        self.assertEqual([action[0] for action in mt.actions], ["open"])
+        self.assertEqual(first.copied_signed_lots, 0.01)
+        self.assertEqual(second.copied_signed_lots, 0.0)
+
+    def test_open_request_storm_guard_hard_stops_before_another_order(self) -> None:
+        service = self.service(FakeHedgingMt())
+        service.open_request_times = [100.0] * OPEN_REQUEST_LIMIT
+        hard_stops: list[tuple[str, str]] = []
+        service.execution_hard_stop = lambda reason, error: hard_stops.append(
+            (reason, str(error))
+        )
+
+        with patch("copy_trading_multi_demo.time.monotonic", return_value=120.0):
+            with self.assertRaisesRegex(RuntimeError, "Order storm guard"):
+                service._reserve_open_request()
+
+        self.assertEqual(len(service.open_request_times), OPEN_REQUEST_LIMIT)
+        self.assertEqual(hard_stops[0][0], "order_storm_guard")
 
     def test_twenty_four_hour_position_closes_only_timed_out_client(self) -> None:
         mt = FakeHedgingMt()

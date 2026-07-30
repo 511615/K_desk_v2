@@ -58,6 +58,10 @@ from a prior pool build cannot overwrite the current pool projection. The dashbo
 sleeve dynamic weight by the client-specific Demo loss-budget factor before clamping it through the
 sleeve base weight.
 
+For all four physical MT4 sources, raw `OPEN_TIME` is UTC platform time. The MySQL session renders
+Unix `TIMESTAMP` values at `+08:00`, but that session offset must not be attached to `OPEN_TIME`.
+Current-position routing attaches UTC directly before comparing source age with the signal budget.
+
 Open-position risk reads all market positions for each candidate, not only XAUUSD. MT5 uses current
 `mt5_positions` plus the current account `Profit`, `Equity` and `Margin`; MT4 uses `CMD IN (0,1)`
 rows with the 1970 close sentinel plus current user equity/margin. The producer persists open count,

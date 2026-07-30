@@ -92,6 +92,10 @@ The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGloba
 allocation is smaller, but only while whole-portfolio stress and margin permit it and no copied
 Ticket already occupies that product/direction. It does not bypass quote, spread, database,
 Ticket-ownership, daily-stop, equity-floor or margin hard gates and is never implicit.
+Once a source Position owns that minimum lot, normal reconciliation preserves the same Ticket while
+the source, weight and gates remain eligible; another same-direction Position cannot displace it.
+More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
+strategy flatten before another opening request is sent.
 
 The optional `-DemoFastActivation` switch is also effective only for `ACCMGlobal-Demo` in
 `StagedLive`. It changes entry from two consecutive rankings plus ten healthy minutes to one
@@ -198,6 +202,9 @@ them; those actions never change virtual positions, intraday trading P/L, dynami
 signals. MT4 remains snapshot-authoritative. The producer persists effective weights by composite
 account key; the dashboard prefers that current mapping over historical event rows and clamps any
 legacy fallback to zero through the accepted pool's base weight.
+Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
+render at `+08:00`; the producer attaches UTC before calculating signal age. This prevents a timely
+snapshot position from acquiring an artificial eight-hour delay.
 The producer also persists normalized per-account open-risk state. The dashboard prefers the
 runtime projection over the build-time snapshot, while missing legacy fields degrade to the build
 values without inventing a clean current state. Missing hourly discovery fields remain unknown and

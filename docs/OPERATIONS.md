@@ -70,6 +70,10 @@ the scheduler runs a bounded discovery immediately instead of publishing fabrica
 open at most one minimum copied lot per product/direction when portfolio stress and margin still
 fit. It does not authorize trading by itself: `-EnableLiveTrading`, terminal AutoTrading, healthy
 operational gates and a new post-activation source signal remain mandatory.
+The owning source Position retains that minimum lot across reconciliation. A rolling 60-second guard
+permits at most eight open requests; a ninth request enters execution hard stop and flattens strategy
+Tickets. Investigate and deploy a tested fix before restarting rather than repeatedly relaunching an
+unchanged Producer.
 
 `-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
 effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;
