@@ -237,6 +237,10 @@ reject both unowned actual Tickets and missing persisted Tickets. Exact offsetti
 must still flatten for outage, Friday, daily/equity/margin hard stops. Client tests cover the
 20/50/80/100% loss curve, two-hour pause, 15-minute recovery shadow, slow weight recovery, minimum
 risk-lot rejection, 12/24-hour rules, 40% cluster cap and 15%/25% margin gates.
+Producer regressions also pin the broker-retained 16-character independent comment, migrate older
+overlong persisted comments, persist source ownership on both sides of execution, recover exactly
+one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched
+Tickets rejected.
 Open-risk regressions require closed profit with a large floating loss to lose quality, positive
 floating P/L to add no score, negative realized and floating components to reduce weight without
 positive-component offset, Cent money-only conversion, gross exposure retention under a zero-net

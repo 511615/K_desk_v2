@@ -9,6 +9,7 @@ from copy_independent_execution import (
     ClientCopyRisk,
     DemoChildTicket,
     IndependentCopyBook,
+    copy_comment,
     loss_budget_multiplier,
     quantize_lots,
     slow_weight_increase,
@@ -145,6 +146,22 @@ class IndependentCopyBookTests(unittest.TestCase):
         self.assertTrue(restored.positions[position.source_key].copy_eligible)
         self.assertAlmostEqual(restored.clients["route:1"].loss_usage, 1 / 3)
         self.assertTrue(restored.clients["route:1"].is_paused(NOW))
+
+    def test_copy_comment_fits_broker_limit_and_migrates_legacy_value(self) -> None:
+        expected = copy_comment("C006", "ac_cn_mt5:9003434", 743880404, "XAUUSD")
+        self.assertEqual(expected, "CPV2:C006:CE2C63")
+        self.assertEqual(len(expected), 16)
+        book = IndependentCopyBook()
+        _action, position = book.observe_source_position(
+            "ac_cn_mt5:9003434", "C006", "XAUUSD", 743880404, 0.0, 0.01, NOW
+        )
+        assert position is not None
+        payload = book.to_private()
+        payload["positions"][position.source_key]["comment"] = expected + "0A"
+
+        restored = IndependentCopyBook.from_private(payload)
+
+        self.assertEqual(restored.positions[position.source_key].comment, expected)
 
     def test_closed_mapping_is_retained_for_cycle_pnl_and_pruned_next_day(self) -> None:
         book = IndependentCopyBook()
@@ -674,6 +691,50 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         position.children.append(DemoChildTicket(555, 0.01, 1, NOW.isoformat(), 4000.0))
         with self.assertRaisesRegex(RuntimeError, r"missing_demo=\[555\]"):
             service._validate_copy_ticket_mapping()
+
+    def test_mapping_validation_recovers_one_exact_comment_owner(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.service(mt)
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 55, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        mt.add(777, position.comment, 1, 0.01)
+
+        service._validate_copy_ticket_mapping()
+
+        self.assertEqual(service.copy_book.ticket_owners(), {777: position.source_key})
+
+    def test_source_change_persists_before_and_after_execution(self) -> None:
+        service = self.service(FakeHedgingMt())
+        service.phase = "live"
+        service.routed_clients = {
+            "route:1": SimpleNamespace(spec=SimpleNamespace(alias="C001"))
+        }
+        service.sleeve_states = {
+            sleeve_key("route:1", "XAUUSD"): SleeveDynamicState(
+                day_start_base_weight=0.2,
+                effective_weight=0.2,
+                tier=PoolTier.ACTIVE,
+            )
+        }
+        calls: list[str] = []
+        service.persist_private_state = lambda: calls.append("persist")
+        service._sync_independent_position = (
+            lambda *_args, **_kwargs: calls.append("execute")
+        )
+
+        service._handle_source_position_change(
+            account_key="route:1",
+            product="XAUUSD",
+            position_id=55,
+            before_lots=0.0,
+            after_lots=1.0,
+            signal_time=NOW,
+            reason="test",
+        )
+
+        self.assertEqual(calls, ["persist", "execute", "persist"])
 
     def test_exact_offsetting_tickets_are_all_closed_by_flatten(self) -> None:
         mt = FakeHedgingMt()

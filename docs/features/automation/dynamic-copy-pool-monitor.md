@@ -39,6 +39,11 @@ Existing source positions at startup and positions first observed during shadow 
 Restart requires persisted and actual Ticket ownership to match exactly.
 Closed source mappings remain in the current trading-day ledger so realized Demo P/L continues to
 consume the correct client's loss budget; empty closed mappings are pruned on the next trading day.
+Independent order comments are deterministic 16-character identifiers that survive the Demo
+server's comment limit without truncation. A source-position change is atomically persisted before
+and after execution. If a process interruption leaves an actual Ticket ahead of the second write,
+restart or the next loop may recover it only when comment and product match exactly one persisted
+source position; ambiguous or unmatched Tickets remain an execution hard stop.
 
 Base sleeve weights total 100%. Product weights use a 40% diversification cap when at least three
 qualified products make that cap feasible; with fewer products the unallocatable remainder is
