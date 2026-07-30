@@ -1,5 +1,22 @@
 export type NumericRow = Record<string, unknown>
 
+export const POOL_TIER_TABS = [
+  'active',
+  'entry_shadow',
+  'monitor',
+  'reserve',
+  'recovery_shadow',
+  'execution_suspended',
+  'hard_rejected',
+] as const
+
+export type PoolTierTab = typeof POOL_TIER_TABS[number]
+export type PoolTierRow = Record<string, unknown> & {
+  currentTier: PoolTierTab
+  dynamicState: Record<string, unknown> | null
+  clientRisk: Record<string, unknown> | null
+}
+
 export function accountPrimaryLabel(row: Record<string, unknown>): string {
   return String(row.accountLogin || '-')
 }
@@ -66,6 +83,75 @@ export function poolTierLabel(value: unknown): string {
     execution_suspended: '执行已暂停',
     hard_rejected: '硬门槛拒绝',
   } as Record<string, string>)[String(value || '')] || '层级未提供'
+}
+
+export function poolTierTabLabel(value: PoolTierTab): string {
+  return ({
+    active: '活动跟单池',
+    entry_shadow: '入场观察',
+    monitor: '监控池',
+    reserve: '候补池',
+    recovery_shadow: '恢复观察',
+    execution_suspended: '执行暂停',
+    hard_rejected: '硬门拒绝',
+  } as Record<PoolTierTab, string>)[value]
+}
+
+function normalizePoolTier(value: unknown): PoolTierTab {
+  const tier = String(value || '').trim().toLowerCase()
+  return (POOL_TIER_TABS as readonly string[]).includes(tier)
+    ? tier as PoolTierTab
+    : 'monitor'
+}
+
+function sleeveKey(row: Record<string, unknown>): string {
+  const direct = String(row.clientProductKey || '').trim()
+  if (direct) return direct
+  const alias = String(row.clientAlias || '').trim()
+  const product = String(row.product || '').trim().toUpperCase()
+  return alias && product ? `${alias}|${product}` : ''
+}
+
+function clientRiskTier(row: Record<string, unknown> | undefined): PoolTierTab | null {
+  switch (String(row?.status || '').trim().toLowerCase()) {
+    case 'recovery_shadow': return 'recovery_shadow'
+    case 'paused':
+    case 'risk_flattened': return 'execution_suspended'
+    case 'risk_rejected': return 'hard_rejected'
+    default: return null
+  }
+}
+
+export function resolvePoolTierRows(
+  pool: Record<string, unknown>[],
+  dynamicSleeves: Record<string, unknown>[],
+  clientRisks: Record<string, unknown>[],
+): PoolTierRow[] {
+  const dynamicBySleeve = new Map(dynamicSleeves.map(row => [sleeveKey(row), row]))
+  const riskByAlias = new Map(clientRisks.map(row => [String(row.clientAlias || ''), row]))
+  return pool.map(row => {
+    const dynamicState = dynamicBySleeve.get(sleeveKey(row)) || null
+    const clientRisk = riskByAlias.get(String(row.clientAlias || '')) || null
+    const dynamicTier = dynamicState ? normalizePoolTier(dynamicState.tier) : null
+    const currentTier = clientRiskTier(clientRisk || undefined) || dynamicTier
+      || normalizePoolTier(row.poolTier || row.tier || row.poolStatus)
+    return { ...row, currentTier, dynamicState, clientRisk }
+  })
+}
+
+export function poolTierReason(row: PoolTierRow): string {
+  const riskReason = String(row.clientRisk?.reductionReason || '').trim()
+  if (riskReason) return riskReason
+  const gates = Array.isArray(row.factorGateReasons)
+    ? row.factorGateReasons.map(String).filter(Boolean)
+    : String(row.factorGateReasons || '').split(/[|,;]/).map(value => value.trim()).filter(Boolean)
+  if (gates.length) return gates.join('、')
+  if (row.currentTier === 'active') return '已满足当前执行与风险条件'
+  if (row.currentTier === 'entry_shadow') return '等待影子观察连续健康通过'
+  if (row.currentTier === 'recovery_shadow') return '恢复前影子观察中'
+  if (row.currentTier === 'execution_suspended') return '执行已暂停，保留监控'
+  if (row.currentTier === 'hard_rejected') return '当前未通过硬门槛'
+  return weightReason(row)
 }
 
 export function schedulerStateLabel(value: unknown): string {
