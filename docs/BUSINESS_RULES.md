@@ -66,6 +66,10 @@
   Open, add, reduce, close and reverse events may touch only those Tickets. Opposing customers remain
   independently open; combination risk may reject or shrink additions but never nets customer
   Tickets. Startup and shadow-observed source positions are monitor-only and never chased.
+- Independent Demo comments must fit the server's 16-character retained limit. Ownership state is
+  persisted immediately before and after an execution. An unpersisted actual Ticket may be recovered
+  only by a unique exact comment-plus-product match to a persisted source position; otherwise the
+  execution hard stop remains in force.
 - The 10,000 USD profile uses a 1.5% combination cycle-loss budget and 3% daily hard stop. Each
   client's loss allowance is that cycle budget times its portfolio base weight and uses only that
   client's Demo realized plus floating P/L after commission, fee and swap. Loss use at 20/50/80/100%

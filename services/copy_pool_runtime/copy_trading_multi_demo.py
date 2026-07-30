@@ -829,6 +829,32 @@ class MultiSourceLiveService(LiveService):
         }
         owners = self.copy_book.ticket_owners()
         unknown = sorted(set(actual) - set(owners))
+        if unknown:
+            candidates: dict[tuple[str, str], list[IndependentCopyPosition]] = {}
+            for position in self.copy_book.positions.values():
+                candidates.setdefault(
+                    (position.comment, position.product), []
+                ).append(position)
+            recovered = 0
+            for ticket in unknown:
+                live = actual[ticket]
+                matches = candidates.get(
+                    (
+                        str(getattr(live, "comment", "") or ""),
+                        str(getattr(live, "symbol", "") or ""),
+                    ),
+                    [],
+                )
+                if len(matches) != 1:
+                    continue
+                self._sync_book_children(matches[0])
+                recovered += 1
+            if recovered:
+                self.log(
+                    f"Recovered {recovered} exact-comment Demo ticket mapping(s)."
+                )
+                owners = self.copy_book.ticket_owners()
+                unknown = sorted(set(actual) - set(owners))
         missing = sorted(set(owners) - set(actual))
         if unknown or missing:
             raise RuntimeError(
@@ -1370,9 +1396,11 @@ class MultiSourceLiveService(LiveService):
             and position.copy_eligible
             and policy == "normal"
         )
+        self.persist_private_state()
         self._sync_independent_position(
             position, reason, allow_increase=allow_increase
         )
+        self.persist_private_state()
         return action, position
 
     def persist_private_state(self) -> None:

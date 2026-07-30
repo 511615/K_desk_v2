@@ -14,7 +14,7 @@ def source_position_key(account_key: str, position_id: int, product: str) -> str
 def copy_comment(alias: str, account_key: str, position_id: int, product: str) -> str:
     digest = hashlib.sha1(
         f"{account_key}|{int(position_id)}|{product}".encode("utf-8")
-    ).hexdigest()[:8].upper()
+    ).hexdigest()[:6].upper()
     return f"CPV2:{alias}:{digest}"
 
 
@@ -307,6 +307,10 @@ class IndependentCopyBook:
         for key, raw in dict(payload.get("positions", {})).items():
             if not isinstance(raw, Mapping):
                 continue
+            account_key = str(raw["account_key"])
+            client_alias = str(raw["client_alias"])
+            product = str(raw["product"])
+            source_position_id = int(raw["source_position_id"])
             children = [
                 DemoChildTicket(
                     ticket=int(child["ticket"]),
@@ -320,14 +324,16 @@ class IndependentCopyBook:
             ]
             book.positions[str(key)] = IndependentCopyPosition(
                 source_key=str(key),
-                account_key=str(raw["account_key"]),
-                client_alias=str(raw["client_alias"]),
-                product=str(raw["product"]),
-                source_position_id=int(raw["source_position_id"]),
+                account_key=account_key,
+                client_alias=client_alias,
+                product=product,
+                source_position_id=source_position_id,
                 source_lots=float(raw.get("source_lots", 0.0)),
                 copied_lots=float(raw.get("copied_lots", 0.0)),
                 copy_eligible=bool(raw.get("copy_eligible", False)),
-                comment=str(raw.get("comment") or ""),
+                comment=copy_comment(
+                    client_alias, account_key, source_position_id, product
+                ),
                 status=str(raw.get("status") or "monitor"),
                 reject_reason=str(raw.get("reject_reason") or ""),
                 source_opened_at=str(raw.get("source_opened_at") or ""),
