@@ -60,6 +60,24 @@ MAX_DEVIATION_POINTS = 50
 LATENCY_GATE_WINDOW = 30
 MIN_LATENCY_GATE_SAMPLES = 20
 
+EVENT_PUBLIC_COLUMNS = (
+    "event_id", "time_beijing", "client_alias", "source_side", "source_entry",
+    "source_lots", "product", "effective_weight", "raw_target_lots",
+    "desired_target_lots", "actual_strategy_lots", "gross_long_lots",
+    "gross_short_lots", "db_latency_seconds", "phase", "reason",
+)
+ORDER_PUBLIC_COLUMNS = (
+    "order_event", "time_beijing", "action", "before_lots", "target_lots",
+    "after_lots", "bid", "ask", "spread_price", "quote_age_seconds", "retcode", "comment",
+)
+TIMELINE_PUBLIC_COLUMNS = (
+    "time_beijing", "phase", "risk_profile", "equity_usd", "position_cap_lots",
+    "active_weights", "raw_target_lots", "desired_target_lots", "actual_strategy_lots",
+    "gross_long_lots", "gross_short_lots", "spread_price", "db_latency_p95_seconds",
+    "strategy_marked_pnl_usd", "cycle_pnl_usd", "reconcile_streak",
+    "pending_source_snapshot_count", "duplicate_events",
+)
+
 
 @dataclass(frozen=True)
 class RiskProfile:
@@ -141,11 +159,44 @@ def atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def csv_schema_archive_path(path: Path) -> Path:
+    """Return an unused, same-directory archive path for an incompatible public CSV."""
+    stamp = utc_now().strftime("%Y%m%dT%H%M%S%fZ")
+    candidate = path.with_name(f"{path.stem}.schema-mismatch-{stamp}{path.suffix}")
+    sequence = 1
+    while candidate.exists():
+        candidate = path.with_name(
+            f"{path.stem}.schema-mismatch-{stamp}-{sequence}{path.suffix}"
+        )
+        sequence += 1
+    return candidate
+
+
+def ensure_csv_schema(path: Path, fieldnames: Iterable[str]) -> Path | None:
+    """Rotate a non-empty CSV whose header or row width differs from the schema."""
+    expected = tuple(fieldnames)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    with path.open("r", newline="", encoding="utf-8-sig") as handle:
+        rows = csv.reader(handle)
+        header = next(rows, [])
+        matches_schema = tuple(header) == expected and all(
+            len(row) == len(expected) for row in rows
+        )
+    if matches_schema:
+        return None
+    archive_path = csv_schema_archive_path(path)
+    path.replace(archive_path)
+    return archive_path
+
+
 def append_csv(path: Path, row: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = tuple(row.keys())
+    ensure_csv_schema(path, fieldnames)
     exists = path.exists() and path.stat().st_size > 0
     with path.open("a", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(row.keys()))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         if not exists:
             writer.writeheader()
         writer.writerow(row)
@@ -802,6 +853,9 @@ class LiveService:
         self.order_path = self.output_dir / "orders_public.csv"
         self.pool_path = self.output_dir / "pool_public.csv"
         self.timeline_path = self.output_dir / "status_timeline_public.csv"
+        ensure_csv_schema(self.event_path, EVENT_PUBLIC_COLUMNS)
+        ensure_csv_schema(self.order_path, ORDER_PUBLIC_COLUMNS)
+        ensure_csv_schema(self.timeline_path, TIMELINE_PUBLIC_COLUMNS)
         self.db = ReadOnlyDb()
         self.mt = Mt5Executor(args.terminal, self.profile)
         self.clients: dict[int, ClientSpec] = {}

@@ -210,6 +210,10 @@ account labels, Chinese operational labels and chart geometry. Browser acceptanc
 service with live local snapshots at desktop and mobile widths and confirms explicit base/current
 weight comparison, reduction reason, readable event/gate sections and account links. The legacy
 account detail contract must not embed a `复制实验` section or call the copy-pool dashboard.
+Producer CSV tests require an exact ordered header and row width for event, order and timeline
+streams, rotation of a mismatched legacy header/data layout before startup counter/latency
+restoration, byte-preserved timestamped archives and a newly headed current file so dashboard
+`DictReader` fields cannot shift.
 Execution-quality dashboard tests additionally require an explicit deferred historical-delay state,
 cashflow-adjusted drawdown coverage, holding/overnight/weekend fields, factor gate-code filtering,
 pool-tier projection and scheduler/dynamic-sleeve state. A dynamic state row with an unmapped private

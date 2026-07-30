@@ -210,6 +210,12 @@ The v6 execution-quality and sparse-product fallback `pool_public.csv` columns a
 contract. K_desk projects
 only their documented numeric/boolean fields and bounded gate codes, while status-level scheduler
 and dynamic sleeve records are anonymized through the current route map before response assembly.
+The append-only `events_public.csv`, `orders_public.csv` and `status_timeline_public.csv` files each
+require an exact producer header and row width. At producer startup and before every append, a
+missing or matching file is retained; a non-empty file with any different column order, name, header
+count or row count is atomically renamed in place to `*.schema-mismatch-<UTC timestamp>.csv` and a
+new public file starts with the current header. Archived rows remain byte-preserved for investigation
+and are intentionally not mixed into the current dashboard feed.
 
 The page does not query MySQL or MT terminals and does not start, stop or modify the copier. It has
 no order, balance, permission or MT Manager write action.
@@ -261,6 +267,8 @@ preservation. They also require hourly pool persistence, unknown rather than zer
 idle source semantics and the bounded explicit Demo minimum-lot exception.
 Producer and dashboard tests also cover the explicit Demo fast-activation scope, one-ranking/two-
 minute policy, default two-ranking/ten-minute compatibility and effective status projection.
+Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival and a clean current
+header/data file, preventing DictReader field shifts after a producer schema upgrade.
 
 ## Compatibility and deprecation
 
