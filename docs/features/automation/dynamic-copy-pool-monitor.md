@@ -44,6 +44,11 @@ server's comment limit without truncation. A source-position change is atomicall
 and after execution. If a process interruption leaves an actual Ticket ahead of the second write,
 restart or the next loop may recover it only when comment and product match exactly one persisted
 source position; ambiguous or unmatched Tickets remain an execution hard stop.
+After that recovery pass, every restored open source Position that still has no actual child Ticket
+is persistently downgraded to `restart_without_demo_ticket`. It remains monitor-only across every
+live reconciliation and is removed when the source closes; restart never turns it into a replacement
+Demo order. A uniquely recovered or already mapped Ticket remains eligible for reduction, close and
+risk management.
 
 Base sleeve weights total 100%. Product weights use a 40% diversification cap when at least three
 qualified products make that cap feasible; with fewer products the unallocatable remainder is
@@ -280,6 +285,9 @@ minute policy, default two-ranking/ten-minute compatibility and effective status
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
 MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
 file, preventing DictReader field shifts after a producer schema upgrade.
+Restart ownership regressions require an open persisted source Position without a real Demo child
+to remain monitor-only even in live reconciliation, retain a uniquely recoverable real Ticket, and
+remove the monitor-only mapping after its source close without sending a Demo order.
 
 ## Compatibility and deprecation
 

@@ -78,6 +78,10 @@ For an already mapped source Position, restart may lower the approved source qua
 offline reduction/close is observed, but it never raises or reverses that approved quantity without
 a new timely source event. Hourly entrants use the same old-position boundary. Retiring clients with
 same-day mapping/P&L ownership remain internally subscribed until the daily ledger reset.
+After exact Ticket recovery, a restored open source Position with no actual child Ticket is marked
+`restart_monitor_only` and made copy-ineligible. That persisted marker cannot be cleared by ordinary
+reconciliation; the mapping is deleted only when the source closes. A uniquely recovered actual
+Ticket is not marked and remains under exact ownership management.
 MT5 execution increments and MT4 authoritative snapshots use the same position-difference contract,
 so one account cannot modify another account's children.
 Closed mappings remain through the current trading day so comment-attributed realized Demo P/L stays

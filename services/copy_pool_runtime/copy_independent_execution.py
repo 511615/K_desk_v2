@@ -75,6 +75,7 @@ class IndependentCopyPosition:
     source_lots: float
     copied_lots: float = 0.0
     copy_eligible: bool = False
+    restart_monitor_only: bool = False
     comment: str = ""
     status: str = "monitor"
     reject_reason: str = ""
@@ -201,6 +202,26 @@ class IndependentCopyBook:
                 position.source_lots = 0.0
         self.legacy_source_positions.intersection_update(current)
 
+    def mark_restart_positions_monitor_only(
+        self,
+        restored_source_keys: Iterable[str],
+    ) -> int:
+        marked = 0
+        for key in restored_source_keys:
+            position = self.positions.get(str(key))
+            if (
+                position is None
+                or position.children
+                or abs(position.source_lots) < 1e-12
+            ):
+                continue
+            position.copy_eligible = False
+            position.restart_monitor_only = True
+            position.status = "monitor"
+            position.reject_reason = "restart_without_demo_ticket"
+            marked += 1
+        return marked
+
     def observe_source_position(
         self,
         account_key: str,
@@ -264,7 +285,10 @@ class IndependentCopyBook:
         # realized P/L still belongs to the originating client's loss budget.
         position = self.positions.get(source_key)
         if position is not None and not position.children and abs(position.source_lots) < 1e-12:
-            position.status = "closed"
+            if position.restart_monitor_only:
+                del self.positions[source_key]
+            else:
+                position.status = "closed"
 
     def prune_closed(self) -> None:
         self.positions = {
@@ -331,6 +355,7 @@ class IndependentCopyBook:
                 source_lots=float(raw.get("source_lots", 0.0)),
                 copied_lots=float(raw.get("copied_lots", 0.0)),
                 copy_eligible=bool(raw.get("copy_eligible", False)),
+                restart_monitor_only=bool(raw.get("restart_monitor_only", False)),
                 comment=copy_comment(
                     client_alias, account_key, source_position_id, product
                 ),

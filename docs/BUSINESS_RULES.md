@@ -113,6 +113,10 @@
 - Restart and hourly membership changes never authorize missed source increases or reversals.
   Offline reductions and closes may only reduce Demo risk; current positions first seen at restart
   or during entry shadow remain monitor-only until they close.
+- A persisted open source Position without an actual owned Demo Ticket is also monitor-only after
+  restart, even when its prior state was copy-eligible. Exact comment-plus-product recovery runs
+  first; only a uniquely recovered Ticket remains managed. The orphan source mapping is removed on
+  source close and can never create a replacement order.
 - Entry requires two consecutive active-zone rankings followed by ten continuous healthy shadow
   minutes. A transient operational-gate failure during entry shadow preserves those ranking
   qualifications but restarts the complete ten-minute health window; a factor-qualification loss,

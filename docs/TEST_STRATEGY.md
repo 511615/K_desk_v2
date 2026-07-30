@@ -252,6 +252,10 @@ Producer regressions also pin the broker-retained 16-character independent comme
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched
 Tickets rejected.
+Restart no-chase regressions also persist an eligible open source Position without a Demo child,
+prove live reconciliation sends no replacement order and preserves the explicit monitor reason,
+retain and close a uniquely recovered real Ticket, and remove a monitor-only mapping when its source
+closes without a Demo action.
 Open-risk regressions require closed profit with a large floating loss to lose quality, positive
 floating P/L to add no score, negative realized and floating components to reduce weight without
 positive-component offset, Cent money-only conversion, gross exposure retention under a zero-net

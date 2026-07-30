@@ -592,6 +592,7 @@ class MultiSourceLiveService(LiveService):
             if getattr(self, "pool_was_rebuilt", False)
             else IndependentCopyBook.from_private(saved.get("independent_copy"))
         )
+        restored_source_keys = set(self.copy_book.positions)
         self.portfolio = MultiSourcePortfolio(self.routed_clients)
         self.portfolio.replace_positions(rows)
         self.copy_book.mark_bootstrap_positions([
@@ -663,6 +664,14 @@ class MultiSourceLiveService(LiveService):
             self.cooldown_until = None
         self._initialize_client_copy_risk(float(account.equity))
         self._validate_copy_ticket_mapping()
+        restart_monitor_count = self.copy_book.mark_restart_positions_monitor_only(
+            restored_source_keys
+        )
+        if restart_monitor_count:
+            self.log(
+                f"Kept {restart_monitor_count} restored source position(s) monitor-only "
+                "because no owned Demo ticket exists."
+            )
         if any(client.products for client in self.routed_clients.values()):
             if not hasattr(self, "current_targets"):
                 self.current_targets = {
@@ -1385,8 +1394,12 @@ class MultiSourceLiveService(LiveService):
                 position.reject_reason = "execution_gate_blocked"
                 self.copy_book.rejected_events += 1
         elif abs(position.copied_signed_lots) < 1e-12:
-            position.status = "closed" if abs(position.source_lots) < 1e-12 else "monitor"
-            position.reject_reason = "" if abs(position.source_lots) < 1e-12 else decision
+            if position.restart_monitor_only and abs(position.source_lots) >= 1e-12:
+                position.status = "monitor"
+                position.reject_reason = "restart_without_demo_ticket"
+            else:
+                position.status = "closed" if abs(position.source_lots) < 1e-12 else "monitor"
+                position.reject_reason = "" if abs(position.source_lots) < 1e-12 else decision
         else:
             position.status = "active"
             position.reject_reason = "" if decision.startswith("risk_allowed") else decision
