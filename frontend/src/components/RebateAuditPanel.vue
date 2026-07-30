@@ -13,6 +13,7 @@ const selectedCandidate = ref(0)
 const busy = ref(false)
 const error = ref('')
 const panel = ref<HTMLElement | null>(null)
+const hideInactiveNodes = ref(false)
 
 watch(() => props.initialAccount, value => {
   if (value?.trim()) form.account = value.trim()
@@ -205,7 +206,7 @@ function exportTree(): void {
     <div v-if="result" class="rebate-result">
       <div class="rebate-result-head">
         <div><h3>账户 {{ result.account?.account }} · {{ result.assessment?.level }}</h3><small>{{ result.account?.environmentLabel }} · {{ result.account?.server || '-' }} · {{ result.query?.start }} 至 {{ result.query?.end }} · {{ result.assessment?.stage }} · 置信度{{ result.assessment?.confidence }}</small></div>
-        <div class="rebate-tools"><button title="导出不含任何评分内容的SVG树形图" @click="exportTree">导出树形图</button><button title="展开全部节点" @click="setAll(true)">全部展开</button><button title="收起全部节点" @click="setAll(false)">全部收起</button></div>
+        <div class="rebate-tools"><button title="隐藏0单0贡献账号及没有有效活动的下属节点" @click="hideInactiveNodes=!hideInactiveNodes">{{ hideInactiveNodes ? '显示空节点' : '隐藏空节点' }}</button><button title="导出不含任何评分内容的SVG树形图" @click="exportTree">导出树形图</button><button title="展开全部节点" @click="setAll(true)">全部展开</button><button title="收起全部节点" @click="setAll(false)">全部收起</button></div>
       </div>
       <div class="rebate-summary">
         <div><span>总体评分</span><b>{{ number(result.assessment?.score, 1) }}分</b></div>
@@ -216,7 +217,7 @@ function exportTree(): void {
         <div><span>所属客户</span><b>{{ result.account?.ownerName || result.account?.userId }}</b></div>
       </div>
       <div class="rebate-lineage"><template v-for="(node,index) in result.lineage || []" :key="node.userId"><span v-if="index">›</span><b>{{ node.type === 'ib' ? 'IB' : '客户' }} {{ node.name || node.userId }}</b></template></div>
-      <div class="rebate-tree"><RebateTreeNode :node="result.tree" :target-account="String(result.account?.account || '')" /></div>
+      <div class="rebate-tree"><RebateTreeNode :node="result.tree" :target-account="String(result.account?.account || '')" :hide-inactive="hideInactiveNodes" :full-history="Boolean(result.query?.fullHistory)" /></div>
     </div>
   </section>
 </template>

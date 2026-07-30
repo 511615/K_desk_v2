@@ -19,6 +19,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -35,7 +36,17 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 import hierarchy_net_deposit
 import rebate_churning
-from ea_comment_group import EaCommentGroupService, ea_comment_parts, ea_comment_totals
+from ea_comment_group import (
+    EaCommentGroupService,
+    classify_ea_comment,
+    ea_comment_identity,
+    ea_match_evidence,
+    ea_comment_parts,
+    ea_comment_query_plan,
+    ea_comment_totals,
+    ea_dynamic_identity,
+    ea_expert_sequence_match,
+)
 from signal_copy_group import SignalCopyGroupService, signal_group_totals, signal_in_identifier, signal_in_tag
 from account_logs import query_account_logs
 
@@ -50,6 +61,7 @@ TRADE_KLINE_WEB_URL = os.environ.get("TRADE_KLINE_WEB_URL", "http://127.0.0.1:87
 TRADE_DB_PATH = Path(os.environ.get("ACCOUNT_TRADE_DB_PATH", LEGACY_RISK_ROOT / "output_data" / "account_trade_lookup" / "trades.sqlite"))
 TRADE_DB_SOURCE = os.environ.get("ACCOUNT_TRADE_DB_SOURCE", "auto").lower()
 IP_HISTORY_DB_PATH = Path(os.environ.get("ACCOUNT_LOGIN_IP_DB_PATH", OUT_DIR / "account_login_ips.sqlite"))
+EA_PATTERN_DB_PATH = Path(os.environ.get("ACCOUNT_EA_PATTERN_DB_PATH", OUT_DIR / "ea_comment_patterns.sqlite"))
 IP_GEO_API_TEMPLATE = os.environ.get("ACCOUNT_IP_GEO_API", "https://ipwho.is/{ip}")
 IP_GEO_TIMEOUT = float(os.environ.get("ACCOUNT_IP_GEO_TIMEOUT", "4"))
 IP_GEO_CACHE_DAYS = int(os.environ.get("ACCOUNT_IP_GEO_CACHE_DAYS", "30"))
@@ -64,6 +76,7 @@ MYSQL_SOURCES = [
         "platform": "MT5",
         "server": "AC GB MT5",
         "kind": "mt5_deals",
+        "default_currency": "USD",
         "crm_schema": "int_sass_crm_ac",
         "mt_server_code": "1",
         "account_route": {"schema": "int_sass_crm_ac", "mt_server_code": "1"},
@@ -77,6 +90,7 @@ MYSQL_SOURCES = [
         "platform": "MT5",
         "server": "AC CN MT5",
         "kind": "mt5_deals",
+        "default_currency": "USD",
         "crm_schema": "sass_crm_ac",
         "mt_server_code": "1",
         "account_route": {"schema": "sass_crm_ac", "mt_server_code": "1"},
@@ -90,6 +104,7 @@ MYSQL_SOURCES = [
         "platform": "MT5",
         "server": "AC CN MT5 live3",
         "kind": "mt5_deals",
+        "default_currency": "USD",
         "crm_schema": "sass_crm_ac",
         "mt_server_code": "3",
         "account_route": {"schema": "sass_crm_ac", "mt_server_code": "3"},
@@ -131,6 +146,7 @@ MYSQL_SOURCES = [
         "platform": "MT5",
         "server": "DBG CN MT5",
         "kind": "mt5_deals",
+        "default_currency": "USD",
         "aliases": ["DBG MT5"],
         "account_route": {"schema": "crm_cn", "mt_server_code": "4"},
         "crm_routes": [{"schema": "crm_cn", "mt_server_code": "4"}],
@@ -143,9 +159,23 @@ MYSQL_SOURCES = [
         "platform": "MT5",
         "server": "DBG GB MT5",
         "kind": "mt5_deals",
+        "default_currency": "USD",
         "aliases": ["DBG MT5"],
         "account_route": {"schema": "crm_vn", "mt_server_code": "2"},
         "crm_routes": [{"schema": "crm_vn", "mt_server_code": "2"}],
+    },
+    {
+        "name": "DBG MT5 Live2",
+        "host": os.environ.get("ACCOUNT_TRADE_MYSQL_DBG_HOST", "rm-3nspk4458ag106ugaxo.mysql.cnhk.rds.aliyuncs.com"),
+        "schema": "crm_vn_mt5_live2",
+        "table": "mt5_deals",
+        "platform": "MT5",
+        "server": "DBG MT5 Live2",
+        "kind": "mt5_deals",
+        "default_currency": "USD",
+        "aliases": ["DBG MT5", "DBG GB MT5 Live2"],
+        "account_route": {"schema": "crm_vn", "mt_server_code": "5"},
+        "crm_routes": [{"schema": "crm_vn", "mt_server_code": "5"}],
     },
     {
         "name": "DBG MT4 CN1",
@@ -249,7 +279,7 @@ TOXIC_CHECK_TYPES = [
     {"id": "internal_lock_arbitrage", "label": "平台内多账户对锁", "requiresTick": False},
     {"id": "high_leverage_lock_arbitrage", "label": "高杠杆锁仓套利", "requiresTick": False},
     {"id": "weekend_gap_trading", "label": "周末跳空交易", "requiresTick": False},
-    {"id": "open_betting", "label": "赌开盘", "requiresTick": True},
+    {"id": "open_betting", "label": "赌开盘", "requiresTick": False},
     {"id": "news_event_betting", "label": "新闻 / 高波动赌博", "requiresTick": True},
 ]
 TOXIC_CHECK_TYPE_MAP = {item["id"]: item for item in TOXIC_CHECK_TYPES}
@@ -927,20 +957,22 @@ def summarize(records: list[dict[str, str]]) -> dict:
     }
 
 
+@lru_cache(maxsize=200000)
 def parse_trade_time(value: str | None) -> datetime | None:
     text = normalize_text(value)
     if not text:
         return None
     text = text.replace("T", " ")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
     for fmt, size in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16), ("%Y-%m-%d", 10)):
         try:
             return datetime.strptime(text[:size], fmt)
         except ValueError:
             continue
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
+    return None
 
 
 def trade_time_text(value: datetime | None) -> str:
@@ -1057,12 +1089,23 @@ def is_ea_trade(row: dict) -> bool:
     reason = normalize_text(row.get("reason")).lower()
     expert_id = normalize_text(row.get("expert_id"))
     comment = normalize_text(row.get("comment"))
-    return (
+    ea_hint = (
         reason == "expert"
         or mysql_int(row.get("reason_code"), -1) == 1
         or expert_id not in {"", "0"}
         or bool(re.search(r"(?i)(\bEA\b|expert|auto\s*trade|robot)", comment))
     )
+    if not ea_hint:
+        return False
+    source_comment = row.get("open_comment") or comment
+    if not normalize_text(source_comment):
+        return True
+    classification = classify_ea_comment(source_comment, ea_hint=True)
+    if classification["classification"] == "possible_copy_route":
+        return False
+    if classification["classification"] == "system_excluded":
+        return normalize_text(source_comment).casefold() in {"ea", "expert", "robot", "auto", "auto trade", "autotrade"}
+    return True
 
 
 def is_copy_trade(row: dict) -> bool:
@@ -1080,7 +1123,19 @@ def is_copy_trade(row: dict) -> bool:
 
 
 def copy_trade_order_ids(row: dict) -> list[str]:
-    return list(dict.fromkeys(re.findall(r"(?i)CPT-[A-Z0-9]+#(\d+)", normalize_text(row.get("comment")))))
+    source_comment = normalize_text(row.get("open_comment"))
+    if not source_comment:
+        source_comment = normalize_text(row.get("comment")).split(" / ", 1)[0]
+    return list(dict.fromkeys(re.findall(r"(?i)CPT-[A-Z0-9]+#(\d+)", source_comment)))
+
+
+def copy_trade_channels(row: dict) -> list[str]:
+    source_comment = normalize_text(row.get("open_comment"))
+    if not source_comment:
+        source_comment = normalize_text(row.get("comment")).split(" / ", 1)[0]
+    return list(dict.fromkeys(
+        value.upper() for value in re.findall(r"(?i)(CPT-[A-Z0-9]+)#\d+", source_comment)
+    ))
 
 
 def mysql_datetime_text(value: object) -> str:
@@ -1153,6 +1208,25 @@ def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None
                 return None
             cur.execute(sql, (int(account),))
             row = cur.fetchone() or {}
+            account_meta = account_money_meta(source_name=source.get("name"))
+            if mysql_int(row.get("RawRows")):
+                if source.get("kind") == "mt5_deals":
+                    account_meta = query_mysql_mt5_account_meta(cur, source, account)
+                else:
+                    try:
+                        cur.execute(
+                            f"select CURRENCY, `GROUP` as AccountGroup from `{source['schema']}`.`mt4_users_view` "
+                            "where LOGIN = %s limit 1",
+                            (int(account),),
+                        )
+                        meta_row = cur.fetchone() or {}
+                        if meta_row:
+                            account_meta = account_money_meta(
+                                meta_row.get("CURRENCY"), meta_row.get("AccountGroup"),
+                                source.get("name"), "mt4_users_view",
+                            )
+                    except Exception:
+                        pass
     if not mysql_int(row.get("RawRows")):
         return None
     symbols = [item for item in normalize_text(row.get("Symbols")).split(",") if item]
@@ -1168,7 +1242,7 @@ def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None
         "servers": [{"value": source.get("server", ""), "label": source.get("server", "")}],
         "symbols": symbols,
         "latestSource": {"platform": source.get("platform", ""), "server": source.get("server", "")},
-        "accountMeta": account_money_meta(source_name=source.get("name")),
+        "accountMeta": account_meta,
         "refreshedAt": now_text(),
     }
 
@@ -1230,37 +1304,69 @@ def account_lookup_databases(account: str) -> list[dict]:
     return account_cache_set(cache_key, matches)
 
 
-def account_money_meta(currency: object = "", group: object = "", source_name: object = "") -> dict:
+def group_indicates_cent_account(group: object) -> bool:
+    group_parts = {part for part in re.split(r"[\\/_\-.]+", normalize_text(group).upper()) if part}
+    return bool(group_parts.intersection({"CENT", "USC"}))
+
+
+def mt5_group_currency(group: object, default_currency: object = "USD") -> str:
+    group_parts = [part for part in re.split(r"[\\/_\-.]+", normalize_text(group).upper()) if part]
+    if any(part in {"CENT", "USC"} for part in group_parts):
+        return "USC"
+    supported = {"USD", "EUR", "GBP", "AUD", "JPY", "CAD", "CHF", "NZD", "SGD", "HKD"}
+    return next((part for part in group_parts if part in supported), normalize_text(default_currency).upper() or "USD")
+
+
+def account_money_meta(
+    currency: object = "",
+    group: object = "",
+    source_name: object = "",
+    currency_source: object = "",
+) -> dict:
     account_currency = normalize_text(currency).upper()
-    is_cent = account_currency == "USC"
+    account_group = normalize_text(group)
+    group_is_cent = group_indicates_cent_account(account_group)
+    is_cent = account_currency == "USC" or group_is_cent
+    if is_cent:
+        account_currency = "USC"
+    detected_source = normalize_text(currency_source)
+    if not detected_source:
+        detected_source = "currency" if normalize_text(currency) else "group" if group_is_cent else ""
     return {
         "currency": account_currency,
         "displayCurrency": "USD" if is_cent else account_currency,
         "moneyScale": 0.01 if is_cent else 1.0,
         "isCentAccount": is_cent,
-        "group": normalize_text(group),
+        "group": account_group,
         "source": normalize_text(source_name),
+        "currencySource": detected_source,
     }
 
 
 def query_mysql_mt5_account_meta(cur, source: dict, account: str) -> dict:
-    meta = account_money_meta(source_name=source.get("name"))
+    default_currency = normalize_text(source.get("default_currency")).upper() or "USD"
     try:
-        sql = f"""
-            select Currency, `Group` as AccountGroup
-            from `{source['schema']}`.`mt5_daily_view`
-            where Login = %s
-            order by Datetime desc
-            limit 1
-        """
-        cur.execute(sql, (int(account),))
+        cur.execute(
+            f"select `Group` as AccountGroup from `{source['schema']}`.`mt5_users_view` where Login = %s limit 1",
+            (int(account),),
+        )
         row = cur.fetchone() or {}
         if row:
-            meta = account_money_meta(row.get("Currency"), row.get("AccountGroup"), source.get("name"))
+            account_group = row.get("AccountGroup")
+            return account_money_meta(
+                mt5_group_currency(account_group, default_currency),
+                account_group,
+                source.get("name"),
+                "mt5_users_view.Group",
+            )
     except Exception:
-        # Some export schemas contain deals but not the account daily view.
+        # Some export schemas contain deals before a compatible users view is available.
         pass
-    return meta
+    return account_money_meta(
+        default_currency,
+        source_name=source.get("name"),
+        currency_source="source.default_currency",
+    )
 
 
 def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_meta: dict | None = None) -> list[dict]:
@@ -1300,7 +1406,7 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
                 "display_currency": account_meta.get("displayCurrency", ""),
                 "money_scale": money_scale,
                 "is_cent_account": bool(account_meta.get("isCentAccount")),
-                "currency_source": "mt5_daily_view" if account_meta.get("currency") else "",
+                "currency_source": normalize_text(account_meta.get("currencySource")),
                 "ticket": normalize_text(open_row.get("PositionID") or open_row.get("Order") or open_row.get("Deal")),
                 "open_time": open_time,
                 "close_time": close_time,
@@ -1320,6 +1426,7 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
                 "tp": open_row.get("PriceTP") or "",
                 "reason": trade_reason_label("MT5", open_row.get("Reason") if open_row.get("Reason") is not None else close_row.get("Reason")),
                 "reason_code": mysql_int(open_row.get("Reason") if open_row.get("Reason") is not None else close_row.get("Reason"), -1),
+                "open_comment": normalize_text(open_row.get("Comment")),
                 "comment": combined_trade_comment(open_row.get("Comment"), close_row.get("Comment")),
                 "expert_id": normalize_text(open_row.get("ExpertID") or close_row.get("ExpertID")),
                 "tick_value": numeric_value(open_row.get("TickValue") or close_row.get("TickValue")),
@@ -1375,8 +1482,9 @@ def query_mysql_mt4_source(
     start: str = "",
     end: str = "",
     limit: int | None = 50000,
+    tickets: list[int] | None = None,
 ) -> list[dict]:
-    where = ["LOGIN = %s", "CMD in (0, 1)"]
+    where = ["LOGIN = %s", "CMD in (0, 1)", "CLOSE_TIME > OPEN_TIME"]
     args: list[object] = [int(account)]
     if symbol:
         where.append("SYMBOL = %s")
@@ -1387,6 +1495,9 @@ def query_mysql_mt4_source(
     if end:
         where.append("OPEN_TIME <= %s")
         args.append(end)
+    if tickets:
+        where.append(f"TICKET in ({','.join(['%s'] * len(tickets))})")
+        args.extend(tickets)
     limit_clause = ""
     if limit is not None:
         if limit <= 0:
@@ -1416,7 +1527,10 @@ def query_mysql_mt4_source(
                     )
                     meta_row = cur.fetchone() or {}
                     if meta_row:
-                        account_meta = account_money_meta(meta_row.get("CURRENCY"), meta_row.get("AccountGroup"), source.get("name"))
+                        account_meta = account_money_meta(
+                            meta_row.get("CURRENCY"), meta_row.get("AccountGroup"),
+                            source.get("name"), "mt4_users_view",
+                        )
                 except Exception:
                     pass
     money_scale = numeric_value(account_meta.get("moneyScale")) or 1.0
@@ -1426,6 +1540,8 @@ def query_mysql_mt4_source(
         close_time = mysql_datetime_text(row.get("CLOSE_TIME"))
         open_dt = parse_trade_time(open_time)
         close_dt = parse_trade_time(close_time)
+        if not open_dt or not close_dt or close_dt <= open_dt:
+            continue
         out.append({
             "id": normalize_text(row.get("TICKET")),
             "source_id": normalize_text(source.get("name")),
@@ -1437,7 +1553,7 @@ def query_mysql_mt4_source(
             "display_currency": account_meta.get("displayCurrency", ""),
             "money_scale": money_scale,
             "is_cent_account": bool(account_meta.get("isCentAccount")),
-            "currency_source": "mt4_users_view" if account_meta.get("currency") else "",
+            "currency_source": normalize_text(account_meta.get("currencySource")),
             "ticket": normalize_text(row.get("TICKET")),
             "open_time": open_time,
             "close_time": close_time,
@@ -1457,9 +1573,42 @@ def query_mysql_mt4_source(
             "comment": normalize_text(row.get("COMMENT")),
             "expert_id": normalize_text(row.get("MAGIC")) if mysql_int(row.get("MAGIC")) else "",
             "holding_seconds": (close_dt - open_dt).total_seconds() if open_dt and close_dt else "",
-            "raw_json": json.dumps({"source": source.get("name"), "row": row}, ensure_ascii=False, default=str),
         })
     return out
+
+
+def query_mysql_mt4_orders_page_source(
+    source: dict,
+    account: str,
+    page: int,
+    page_size: int,
+) -> tuple[int, list[dict]]:
+    where = "LOGIN = %s and CMD in (0, 1) and CLOSE_TIME > OPEN_TIME"
+    offset = (page - 1) * page_size
+    with mysql_trade_connect(source) as conn:
+        with conn.cursor() as cur:
+            if not source_account_exists(cur, source, account):
+                return 0, []
+            cur.execute(
+                f"select count(*) as Total from `{source['schema']}`.`{source['table']}` where {where}",
+                (int(account),),
+            )
+            total = mysql_int((cur.fetchone() or {}).get("Total"))
+            cur.execute(
+                f"select TICKET from `{source['schema']}`.`{source['table']}` where {where} "
+                "order by CLOSE_TIME desc, TICKET desc limit %s offset %s",
+                (int(account), page_size, offset),
+            )
+            tickets = [mysql_int(row.get("TICKET")) for row in cur.fetchall() if mysql_int(row.get("TICKET"))]
+    rows = query_mysql_mt4_source(source, account, limit=None, tickets=tickets) if tickets else []
+    rows.sort(
+        key=lambda row: (
+            parse_trade_time(row.get("close_time") or row.get("open_time")) or datetime.min,
+            mysql_int(row.get("ticket")),
+        ),
+        reverse=True,
+    )
+    return total, rows
 
 
 def query_mysql_trades(
@@ -1469,7 +1618,7 @@ def query_mysql_trades(
     symbol: str = "",
     start: str = "",
     end: str = "",
-    limit: int = 50000,
+    limit: int | None = 50000,
 ) -> list[dict]:
     account = normalize_text(account)
     if not re.fullmatch(r"\d+", account):
@@ -1500,7 +1649,7 @@ def query_mysql_trades(
     if errors and not rows:
         raise RuntimeError("；".join(errors[:3]))
     rows.sort(key=lambda row: (normalize_text(row.get("open_time")), normalize_text(row.get("ticket"))))
-    return rows[:limit]
+    return rows if limit is None else rows[:limit]
 
 
 def query_mysql_trade_cost_source(
@@ -1700,7 +1849,7 @@ def _query_db_trades_uncached(
     symbol: str = "",
     start: str = "",
     end: str = "",
-    limit: int = 20000,
+    limit: int | None = 20000,
 ) -> list[dict]:
     account = normalize_text(account)
     if not account:
@@ -1744,7 +1893,8 @@ def _query_db_trades_uncached(
         order by coalesce(open_time, close_time), id
         limit ?
     """
-    args.append(limit)
+    sqlite_limit = int(limit) if limit is not None else 1000000
+    args.append(sqlite_limit)
     with trade_db_connect() as conn:
         rows = [dict(row) for row in conn.execute(sql, args).fetchall()]
     seen: set[tuple] = set()
@@ -1775,9 +1925,9 @@ def query_db_trades(
     symbol: str = "",
     start: str = "",
     end: str = "",
-    limit: int = 20000,
+    limit: int | None = 20000,
 ) -> list[dict]:
-    cache_key = ("trades", normalize_text(account), platform, server, symbol, start, end, int(limit))
+    cache_key = ("trades", normalize_text(account), platform, server, symbol, start, end, limit)
     cached = account_cache_get(cache_key)
     if cached is not None:
         return cached
@@ -1785,32 +1935,64 @@ def query_db_trades(
     return account_cache_set(cache_key, rows)
 
 
-def query_copy_origin_source(source: dict, order_ids: list[str]) -> list[dict]:
+def account_history_limit(platform: object) -> int | None:
+    """MT4 detail analytics must not silently truncate high-volume account history."""
+    return None if normalize_text(platform).upper() == "MT4" else 50000
+
+
+def account_trade_analysis(login: str, platform: str = "", server: str = "") -> dict:
+    """Share the expensive full-history read and metric calculation across account panels."""
+    login = normalize_text(login)
+    platform = normalize_text(platform).upper()
+    server = normalize_text(server)
+    cache_key = ("trade-analysis", login, platform, server)
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    scope = {"platform": platform, "server": server}
+    history_limit = account_history_limit(platform)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="account-analysis") as executor:
+        rows_future = executor.submit(query_db_trades, login, limit=history_limit, **scope)
+        costs_future = executor.submit(query_mysql_trade_costs, login, **scope) if TRADE_DB_SOURCE in {"mysql", "auto"} else None
+        rows = rows_future.result()
+        uses_mysql = any(row.get("data_source") == "mysql" for row in rows)
+        costs = costs_future.result() if uses_mysql and costs_future else None
+    return account_cache_set(cache_key, {
+        "rows": rows,
+        "costs": costs,
+        "metrics": trade_metrics(rows, costs),
+        "usesMysql": uses_mysql,
+        "historyLimit": history_limit,
+    })
+
+
+def query_copy_origin_source(source: dict, order_ids: list[str], batch_size: int = 500) -> list[dict]:
     numeric_ids = sorted({int(order_id) for order_id in order_ids if normalize_text(order_id).isdigit()})
     if not numeric_ids:
         return []
-    placeholders = ",".join(["%s"] * len(numeric_ids))
-    if source.get("kind") == "mt5_deals":
-        sql = f"""
-            select Deal, Login, `Order`, PositionID, Time, Symbol, Comment
-            from `{source['schema']}`.`{source['table']}`
-            where PositionID in ({placeholders})
-            order by Time, Deal
-        """
-        args = tuple(numeric_ids)
-    else:
-        sql = f"""
-            select TICKET, LOGIN, OPEN_TIME, SYMBOL, COMMENT
-            from `{source['schema']}`.`{source['table']}`
-            where TICKET in ({placeholders})
-            order by OPEN_TIME, TICKET
-        """
-        args = tuple(numeric_ids)
     requested = {str(value) for value in numeric_ids}
+    raw_rows: list[dict] = []
     with mysql_trade_connect(source) as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, args)
-            raw_rows = cur.fetchall()
+            for offset in range(0, len(numeric_ids), batch_size):
+                batch = numeric_ids[offset:offset + batch_size]
+                placeholders = ",".join(["%s"] * len(batch))
+                if source.get("kind") == "mt5_deals":
+                    sql = f"""
+                        select Deal, Login, `Order`, PositionID, Time, Symbol, Comment
+                        from `{source['schema']}`.`{source['table']}`
+                        where PositionID in ({placeholders})
+                        order by Time, Deal
+                    """
+                else:
+                    sql = f"""
+                        select TICKET, LOGIN, OPEN_TIME, SYMBOL, COMMENT
+                        from `{source['schema']}`.`{source['table']}`
+                        where TICKET in ({placeholders})
+                        order by OPEN_TIME, TICKET
+                    """
+                cur.execute(sql, tuple(batch))
+                raw_rows.extend(cur.fetchall())
     results = []
     for row in raw_rows:
         if source.get("kind") == "mt5_deals":
@@ -1839,7 +2021,10 @@ def query_copy_origin_source(source: dict, order_ids: list[str]) -> list[dict]:
     return results
 
 
-def _copy_source_windows(source_orders: list[dict], limit: int = 200) -> tuple[list[tuple[datetime, datetime, set[str]]], bool]:
+def _copy_source_windows(
+    source_orders: list[dict],
+    limit: int | None = None,
+) -> tuple[list[tuple[datetime, datetime, set[str]]], bool]:
     valid_orders: list[tuple[datetime, str]] = []
     for order in source_orders:
         order_id = normalize_text(order.get("orderId"))
@@ -1847,9 +2032,10 @@ def _copy_source_windows(source_orders: list[dict], limit: int = 200) -> tuple[l
         if order_id.isdigit() and event_time:
             valid_orders.append((event_time, order_id))
     valid_orders.sort(key=lambda item: (item[0], int(item[1])))
-    truncated = len(valid_orders) > limit
+    truncated = limit is not None and len(valid_orders) > limit
+    selected_orders = valid_orders if limit is None else valid_orders[:limit]
     grouped: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
-    for event_time, order_id in valid_orders[:limit]:
+    for event_time, order_id in selected_orders:
         grouped[event_time.strftime("%Y-%m-%d %H")].append((event_time, order_id))
     windows = []
     for values in grouped.values():
@@ -1863,8 +2049,33 @@ def _copy_follower_money_meta(cur, source: dict, accounts: set[str]) -> dict[str
     metadata: dict[str, dict] = {}
     numeric_accounts = sorted({int(account) for account in accounts if normalize_text(account).isdigit()})
     if source.get("kind") == "mt5_deals":
+        default_currency = normalize_text(source.get("default_currency")).upper() or "USD"
+        for offset in range(0, len(numeric_accounts), 500):
+            batch = numeric_accounts[offset:offset + 500]
+            placeholders = ",".join(["%s"] * len(batch))
+            cur.execute(
+                f"select Login, `Group` as AccountGroup from `{source['schema']}`.`mt5_users_view` "
+                f"where Login in ({placeholders})",
+                tuple(batch),
+            )
+            for row in cur.fetchall():
+                account = normalize_text(row.get("Login"))
+                account_group = row.get("AccountGroup")
+                metadata[account] = account_money_meta(
+                    mt5_group_currency(account_group, default_currency),
+                    account_group,
+                    source.get("name"),
+                    "mt5_users_view.Group",
+                )
         for account in numeric_accounts:
-            metadata[str(account)] = query_mysql_mt5_account_meta(cur, source, str(account))
+            metadata.setdefault(
+                str(account),
+                account_money_meta(
+                    default_currency,
+                    source_name=source.get("name"),
+                    currency_source="source.default_currency",
+                ),
+            )
         return metadata
     for offset in range(0, len(numeric_accounts), 300):
         batch = numeric_accounts[offset:offset + 300]
@@ -1884,106 +2095,139 @@ def query_copy_followers_source(
     source: dict,
     source_orders: list[dict],
     *,
-    source_order_limit: int = 200,
-    row_limit: int = 20000,
+    copy_channels: list[str] | None = None,
+    comment_batch_size: int = 500,
+    position_batch_size: int = 5000,
 ) -> dict:
-    windows, source_orders_truncated = _copy_source_windows(source_orders, source_order_limit)
-    if not windows:
+    requested_ids = {
+        normalize_text(order.get("orderId"))
+        for order in source_orders
+        if normalize_text(order.get("orderId")).isdigit()
+    }
+    channels = sorted({
+        normalize_text(channel).upper()
+        for channel in (copy_channels or [])
+        if re.fullmatch(r"(?i)CPT-[A-Z0-9]+", normalize_text(channel))
+    })
+    if not requested_ids:
         return {
-            "rows": [], "sourceOrdersScanned": 0, "sourceOrdersTruncated": source_orders_truncated,
-            "candidateRowsTruncated": False,
+            "rows": [], "sourceOrdersScanned": 0, "sourceOrdersTruncated": False,
+            "candidateRowsTruncated": False, "queryStrategy": "exact-comment",
         }
     matches: dict[tuple[str, str], dict] = {}
-    candidate_rows_truncated = False
     with mysql_trade_connect(source) as conn:
         with conn.cursor() as cur:
-            for start, end, requested_ids in windows:
-                if source.get("kind") == "mt5_deals":
+            if source.get("kind") == "mt5_deals" and channels:
+                exact_comments = sorted(
+                    f"{channel}#{order_id}"
+                    for channel in channels
+                    for order_id in requested_ids
+                )
+                candidate_rows: list[dict] = []
+                for offset in range(0, len(exact_comments), comment_batch_size):
+                    batch = exact_comments[offset:offset + comment_batch_size]
+                    placeholders = ",".join(["%s"] * len(batch))
                     sql = f"""
                         select Deal, Login, `Order`, PositionID, Time, TimeMsc, Action, Entry,
                                Symbol, Volume, VolumeExt, Profit, Commission, Storage, Fee, Comment
                         from `{source['schema']}`.`{source['table']}`
-                        where Time >= %s and Time <= %s and Action in (0,1) and Comment like %s
+                        where Comment in ({placeholders}) and Action in (0,1) and Entry in (0,2)
                         order by TimeMsc, Deal
-                        limit %s
                     """
-                else:
+                    cur.execute(sql, tuple(batch))
+                    candidate_rows.extend(cur.fetchall())
+            else:
+                candidate_rows = []
+                windows, _ = _copy_source_windows(source_orders)
+                for start, end, window_ids in windows:
+                    if channels:
+                        comments = sorted(
+                            f"{channel}#{order_id}"
+                            for channel in channels
+                            for order_id in window_ids
+                        )
+                        comment_clause = f"COMMENT in ({','.join(['%s'] * len(comments))})"
+                        comment_args: tuple[object, ...] = tuple(comments)
+                    else:
+                        comment_clause = "COMMENT like %s"
+                        comment_args = ("%CPT-%",)
                     sql = f"""
                         select LOGIN, TICKET, OPEN_TIME, CLOSE_TIME, SYMBOL, VOLUME,
                                PROFIT, COMMISSION, SWAPS, TAXES, COMMENT
                         from `{source['schema']}`.`{source['table']}`
-                        where OPEN_TIME >= %s and OPEN_TIME <= %s and CMD in (0,1) and COMMENT like %s
+                        where OPEN_TIME >= %s and OPEN_TIME <= %s and CMD in (0,1) and {comment_clause}
                         order by OPEN_TIME, TICKET
-                        limit %s
                     """
-                cur.execute(
-                    sql,
-                    (start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S"), "%CPT-%", row_limit + 1),
-                )
-                raw_rows = cur.fetchall()
-                if len(raw_rows) > row_limit:
-                    candidate_rows_truncated = True
-                    raw_rows = raw_rows[:row_limit]
-                for row in raw_rows:
-                    comment = normalize_text(row.get("Comment") or row.get("COMMENT"))
-                    matched_ids = sorted(requested_ids.intersection(copy_trade_order_ids({"comment": comment})), key=int)
-                    if not matched_ids:
-                        continue
-                    account = normalize_text(row.get("Login") or row.get("LOGIN"))
-                    ticket = normalize_text(row.get("PositionID") or row.get("TICKET"))
-                    if not account or not ticket:
-                        continue
-                    key = (account, ticket)
-                    item = matches.setdefault(key, {"seed": row, "matchedSourceOrderIds": set()})
-                    item["matchedSourceOrderIds"].update(matched_ids)
+                    cur.execute(sql, (
+                        start.strftime("%Y-%m-%d %H:%M:%S"),
+                        end.strftime("%Y-%m-%d %H:%M:%S"),
+                        *comment_args,
+                    ))
+                    candidate_rows.extend(cur.fetchall())
+
+            for row in candidate_rows:
+                comment = normalize_text(row.get("Comment") or row.get("COMMENT"))
+                matched_ids = sorted(requested_ids.intersection(copy_trade_order_ids({"comment": comment})), key=int)
+                if not matched_ids:
+                    continue
+                account = normalize_text(row.get("Login") or row.get("LOGIN"))
+                ticket = normalize_text(row.get("PositionID") or row.get("TICKET"))
+                if not account or not ticket:
+                    continue
+                key = (account, ticket)
+                item = matches.setdefault(key, {"seed": row, "matchedSourceOrderIds": set()})
+                item["matchedSourceOrderIds"].update(matched_ids)
 
             accounts = {key[0] for key in matches}
             metadata = _copy_follower_money_meta(cur, source, accounts)
             result_rows: list[dict] = []
             if source.get("kind") == "mt5_deals":
-                deal_groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
                 position_ids = sorted({int(key[1]) for key in matches if key[1].isdigit()})
-                for offset in range(0, len(position_ids), 300):
-                    batch = position_ids[offset:offset + 300]
+                for offset in range(0, len(position_ids), position_batch_size):
+                    batch = position_ids[offset:offset + position_batch_size]
                     placeholders = ",".join(["%s"] * len(batch))
                     cur.execute(
                         f"""
-                            select Deal, Login, `Order`, PositionID, Time, TimeMsc, Action, Entry,
-                                   Symbol, Volume, VolumeExt, Profit, Commission, Storage, Fee, Comment
+                            select Login, PositionID, min(Symbol) as Symbol,
+                                   min(case when Entry in (0,2) then Time end) as OpenTime,
+                                   max(case when Entry in (1,2,3) then Time end) as CloseTime,
+                                   sum(case when Entry in (0,2) then Volume else 0 end) as OpenVolume,
+                                   sum(Profit) as GrossProfit,
+                                   sum(Commission) + sum(Fee) as CommissionFee,
+                                   sum(Storage) as Swap
                             from `{source['schema']}`.`{source['table']}`
                             where PositionID in ({placeholders}) and Action in (0,1)
-                            order by TimeMsc, Deal
+                            group by Login, PositionID
                         """,
                         tuple(batch),
                     )
-                    for deal in cur.fetchall():
-                        key = (normalize_text(deal.get("Login")), normalize_text(deal.get("PositionID")))
-                        if key in matches:
-                            deal_groups[key].append(deal)
-                for key, match in matches.items():
-                    deals = deal_groups.get(key) or [match["seed"]]
-                    account, position = key
-                    meta = metadata.get(account) or account_money_meta(source_name=source.get("name"))
-                    scale = numeric_value(meta.get("moneyScale")) or 1.0
-                    opened = [parse_trade_time(row.get("Time")) for row in deals if mysql_int(row.get("Entry")) in {0, 2}]
-                    closed = [parse_trade_time(row.get("Time")) for row in deals if mysql_int(row.get("Entry")) in {1, 2, 3}]
-                    entry_volumes = [normalize_mt5_volume(row.get("Volume")) for row in deals if mysql_int(row.get("Entry")) in {0, 2}]
-                    gross = sum(numeric_value(row.get("Profit")) for row in deals) * scale
-                    commission = sum(numeric_value(row.get("Commission")) + numeric_value(row.get("Fee")) for row in deals) * scale
-                    swap = sum(numeric_value(row.get("Storage")) for row in deals) * scale
-                    result_rows.append({
-                        "account": account, "platform": normalize_text(source.get("platform")),
-                        "server": normalize_text(source.get("server") or source.get("name")), "ticket": position,
-                        "matchedSourceOrderIds": sorted(match["matchedSourceOrderIds"], key=int),
-                        "openTime": mysql_datetime_text(min(filter(None, opened), default=None)),
-                        "closeTime": mysql_datetime_text(max(filter(None, closed), default=None)),
-                        "symbol": normalize_text(next((row.get("Symbol") for row in deals if row.get("Symbol")), "")),
-                        "volume": rounded(sum(entry_volumes), 4), "grossProfit": rounded(gross),
-                        "commission": rounded(commission), "swap": rounded(swap), "taxes": 0.0,
-                        "netProfit": rounded(gross + commission + swap),
-                        "currency": normalize_text(meta.get("currency")), "displayCurrency": normalize_text(meta.get("displayCurrency")),
-                        "isCentAccount": bool(meta.get("isCentAccount")),
-                    })
+                    for aggregate in cur.fetchall():
+                        account = normalize_text(aggregate.get("Login"))
+                        position = normalize_text(aggregate.get("PositionID"))
+                        match = matches.get((account, position))
+                        if not match:
+                            continue
+                        meta = metadata.get(account) or account_money_meta(source_name=source.get("name"))
+                        scale = numeric_value(meta.get("moneyScale")) or 1.0
+                        gross = numeric_value(aggregate.get("GrossProfit")) * scale
+                        commission = numeric_value(aggregate.get("CommissionFee")) * scale
+                        swap = numeric_value(aggregate.get("Swap")) * scale
+                        symbol = normalize_text(aggregate.get("Symbol") or match["seed"].get("Symbol"))
+                        result_rows.append({
+                            "account": account, "platform": normalize_text(source.get("platform")),
+                            "server": normalize_text(source.get("server") or source.get("name")),
+                            "orders": 1, "ticket": position, "tickets": [position],
+                            "matchedSourceOrderIds": sorted(match["matchedSourceOrderIds"], key=int),
+                            "openTime": mysql_datetime_text(aggregate.get("OpenTime") or match["seed"].get("Time")),
+                            "closeTime": mysql_datetime_text(aggregate.get("CloseTime")),
+                            "symbol": symbol, "symbols": [symbol] if symbol else [],
+                            "volume": rounded(normalize_mt5_volume(aggregate.get("OpenVolume")), 4),
+                            "grossProfit": rounded(gross, 6),
+                            "commission": rounded(commission, 6), "swap": rounded(swap, 6), "taxes": 0.0,
+                            "netProfit": rounded(gross + commission + swap, 6),
+                            "currency": normalize_text(meta.get("currency")), "displayCurrency": normalize_text(meta.get("displayCurrency")),
+                            "isCentAccount": bool(meta.get("isCentAccount")),
+                        })
             else:
                 for key, match in matches.items():
                     row = match["seed"]
@@ -2000,17 +2244,22 @@ def query_copy_followers_source(
                         "matchedSourceOrderIds": sorted(match["matchedSourceOrderIds"], key=int),
                         "openTime": mysql_datetime_text(row.get("OPEN_TIME")), "closeTime": mysql_datetime_text(row.get("CLOSE_TIME")),
                         "symbol": normalize_text(row.get("SYMBOL")), "volume": rounded(normalize_mt4_volume(row.get("VOLUME")), 4),
-                        "grossProfit": rounded(gross), "commission": rounded(commission), "swap": rounded(swap),
-                        "taxes": rounded(taxes), "netProfit": rounded(gross + commission + swap + taxes),
+                        "grossProfit": rounded(gross, 6), "commission": rounded(commission, 6), "swap": rounded(swap, 6),
+                        "taxes": rounded(taxes, 6), "netProfit": rounded(gross + commission + swap + taxes, 6),
                         "currency": normalize_text(meta.get("currency")), "displayCurrency": normalize_text(meta.get("displayCurrency")),
                         "isCentAccount": bool(meta.get("isCentAccount")),
                     })
-    result_rows.sort(key=lambda row: (row["account"], row.get("openTime") or "", row["ticket"]))
+    result_rows.sort(key=lambda row: (
+        row["account"],
+        row.get("openTime") or "",
+        row.get("ticket") or next(iter(row.get("tickets") or []), ""),
+    ))
     return {
         "rows": result_rows,
-        "sourceOrdersScanned": sum(len(ids) for _, _, ids in windows),
-        "sourceOrdersTruncated": source_orders_truncated,
-        "candidateRowsTruncated": candidate_rows_truncated,
+        "sourceOrdersScanned": len(requested_ids),
+        "sourceOrdersTruncated": False,
+        "candidateRowsTruncated": False,
+        "queryStrategy": "exact-comment" if channels else "time-window-fallback",
     }
 
 
@@ -2027,16 +2276,18 @@ def summarize_copy_followers(rows: list[dict], current_account: str = "") -> tup
             "currency": normalize_text(row.get("currency")), "displayCurrency": normalize_text(row.get("displayCurrency")),
             "isCentAccount": bool(row.get("isCentAccount")),
         })
-        item["orders"] += 1
+        item["orders"] += max(1, mysql_int(row.get("orders")))
         for field in ("volume", "grossProfit", "commission", "swap", "taxes", "netProfit"):
             item[field] += numeric_value(row.get(field))
         item["sourceOrderIds"].update(normalize_text(value) for value in row.get("matchedSourceOrderIds", []) if normalize_text(value))
-        if normalize_text(row.get("symbol")):
-            item["symbols"].add(normalize_text(row.get("symbol")))
-        if normalize_text(row.get("ticket")) and len(item["tickets"]) < 12:
-            item["tickets"].append(normalize_text(row.get("ticket")))
-        opened = normalize_text(row.get("openTime"))
-        closed = normalize_text(row.get("closeTime")) or opened
+        row_symbols = row.get("symbols") or [row.get("symbol")]
+        item["symbols"].update(normalize_text(value) for value in row_symbols if normalize_text(value))
+        row_tickets = row.get("tickets") or [row.get("ticket")]
+        for ticket in row_tickets:
+            if normalize_text(ticket) and len(item["tickets"]) < 12:
+                item["tickets"].append(normalize_text(ticket))
+        opened = normalize_text(row.get("firstTime") or row.get("openTime"))
+        closed = normalize_text(row.get("lastTime") or row.get("closeTime")) or opened
         if opened:
             item["firstTime"] = min(filter(None, [item["firstTime"], opened]), default=opened)
         if closed:
@@ -2076,14 +2327,24 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         raise ValueError("账号格式无效")
     platform = normalize_text(filters.get("platform")).upper()
     server = normalize_text(filters.get("server"))
+    cache_key = (
+        "copy-origins",
+        login,
+        *(normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")),
+    )
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
     rows = query_db_trades(login, platform=platform, server=server, limit=50000)
     order_ids = list(dict.fromkeys(
         order_id
         for row in rows
         for order_id in copy_trade_order_ids(row)
-    ))[:1000]
+    ))
     if not order_ids:
-        return {"ok": True, "account": login, "detected": False, "orderIds": [], "origins": [], "primaryOrigin": None}
+        return account_cache_set(cache_key, {
+            "ok": True, "account": login, "detected": False, "orderIds": [], "origins": [], "primaryOrigin": None,
+        })
     sources = [source for source in MYSQL_SOURCES if source_allowed(source, platform=platform, server=server)]
     candidates: list[dict] = []
     errors: list[str] = []
@@ -2147,25 +2408,54 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
             unresolved_rows.append(row)
         else:
             assigned[origin_index].append(row)
+    follower_requests: list[tuple[dict, dict, list[str]]] = []
     for index, origin in enumerate(origins):
         source_rows = assigned.get(index, [])
+        copy_channels = sorted({
+            channel
+            for row in source_rows
+            for channel in copy_trade_channels(row)
+        })
         stats = automation_stats(source_rows, total_orders, total_volume)
         source_volume = numeric_value(stats.get("volume"))
         origin.update({
             **stats,
+            "copyChannels": copy_channels,
             "copyOrderRatio": rounded(len(source_rows) / len(copy_rows) * 100) if copy_rows else 0,
             "copyVolumeRatio": rounded(source_volume / copy_volume * 100) if copy_volume else 0,
         })
         source = next((item for item in sources if normalize_text(item.get("platform")) == origin["platform"] and normalize_text(item.get("server") or item.get("name")) == origin["server"]), None)
         if source:
-            try:
-                discovery = query_copy_followers_source(source, origin.get("sourceOrders", []))
-                followers, follower_summary = summarize_copy_followers(discovery.get("rows", []), login)
-                origin.update({"followers": followers, "followerSummary": follower_summary, "followerDiscovery": {key: value for key, value in discovery.items() if key != "rows"}})
-            except Exception as exc:
-                origin.update({"followers": [], "followerSummary": {}, "followerDiscovery": {"error": str(exc)}})
-                errors.append(f"{origin['server']} 跟单人员查询: {exc}")
-    return {
+            follower_requests.append((origin, source, copy_channels))
+    if follower_requests:
+        with ThreadPoolExecutor(
+            max_workers=min(4, len(follower_requests)),
+            thread_name_prefix="copy-followers",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    query_copy_followers_source,
+                    source,
+                    origin.get("sourceOrders", []),
+                    copy_channels=copy_channels,
+                ): (origin, source)
+                for origin, source, copy_channels in follower_requests
+            }
+            for future in as_completed(futures):
+                origin, _source = futures[future]
+                try:
+                    discovery = future.result()
+                    followers, follower_summary = summarize_copy_followers(discovery.get("rows", []), login)
+                    origin.update({
+                        "followers": followers,
+                        "followerOrders": discovery.get("rows", []),
+                        "followerSummary": follower_summary,
+                        "followerDiscovery": {key: value for key, value in discovery.items() if key != "rows"},
+                    })
+                except Exception as exc:
+                    origin.update({"followers": [], "followerOrders": [], "followerSummary": {}, "followerDiscovery": {"error": str(exc)}})
+                    errors.append(f"{origin['server']} 跟单人员查询: {exc}")
+    return account_cache_set(cache_key, {
         "ok": True,
         "account": login,
         "detected": True,
@@ -2182,7 +2472,7 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         "primaryOrigin": origins[0] if origins else None,
         "errors": errors[:5],
         "refreshedAt": now_text(),
-    }
+    })
 
 
 
@@ -2206,8 +2496,17 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
 
 
 def account_copy_group_profit_payload(login: str, filters: dict | None = None) -> dict:
+    filters = filters or {}
+    cache_key = (
+        "copy-group-profit",
+        normalize_text(login),
+        *(normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")),
+    )
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
     service = SignalCopyGroupService(sys.modules[__name__])
-    return service.payload(login, filters)
+    return account_cache_set(cache_key, service.payload(login, filters))
 
 
 def account_ea_comment_profit_payload(login: str, filters: dict | None = None) -> dict:
@@ -2282,7 +2581,7 @@ def account_automation_payload(login: str, filters: dict | None = None) -> dict:
     if cached is not None:
         return {"ok": True, **cached}
 
-    rows = query_db_trades(login, limit=50000, **active_filters)
+    rows = query_db_trades(login, limit=account_history_limit(active_filters["platform"]), **active_filters)
     total_orders = len(rows)
     total_volume = sum(numeric_value(row.get("volume")) for row in rows if is_chartable_trade(row))
     signal_seeds, signal_errors = account_signal_copy_seeds(
@@ -3254,11 +3553,29 @@ def query_mt4_finance_panel(source: dict, account: str, rows: list[dict], metric
     }
 
 
-def query_same_name_logins(source: dict, account: str) -> list[str]:
+def source_for_crm_route(crm_schema: object, mt_server_code: object) -> dict | None:
+    route_key = (normalize_text(crm_schema), normalize_text(mt_server_code))
+    for candidate in MYSQL_SOURCES:
+        if route_key in {
+            (route["schema"], route["mt_server_code"])
+            for route in source_crm_routes(candidate)
+        }:
+            return candidate
+    return None
+
+
+def query_same_name_accounts(source: dict, account: str) -> list[dict]:
     routes = source_crm_routes(source)
+    fallback = [{
+        "account": normalize_text(account),
+        "source": source,
+        "crmSchema": normalize_text((routes or [{}])[0].get("schema")),
+        "mtServerCode": normalize_text((routes or [{}])[0].get("mt_server_code")),
+    }]
     if not routes:
-        return [normalize_text(account)]
-    matched_logins: list[str] = []
+        return fallback
+    matched_accounts: list[dict] = []
+    seen: set[tuple[str, str, str]] = set()
     with mysql_trade_connect(source) as conn:
         with conn.cursor() as cur:
             for route in routes:
@@ -3271,15 +3588,30 @@ def query_same_name_logins(source: dict, account: str) -> list[str]:
                 if not user_id:
                     continue
                 cur.execute(
-                    f"select mt_login from `{route['schema']}`.`mt_users_account` where user_id = %s and mt_server_code = %s order by mt_login",
-                    (user_id, route["mt_server_code"]),
+                    f"select mt_login, mt_server_code from `{route['schema']}`.`mt_users_account` "
+                    "where user_id = %s order by mt_server_code, mt_login",
+                    (user_id,),
                 )
-                matched_logins.extend(
-                    normalize_text(item.get("mt_login"))
-                    for item in cur.fetchall()
-                    if normalize_text(item.get("mt_login"))
-                )
-    return list(dict.fromkeys(matched_logins)) or [normalize_text(account)]
+                for item in cur.fetchall():
+                    same_login = normalize_text(item.get("mt_login"))
+                    server_code = normalize_text(item.get("mt_server_code"))
+                    key = (route["schema"], server_code, same_login)
+                    if not same_login or key in seen:
+                        continue
+                    seen.add(key)
+                    matched_accounts.append({
+                        "account": same_login,
+                        "source": source_for_crm_route(route["schema"], server_code),
+                        "crmSchema": route["schema"],
+                        "mtServerCode": server_code,
+                    })
+    return matched_accounts or fallback
+
+
+def query_same_name_logins(source: dict, account: str) -> list[str]:
+    return list(dict.fromkeys(
+        item["account"] for item in query_same_name_accounts(source, account) if item.get("account")
+    ))
 
 
 def query_mt5_database_statuses(source: dict, accounts: list[str]) -> dict[str, str]:
@@ -3335,29 +3667,77 @@ def build_riskdash_panels(login: str, all_rows: list[dict], all_metrics: dict, f
         return {"available": False, "reason": "当前服务器尚未配置风控面板数据源"}
 
     finance_query = query_mt5_finance_panel if platform == "MT5" else query_mt4_finance_panel
-    trade_query = query_mysql_mt5_source if platform == "MT5" else query_mysql_mt4_source
     finance = finance_query(source, login, all_rows, all_metrics)
     records = load_records()
-    same_name_logins = query_same_name_logins(source, login)
-    database_statuses = (
-        query_mt5_database_statuses(source, same_name_logins)
-        if platform == "MT5"
-        else query_mt4_database_statuses(source, same_name_logins)
-    )
-    def build_same_name_row(same_login: str) -> dict:
-        if same_login == normalize_text(login):
+    same_name_accounts = query_same_name_accounts(source, login)
+    status_groups: dict[tuple[str, str], dict] = {}
+    for item in same_name_accounts:
+        item_source = item.get("source")
+        if not item_source:
+            continue
+        status_key = (normalize_text(item_source.get("platform")), normalize_text(item_source.get("server")))
+        group = status_groups.setdefault(status_key, {"source": item_source, "accounts": []})
+        group["accounts"].append(normalize_text(item.get("account")))
+    database_statuses: dict[tuple[str, str, str], str] = {}
+    for status_key, group in status_groups.items():
+        item_source = group["source"]
+        status_query = query_mt5_database_statuses if item_source.get("kind") == "mt5_deals" else query_mt4_database_statuses
+        try:
+            statuses = status_query(item_source, group["accounts"])
+        except Exception:
+            statuses = {}
+        for same_login, status in statuses.items():
+            database_statuses[(*status_key, same_login)] = status
+
+    def item_key(item: dict) -> tuple[str, str, str]:
+        item_source = item.get("source") or {}
+        return (
+            normalize_text(item_source.get("platform")),
+            normalize_text(item_source.get("server")),
+            normalize_text(item.get("account")),
+        )
+
+    def empty_same_name_row(item: dict) -> dict:
+        same_login = normalize_text(item.get("account"))
+        item_source = item.get("source") or {}
+        item_platform = normalize_text(item_source.get("platform"))
+        item_server = normalize_text(item_source.get("server"))
+        if not item_server:
+            item_server = f"{normalize_text(item.get('crmSchema'))} code {normalize_text(item.get('mtServerCode'))}".strip()
+        ledger = ledger_record_for_login(same_login, records)
+        return {
+            "server": item_server, "platform": item_platform, "account": same_login, "currency": "",
+            "balance": 0, "equity": 0, "netDeposit": 0, "holdingProfit": 0,
+            "closedNetProfit": 0, "adjustments": 0, "rebate": 0, "comprehensiveProfit": 0,
+            "highestHoldingVolume": 0,
+            "databaseStatus": "未配置数据源" if not item.get("source") else database_statuses.get(item_key(item), ""),
+            "localStatus": normalize_text(ledger.get("建议动作")) if ledger else "",
+        }
+
+    def build_same_name_row(item: dict) -> dict:
+        same_login = normalize_text(item.get("account"))
+        item_source = item.get("source")
+        if not item_source:
+            return empty_same_name_row(item)
+        item_platform = normalize_text(item_source.get("platform"))
+        item_server = normalize_text(item_source.get("server"))
+        is_current = same_login == normalize_text(login) and item_platform == platform and item_server == server
+        item_finance_query = query_mt5_finance_panel if item_source.get("kind") == "mt5_deals" else query_mt4_finance_panel
+        item_trade_query = query_mysql_mt5_source if item_source.get("kind") == "mt5_deals" else query_mysql_mt4_source
+        if is_current:
             trade_rows = all_rows
             metrics = all_metrics
             account_finance = finance
         else:
-            trade_rows = trade_query(source, same_login, limit=50000)
-            costs = query_mysql_trade_costs(same_login, platform=platform, server=server)
+            peer_limit = None if item_source.get("kind") == "mt4_trades" else 50000
+            trade_rows = item_trade_query(item_source, same_login, limit=peer_limit)
+            costs = query_mysql_trade_costs(same_login, platform=item_platform, server=item_server)
             metrics = trade_metrics(trade_rows, costs)
-            account_finance = finance_query(source, same_login, trade_rows, metrics)
+            account_finance = item_finance_query(item_source, same_login, trade_rows, metrics)
         ledger = ledger_record_for_login(same_login, records)
         return {
-            "server": server,
-            "platform": platform,
+            "server": item_server,
+            "platform": item_platform,
             "account": same_login,
             "currency": account_finance.get("currency", ""),
             "balance": account_finance["balance"],
@@ -3369,33 +3749,31 @@ def build_riskdash_panels(login: str, all_rows: list[dict], all_metrics: dict, f
             "rebate": account_finance["rebate"],
             "comprehensiveProfit": account_finance["comprehensiveProfit"],
             "highestHoldingVolume": account_finance["highestHoldingVolume"],
-            "databaseStatus": database_statuses.get(same_login, ""),
+            "databaseStatus": database_statuses.get(item_key(item), ""),
             "localStatus": normalize_text(ledger.get("建议动作")) if ledger else "",
         }
 
-    same_name_by_login: dict[str, dict] = {}
-    current_login = normalize_text(login)
-    if current_login in same_name_logins:
-        same_name_by_login[current_login] = build_same_name_row(current_login)
-    other_logins = [same_login for same_login in same_name_logins if same_login != current_login]
-    if len(other_logins) == 1:
-        same_name_by_login[other_logins[0]] = build_same_name_row(other_logins[0])
-    elif other_logins:
-        with ThreadPoolExecutor(max_workers=min(8, len(other_logins)), thread_name_prefix="same-name") as executor:
-            futures = {executor.submit(build_same_name_row, same_login): same_login for same_login in other_logins}
+    same_name_by_key: dict[tuple[str, str, str], dict] = {}
+    current_items = [item for item in same_name_accounts if item_key(item) == (platform, server, normalize_text(login))]
+    for item in current_items:
+        same_name_by_key[item_key(item)] = build_same_name_row(item)
+    other_items = [item for item in same_name_accounts if item_key(item) != (platform, server, normalize_text(login))]
+    if len(other_items) == 1:
+        item = other_items[0]
+        try:
+            same_name_by_key[item_key(item)] = build_same_name_row(item)
+        except Exception:
+            same_name_by_key[item_key(item)] = empty_same_name_row(item)
+    elif other_items:
+        with ThreadPoolExecutor(max_workers=min(8, len(other_items)), thread_name_prefix="same-name") as executor:
+            futures = {executor.submit(build_same_name_row, item): item for item in other_items}
             for future in as_completed(futures):
-                same_login = futures[future]
+                item = futures[future]
                 try:
-                    same_name_by_login[same_login] = future.result()
+                    same_name_by_key[item_key(item)] = future.result()
                 except Exception:
-                    same_name_by_login[same_login] = {
-                        "server": server, "platform": platform, "account": same_login, "currency": "",
-                        "balance": 0, "equity": 0, "netDeposit": 0, "holdingProfit": 0,
-                        "closedNetProfit": 0, "adjustments": 0, "rebate": 0, "comprehensiveProfit": 0,
-                        "highestHoldingVolume": 0, "databaseStatus": database_statuses.get(same_login, ""),
-                        "localStatus": normalize_text((ledger_record_for_login(same_login, records) or {}).get("建议动作")),
-                    }
-    same_name_rows = [same_name_by_login[same_login] for same_login in same_name_logins if same_login in same_name_by_login]
+                    same_name_by_key[item_key(item)] = empty_same_name_row(item)
+    same_name_rows = [same_name_by_key[item_key(item)] for item in same_name_accounts if item_key(item) in same_name_by_key]
     total_fields = ("balance", "equity", "netDeposit", "holdingProfit", "closedNetProfit", "adjustments", "rebate", "comprehensiveProfit")
     totals = {field: rounded(sum(numeric_value(row.get(field)) for row in same_name_rows)) for field in total_fields}
     return {
@@ -3442,13 +3820,12 @@ def _account_database_detail_uncached(login: str, filters: dict | None = None) -
     source_scope = {key: active_filters[key] for key in ("platform", "server")}
     detail_filters = {key: active_filters[key] for key in ("symbol", "start", "end")}
     try:
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="account-detail") as executor:
-            rows_future = executor.submit(query_db_trades, login, limit=50000, **source_scope)
-            costs_future = executor.submit(query_mysql_trade_costs, login, **source_scope) if TRADE_DB_SOURCE in {"mysql", "auto"} else None
-            all_rows = rows_future.result()
-            uses_mysql = any(row.get("data_source") == "mysql" for row in all_rows)
-            all_costs = costs_future.result() if uses_mysql and costs_future else None
-        filtered_rows = query_db_trades(login, limit=50000, **active_filters) if any(detail_filters.values()) else all_rows
+        analysis = account_trade_analysis(login, **source_scope)
+        history_limit = analysis["historyLimit"]
+        all_rows = analysis["rows"]
+        all_costs = analysis["costs"]
+        uses_mysql = analysis["usesMysql"]
+        filtered_rows = query_db_trades(login, limit=history_limit, **active_filters) if any(detail_filters.values()) else all_rows
     except Exception as exc:
         return {
             "exists": False,
@@ -3459,8 +3836,8 @@ def _account_database_detail_uncached(login: str, filters: dict | None = None) -
         }
 
     filtered_costs = query_mysql_trade_costs(login, **active_filters) if uses_mysql and any(detail_filters.values()) else all_costs
-    all_metrics = trade_metrics(all_rows, all_costs)
-    filtered_metrics = trade_metrics(filtered_rows, filtered_costs)
+    all_metrics = analysis["metrics"]
+    filtered_metrics = trade_metrics(filtered_rows, filtered_costs) if filtered_rows is not all_rows else all_metrics
     risk_panels = {"available": False, "loading": True, "reason": "正在加载风控面板..."}
     platforms = sorted({normalize_text(row.get("platform")) for row in all_rows if normalize_text(row.get("platform"))})
     servers = sorted({normalize_text(row.get("server")) for row in all_rows if normalize_text(row.get("server"))})
@@ -3517,10 +3894,13 @@ def account_risk_panels_payload(login: str, filters: dict | None = None) -> dict
     if cached is not None:
         return {"ok": True, "riskPanels": cached}
     try:
-        all_rows = query_db_trades(login, limit=50000, **source_scope)
-        filtered_rows = query_db_trades(login, limit=50000, **active_filters) if any(active_filters[key] for key in ("symbol", "start", "end")) else all_rows
-        costs = query_mysql_trade_costs(login, **source_scope) if any(row.get("data_source") == "mysql" for row in all_rows) else None
-        panels = build_riskdash_panels(login, all_rows, trade_metrics(all_rows, costs), filtered_rows)
+        analysis = account_trade_analysis(login, **source_scope)
+        history_limit = analysis["historyLimit"]
+        all_rows = analysis["rows"]
+        if not all_rows:
+            raise RuntimeError("数据库暂无订单")
+        filtered_rows = query_db_trades(login, limit=history_limit, **active_filters) if any(active_filters[key] for key in ("symbol", "start", "end")) else all_rows
+        panels = build_riskdash_panels(login, all_rows, analysis["metrics"], filtered_rows)
     except Exception as exc:
         panels = {"available": False, "reason": str(exc)}
     account_cache_set(cache_key, panels)
@@ -3537,7 +3917,8 @@ def account_lookup_finance_payload(login: str, platform: str = "", server: str =
     cached = account_cache_get(cache_key)
     if cached is not None:
         return {"ok": True, **cached}
-    rows = query_db_trades(login, platform=platform, server=server, limit=50000)
+    analysis = account_trade_analysis(login, platform=platform, server=server)
+    rows = analysis["rows"]
     row_servers = {normalize_text(row.get("server")) for row in rows if normalize_text(row.get("server"))}
     resolved_server = next(iter(row_servers)) if len(row_servers) == 1 else server
     source = next((
@@ -3546,8 +3927,7 @@ def account_lookup_finance_payload(login: str, platform: str = "", server: str =
     ), None)
     if not source:
         raise ValueError("当前平台或服务器未配置")
-    costs = query_mysql_trade_costs(login, platform=platform, server=server) if rows and any(row.get("data_source") == "mysql" for row in rows) else None
-    metrics = trade_metrics(rows, costs)
+    metrics = analysis["metrics"]
     if platform == "MT5":
         finance = query_mt5_finance_panel(source, login, rows, metrics)
         database_status = query_mt5_database_statuses(source, [login]).get(login, "")
@@ -3914,12 +4294,38 @@ def public_trade_order(row: dict) -> dict:
     }
 
 
-def account_orders_payload(login: str, page: int = 1, page_size: int = 100) -> dict:
+def account_orders_payload(
+    login: str,
+    page: int = 1,
+    page_size: int = 100,
+    platform: str = "",
+    server: str = "",
+) -> dict:
     login = normalize_text(login)
     if not login or len(login) > 64 or not re.fullmatch(r"[0-9A-Za-z_.-]+", login):
         raise ValueError("账号格式无效")
     page = max(int(page or 1), 1)
     page_size = min(max(int(page_size or 100), 20), 200)
+    platform = normalize_text(platform).upper()
+    server = normalize_text(server)
+    sources = [source for source in MYSQL_SOURCES if source_allowed(source, platform=platform, server=server)]
+    if platform == "MT4" and len(sources) == 1 and sources[0].get("kind") == "mt4_trades":
+        cache_key = ("orders-page", login, platform, server, page, page_size)
+        cached = account_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        total, rows = query_mysql_mt4_orders_page_source(sources[0], login, page, page_size)
+        payload = {
+            "ok": True,
+            "account": login,
+            "page": page,
+            "pageSize": page_size,
+            "total": total,
+            "pages": max((total + page_size - 1) // page_size, 1),
+            "truncated": False,
+            "orders": [public_trade_order(row) for row in rows],
+        }
+        return account_cache_set(cache_key, payload)
     rows = query_db_trades(login, limit=50000)
     rows.sort(
         key=lambda row: parse_trade_time(row.get("close_time") or row.get("open_time")) or datetime.min,
@@ -4862,6 +5268,57 @@ def toxic_sync_candidates_for_source(
     } for item in candidates]
 
 
+def toxic_sync_candidates_across_sources(
+    sources: list[dict],
+    login: str,
+    target_seconds: set[str],
+    target_symbols: set[str],
+    target_directions: set[str],
+) -> list[dict]:
+    """Query independent trading sources concurrently and retain source order."""
+    if not sources:
+        return []
+
+    def load(index: int, source: dict) -> tuple[int, dict]:
+        started = time.monotonic()
+        server = normalize_text(source.get("server") or source.get("name"))
+        try:
+            candidates = toxic_sync_candidates_for_source(
+                source,
+                login,
+                target_seconds,
+                target_symbols,
+                target_directions,
+            )
+            return index, {
+                "server": server,
+                "candidates": candidates,
+                "error": "",
+                "seconds": time.monotonic() - started,
+            }
+        except Exception as exc:
+            return index, {
+                "server": server,
+                "candidates": [],
+                "error": str(exc),
+                "seconds": time.monotonic() - started,
+            }
+
+    ordered: list[dict | None] = [None] * len(sources)
+    with ThreadPoolExecutor(
+        max_workers=min(4, len(sources)),
+        thread_name_prefix="toxic-sync-source",
+    ) as executor:
+        futures = {
+            executor.submit(load, index, source): index
+            for index, source in enumerate(sources)
+        }
+        for future in as_completed(futures):
+            index, result = future.result()
+            ordered[index] = result
+    return [result for result in ordered if result is not None]
+
+
 def toxic_suspected_accounts(top_peers: list[tuple[str, int]], recurring_peers: set[str], peer_close_counts: dict[str, int], sampled_count: int) -> list[dict]:
     suspected = []
     for peer, count in top_peers:
@@ -4933,26 +5390,26 @@ def toxic_cross_account_sync(login: str, rows: list[dict], limit: int = 200) -> 
         target_symbols = {toxic_base_symbol(row.get("symbol")) for row in source_rows if toxic_base_symbol(row.get("symbol"))}
         target_directions = {clean_trade_type(row.get("type", "")) for row in source_rows}
         normalized_candidates = []
-        for candidate_source in [item for item in MYSQL_SOURCES if item.get("platform") == platform]:
-            candidate_server = normalize_text(candidate_source.get("server") or candidate_source.get("name"))
-            query_started = time.monotonic()
-            try:
-                source_candidates = toxic_sync_candidates_for_source(
-                    candidate_source,
-                    login,
-                    target_seconds,
-                    target_symbols,
-                    target_directions,
-                )
-                normalized_candidates.extend(source_candidates)
-                candidate_count += len(source_candidates)
+        candidate_sources = [item for item in MYSQL_SOURCES if item.get("platform") == platform]
+        source_results = toxic_sync_candidates_across_sources(
+            candidate_sources,
+            login,
+            target_seconds,
+            target_symbols,
+            target_directions,
+        )
+        for source_result in source_results:
+            candidate_server = source_result["server"]
+            source_candidates = source_result["candidates"]
+            elapsed = numeric_value(source_result["seconds"])
+            normalized_candidates.extend(source_candidates)
+            candidate_count += len(source_candidates)
+            query_seconds += elapsed
+            source_timings[candidate_server] = source_timings.get(candidate_server, 0.0) + elapsed
+            if source_result["error"]:
+                errors.append(f"{candidate_server}: {source_result['error']}")
+            else:
                 searched_servers.add(candidate_server)
-            except Exception as exc:
-                errors.append(f"{candidate_server}: {exc}")
-            finally:
-                elapsed = time.monotonic() - query_started
-                query_seconds += elapsed
-                source_timings[candidate_server] = source_timings.get(candidate_server, 0.0) + elapsed
         match_started = time.monotonic()
         candidate_index: dict[tuple[str, str, datetime], list[dict]] = defaultdict(list)
         for item in normalized_candidates:
@@ -5252,6 +5709,66 @@ def toxic_copy_ticks_retry(mt5, symbol: str, start: datetime, end: datetime, att
     return ticks
 
 
+def toxic_prefetch_tick_windows(
+    mt5,
+    symbol: str,
+    rows: list[dict],
+    hour_delta: int,
+) -> dict[str, list]:
+    """Merge overlapping quote windows, then restore each order's exact slice."""
+    windows = []
+    for row in rows:
+        opened = parse_trade_time(row.get("open_time_msc") or row.get("open_time"))
+        if not opened:
+            continue
+        offset = timedelta(hours=hour_delta)
+        fetch_start = (opened - timedelta(seconds=31) + offset).replace(tzinfo=timezone.utc)
+        fetch_end = (opened + timedelta(seconds=181) + offset).replace(tzinfo=timezone.utc)
+        windows.append({
+            "key": toxic_tick_candidate_key(row),
+            "start": fetch_start,
+            "end": fetch_end,
+            "startMs": int(fetch_start.timestamp() * 1000),
+            "endMs": int(fetch_end.timestamp() * 1000),
+        })
+    windows.sort(key=lambda item: (item["start"], item["end"], item["key"]))
+    groups: list[dict] = []
+    for window in windows:
+        can_merge = bool(
+            groups
+            and (
+                window["start"] <= groups[-1]["end"]
+                or window["end"] - groups[-1]["start"] <= timedelta(minutes=15)
+            )
+        )
+        if not can_merge:
+            groups.append({"start": window["start"], "end": window["end"], "windows": [window]})
+            continue
+        groups[-1]["end"] = max(groups[-1]["end"], window["end"])
+        groups[-1]["windows"].append(window)
+
+    prefetched: dict[str, list] = {}
+    for group in groups:
+        ticks = toxic_copy_ticks_retry(mt5, symbol, group["start"], group["end"])
+        if (ticks is None or not len(ticks)) and len(group["windows"]) > 1:
+            for window in group["windows"]:
+                individual = toxic_copy_ticks_retry(mt5, symbol, window["start"], window["end"])
+                prefetched[window["key"]] = list(individual) if individual is not None else []
+            continue
+        available = list(ticks) if ticks is not None else []
+        for window in group["windows"]:
+            sliced = [
+                item
+                for item in available
+                if window["startMs"] <= int(item["time_msc"]) <= window["endMs"]
+            ]
+            if not sliced and len(group["windows"]) > 1:
+                individual = toxic_copy_ticks_retry(mt5, symbol, window["start"], window["end"])
+                sliced = list(individual) if individual is not None else []
+            prefetched[window["key"]] = sliced
+    return prefetched
+
+
 def toxic_closeable_move(direction: str, entry_bid: float, entry_ask: float, bid: float, ask: float) -> float:
     if direction == "buy":
         return bid - entry_ask
@@ -5359,20 +5876,20 @@ def toxic_winning_ticks(login: str, rows: list[dict], limit: int = 30) -> dict:
                     mapping = {**mapping, "databaseServer": database_server, "terminalServer": terminal_server}
                     mappings.append(mapping)
                     hour_delta = mysql_int(mapping.get("hourDelta"))
+                    prefetched_ticks = toxic_prefetch_tick_windows(
+                        mt5,
+                        mt5_symbol,
+                        symbol_rows,
+                        hour_delta,
+                    )
                     for row in symbol_rows:
                         symbol = normalize_text(row.get("symbol"))
                         opened = parse_trade_time(row.get("open_time_msc") or row.get("open_time"))
                         closed = parse_trade_time(row.get("close_time_msc") or row.get("close_time")) or (opened + timedelta(seconds=60))
                         query_opened = opened + timedelta(hours=hour_delta)
                         legacy_end = min(closed, opened + timedelta(seconds=60))
-                        query_start = opened - timedelta(seconds=30) + timedelta(hours=hour_delta)
-                        query_end = opened + timedelta(seconds=180) + timedelta(hours=hour_delta)
                         query_window_seconds = max((legacy_end - opened).total_seconds(), 1.0)
-                        ticks = toxic_copy_ticks_retry(
-                            mt5, mt5_symbol,
-                            (query_start - timedelta(seconds=1)).replace(tzinfo=timezone.utc),
-                            (query_end + timedelta(seconds=1)).replace(tzinfo=timezone.utc),
-                        )
+                        ticks = prefetched_ticks.get(toxic_tick_candidate_key(row), [])
                         if ticks is None or not len(ticks):
                             terminal_label = terminal_server or Path(terminal_path).parent.name
                             errors.append(f"{database_server} / {terminal_label} / {mt5_symbol} / {trade_time_text(opened)} ({mapping.get('timeMode')}) 返回0 Tick")
@@ -6875,6 +7392,8 @@ def canonical_trade_row(row: dict) -> dict[str, object]:
         "Display Currency": normalize_text(row.get("display_currency")),
         "Money Scale": numeric_value(row.get("money_scale")) or 1.0,
         "Is Cent Account": bool(row.get("is_cent_account")),
+        "Platform": normalize_text(row.get("platform")),
+        "Server": normalize_text(row.get("server")),
     }
 
 
@@ -6888,7 +7407,7 @@ def write_trades_csv_from_db(account: str, rows: list[dict]) -> tuple[Path, str]
     stem = f"{safe_stem_text(account)}_{start:%Y%m%d_%H%M%S}_{end:%Y%m%d_%H%M%S}"
     KLINE_OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = KLINE_OUT_DIR / f"{stem}_trades.csv"
-    fields = ["Ticket", "Open Time", "Close Time", "Type", "Volume", "Item", "Open Price", "Close Price", "Commission", "Taxes", "Swap", "Profit", "S/L", "T/P", "Reason", "Comment", "Expert ID", "Holding Seconds", "Account Currency", "Display Currency", "Money Scale", "Is Cent Account"]
+    fields = ["Ticket", "Open Time", "Close Time", "Type", "Volume", "Item", "Open Price", "Close Price", "Commission", "Taxes", "Swap", "Profit", "S/L", "T/P", "Reason", "Comment", "Expert ID", "Holding Seconds", "Account Currency", "Display Currency", "Money Scale", "Is Cent Account", "Platform", "Server"]
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
@@ -6951,6 +7470,10 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
             str(KLINE_OUT_DIR),
             "--terminal",
             str(TRADE_KLINE_TERMINAL),
+            "--platform",
+            normalize_text(filters.get("platform")),
+            "--server",
+            normalize_text(filters.get("server")),
         ]
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -6978,29 +7501,46 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
                 update_kline_job(job_id, percent=90)
         code = proc.wait()
         output = "".join(output_parts)
+        generation = {}
+        for line in reversed(output.splitlines()):
+            if line.startswith("KLINE_RESULT "):
+                try:
+                    generation = json.loads(line[len("KLINE_RESULT ") :])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    generation = {}
+                break
         html_path = parse_generated_html_path(output) or (KLINE_OUT_DIR / f"{stem}_trade_kline.html")
-        if code == 0 and html_path.exists():
+        if code == 0 and html_path.exists() and generation.get("symbols"):
             chart = parse_chart_file(html_path)
             update_kline_job(
                 job_id,
                 status="done",
-                message="生成完成",
+                message=generation.get("message") or "生成完成",
                 percent=100,
                 finishedAt=now_text(),
                 elapsedSeconds=round(time.time() - started, 1),
                 stem=chart["stem"],
                 chart=chart,
                 htmlPath=str(html_path),
+                partial=bool(generation.get("partial")),
+                symbols=generation.get("symbols") or [],
+                failures=generation.get("failures") or [],
+                quoteSources=generation.get("quoteSources") or [],
             )
         else:
+            failures = generation.get("failures") or []
             update_kline_job(
                 job_id,
                 status="failed",
-                message="生成失败，请查看日志",
+                message=(failures[0].get("reason") if failures else generation.get("message")) or "生成失败，请查看日志",
                 percent=100,
                 finishedAt=now_text(),
                 elapsedSeconds=round(time.time() - started, 1),
                 returnCode=code,
+                partial=False,
+                symbols=[],
+                failures=failures,
+                quoteSources=generation.get("quoteSources") or [],
             )
     except Exception as exc:
         append_kline_job_log(job_id, f"\nERROR: {exc}\n")
@@ -7369,6 +7909,16 @@ def rebate_churning_account_audit_payload(
     )
 
 
+def rebate_churning_ib_payload(
+    environment: str,
+    ib_id: int,
+    start: str = "",
+    end: str = "",
+) -> dict:
+    """Return one recipient IB's read-only audit tree for full-platform drill-down."""
+    return REBATE_CHURNING_SERVICE.ib_detail(environment, ib_id, start, end)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AccountRegistry/1.0"
 
@@ -7536,7 +8086,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 page = max(mysql_int((params.get("page") or [1])[0], 1), 1)
                 page_size = min(max(mysql_int((params.get("pageSize") or [100])[0], 100), 20), 200)
-                json_response(self, account_orders_payload(login, page, page_size))
+                platform = normalize_text((params.get("platform") or [""])[0])
+                server = normalize_text((params.get("server") or [""])[0])
+                json_response(self, account_orders_payload(login, page, page_size, platform, server))
             except Exception as exc:
                 error_response(self, str(exc))
             return
@@ -10158,6 +10710,8 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .section-head-actions button { min-height:30px; padding:5px 9px; font-size:11px; }
     .ea-query-entry { color:#d8f8ff; border-color:#2687a8; background:#0a4058; }
     .ea-query-entry:hover,.ea-query-entry:focus-visible { color:#fff; border-color:#51c9ef!important; background:#0d5874!important; box-shadow:0 0 14px #20bce944!important; }
+    .relationship-entry { color:#e6d9ff; border-color:#7056a6; background:#30214f; }
+    .relationship-entry:hover,.relationship-entry:focus-visible { color:#fff; border-color:#ac8fff!important; background:#4b3479!important; box-shadow:0 0 14px #9d76ff55!important; }
     .toxic-entry { color:#fff; border-color:#ff8a4c; background:linear-gradient(135deg,#b74218,#e85d24); box-shadow:0 0 15px #ff6a2f44; }
     .toxic-entry:hover,.toxic-entry:focus-visible { border-color:#ffb083!important; background:linear-gradient(135deg,#d9531f,#ff7837)!important; box-shadow:0 0 18px #ff6a2f66!important; }
     .toxic-dialog { width:min(1080px,calc(100% - 30px)); height:min(850px,calc(100% - 30px)); }
@@ -10169,6 +10723,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .copy-group-block { margin:12px; overflow:hidden; border:1px solid #1b4f7d; border-radius:6px; background:#06162b; }
     .copy-group-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 14px; border-bottom:1px solid #1b4f7d; }
     .copy-group-head span { color:var(--muted); font-size:12px; }
+    .ea-group-block > summary { cursor:pointer; list-style:none; }
+    .ea-group-block > summary::-webkit-details-marker { display:none; }
+    .ea-group-block > summary::before { content:""; width:8px; height:8px; flex:0 0 auto; border-right:2px solid #59b8ee; border-bottom:2px solid #59b8ee; transform:rotate(-45deg); transition:transform .15s ease; }
+    .ea-group-block[open] > summary::before { transform:rotate(45deg); }
+    .ea-group-block:not([open]) > summary { border-bottom:0; }
+    .ea-group-block > summary > div { flex:1; min-width:0; }
     .copy-group-table { min-width:1380px; }
     .copy-master-block { margin:12px; overflow:hidden; border:1px solid #1b5b88; border-radius:6px; background:#06162b; }
     .copy-master-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border-bottom:1px solid #1b5b88; background:#08233d; }
@@ -10178,6 +10738,56 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .copy-source-orders { margin:10px 12px 12px; border:1px solid #163e64; border-radius:5px; }
     .copy-source-orders summary { padding:8px 10px; cursor:pointer; color:#63b8ef; font-size:11px; }
     .copy-source-orders table { min-width:780px; }
+    .relationship-network-dialog { width:min(1320px,calc(100% - 30px)); height:min(880px,calc(100% - 30px)); }
+    .relationship-network-body { height:calc(100% - 50px); display:grid; grid-template-rows:auto minmax(0,1fr); overflow:hidden; }
+    .relationship-network-controls { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:11px 14px; border-bottom:1px solid #174674; background:#06162b; }
+    .relationship-network-filters { display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }
+    .relationship-network-filters label { display:flex; align-items:center; gap:5px; color:#abc7e4; font-size:11px; cursor:pointer; }
+    .relationship-network-filters input { width:auto; min-height:auto; margin:0; accent-color:#8066bc; }
+    .relationship-network-layout { min-height:0; display:grid; grid-template-columns:minmax(0,1.7fr) minmax(300px,.7fr); }
+    .relationship-network-graph-wrap { min-width:0; min-height:0; display:grid; grid-template-rows:minmax(0,1fr) auto; padding:14px; background:#041225; }
+    #relationshipNetworkGraph { display:block; width:100%; min-height:440px; height:auto; aspect-ratio:1000/620; touch-action:none; user-select:none; cursor:grab; contain:layout paint; }
+    #relationshipNetworkGraph.dragging { cursor:grabbing; }
+    .relationship-network-legend { display:flex; justify-content:center; gap:10px 16px; flex-wrap:wrap; padding-top:7px; color:#7895b8; font-size:11px; }
+    .relationship-network-legend span { display:inline-flex; align-items:center; gap:5px; }
+    .relationship-network-legend i { display:inline-block; width:9px; height:9px; border:1px solid #315474; }
+    .relationship-network-legend .account { border-radius:50%; background:#298feb; }
+    .relationship-network-legend .clue { border-radius:999px; background:#d36aac; }
+    .relationship-network-legend .group { border-radius:2px; background:#8066bc; }
+    .relationship-network-detail { min-width:0; overflow:auto; padding:16px; border-left:1px solid #174674; background:#06162b; }
+    .relationship-detail-kind { color:#7895b8; font-size:11px; }
+    .relationship-detail-title { margin:5px 0 10px; color:#e9f5ff; font-size:17px; }
+    .relationship-detail-meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px; }
+    .relationship-detail-meta div { padding:8px; border:1px solid #174674; border-radius:5px; background:#071a31; }
+    .relationship-detail-meta span,.relationship-detail-meta b { display:block; }
+    .relationship-detail-meta span { color:#7895b8; font-size:10px; }
+    .relationship-detail-meta b { margin-top:3px; color:#e4f2ff; font-size:12px; word-break:break-word; }
+    .relationship-evidence-title { margin-top:15px; padding-top:12px; border-top:1px solid #174674; color:#7895b8; font-size:11px; }
+    .relationship-evidence { display:grid; gap:8px; margin-top:8px; }
+    .relationship-evidence-row { padding:9px 10px; border:1px solid #174674; border-radius:5px; color:#bfd6ec; background:#071a31; font-size:12px; line-height:1.55; }
+    .relationship-limitations { margin:0; padding:0 0 0 18px; color:#7895b8; font-size:11px; line-height:1.65; }
+    .relationship-limitations li { margin:4px 0; }
+    .relationship-network-graph .relation-edge { fill:none; stroke:#315474; stroke-width:2; }
+    .relationship-network-graph .relation-edge.selected { stroke:#b69cff; stroke-width:4; }
+    .relationship-network-graph .relation-edge-hit { fill:none; stroke:transparent; stroke-width:18; cursor:pointer; }
+    .relationship-network-graph .relation-edge-label { pointer-events:none; }
+    .relationship-network-graph .relation-edge-label rect { fill:#0a2440; stroke:#4f83ad; stroke-width:1; }
+    .relationship-network-graph .relation-edge-label text { fill:#e3f3ff; font-size:10px; font-weight:700; text-anchor:middle; dominant-baseline:middle; }
+    .relationship-network-graph .relation-edge-label.selected rect { fill:#352d5c; stroke:#c4aaff; }
+    .relationship-network-graph .relation-node { cursor:grab; }
+    .relationship-network-graph .relation-node:active { cursor:grabbing; }
+    .relationship-network-graph .relation-node-shape { stroke:#315474; stroke-width:2; }
+    .relationship-network-graph .relation-node.selected .relation-node-shape { stroke:#d7c7ff; stroke-width:4; }
+    .relationship-network-graph .relation-node.account .relation-node-shape { fill:#1679cf; }
+    .relationship-network-graph .relation-node.subject .relation-node-shape { fill:#168cff; stroke:#a6ddff; }
+    .relationship-network-graph .relation-node.ip .relation-node-shape { fill:#bb5d99; }
+    .relationship-network-graph .relation-node.ea_feature .relation-node-shape { fill:#9c4e8a; }
+    .relationship-network-graph .relation-node.copy_group .relation-node-shape { fill:#7257aa; }
+    .relationship-network-graph .relation-node.rebate .relation-node-shape { fill:#ba7943; }
+    .relationship-network-graph .relation-node-label { fill:#eaf7ff; font-size:14px; text-anchor:middle; pointer-events:none; }
+    .relationship-network-graph .relation-node-sub { fill:#9ab6d0; font-size:10px; text-anchor:middle; pointer-events:none; }
+    .relationship-network-graph .relation-node-expand { fill:#d6c6ff; font-size:9px; text-anchor:middle; pointer-events:none; }
+    .relationship-network-graph .relation-empty { fill:#7895b8; font-size:14px; text-anchor:middle; }
     .toxic-mode-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px; border:1px solid #234e79; border-radius:7px; background:#071a31; }
     .toxic-mode { display:flex; align-items:center; gap:7px; min-height:34px; padding:6px 10px; border:1px solid #285f8e; border-radius:5px; color:#acd7ff; background:#092744; cursor:pointer; }
     .toxic-mode:has(input:checked) { color:#fff; border-color:#39b5ff; background:#0d5d9e; box-shadow:0 0 12px #168cff55; }
@@ -10278,6 +10888,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       .history-item { grid-template-columns:1fr; gap:5px; } .source-row { grid-template-columns:1fr 1fr; }
       .toxic-selector { grid-template-columns:1fr; } .toxic-result { grid-template-columns:72px 1fr; } .toxic-result-summary,.toxic-result-actions { grid-column:1/-1; } .toxic-chain-fact { grid-template-columns:1fr; gap:2px; }
       .toxic-sync-kpis { grid-template-columns:repeat(2,1fr); } .toxic-sync-kpis div:nth-child(odd) { border-left:0; }
+      .relationship-network-layout { grid-template-columns:1fr; } .relationship-network-detail { border-left:0; border-top:1px solid #174674; max-height:360px; } #relationshipNetworkGraph { min-height:540px; }
     }
   </style>
 </head>
@@ -10311,6 +10922,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       <button id="refreshBtn" class="primary">刷新指标</button>
       <button id="copyOriginBtn" type="button" hidden>跟单查询</button>
       <button id="eaCommentBtn" class="ea-query-entry" type="button" hidden>EA 查询</button>
+      <button id="relationshipNetworkBtn" class="relationship-entry" type="button" hidden>关系网络</button>
       <button id="toxicBtn" class="toxic-entry" type="button">Toxic 检测</button>
     </section>
 
@@ -10434,7 +11046,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     </div>
   </dialog>
   <dialog id="copyDialog" class="toxic-dialog">
-    <div class="dialog-head"><b>跟单查询</b><button id="closeCopyDialog" type="button">关闭</button></div>
+    <div class="dialog-head"><b>跟单查询</b><div class="dialog-head-actions"><span class="status" id="copyExportStatus"></span><button id="exportCopyReportBtn" type="button">导出 Excel</button><button id="closeCopyDialog" type="button">关闭</button></div></div>
     <div class="toxic-body">
       <section class="copy-panel">
         <div class="copy-panel-title"><b>CPT 单主与跟单人员收益</b><span class="section-sub">按源订单定位单主，并汇总所有跟单账号的实际收益</span></div>
@@ -10449,25 +11061,38 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     </div>
   </dialog>
   <dialog id="eaCommentDialog" class="toxic-dialog">
-    <div class="dialog-head"><b>EA 查询</b><button id="closeEaCommentDialog" type="button">关闭</button></div>
+    <div class="dialog-head"><b>EA 查询</b><div class="dialog-head-actions"><span class="status" id="eaExportStatus"></span><button id="exportEaReportBtn" type="button">导出 Excel</button><button id="closeEaCommentDialog" type="button">关闭</button></div></div>
     <div class="toxic-body">
       <section class="copy-panel">
-        <div class="copy-panel-title"><b>相同 Comment 的 EA 账户收益</b><span class="section-sub">同平台、同服务器精确匹配交易备注，并按账户汇总已平仓收益</span></div>
+        <div class="copy-panel-title"><b>相同 Comment 的 EA 账户收益</b><span class="section-sub">跨服务器按 Comment 匹配；同服务器同时核对 ExpertID / MAGIC，并逐账户列出匹配线索</span></div>
         <div class="risk-note" id="eaCommentStatus">等待查询...</div>
         <div id="eaCommentResults"><div class="empty-state">尚未查询 EA comment</div></div>
       </section>
+    </div>
+  </dialog>
+  <dialog id="relationshipNetworkDialog" class="relationship-network-dialog">
+    <div class="dialog-head"><b>账户关系网络</b><div class="dialog-head-actions"><button id="resetRelationshipNetworkBtn" type="button">恢复视图</button><button id="closeRelationshipNetworkDialog" type="button">关闭</button></div></div>
+    <div class="relationship-network-body">
+      <div class="relationship-network-controls"><div class="relationship-network-filters" id="relationshipNetworkFilters"></div><span class="status" id="relationshipNetworkStatus">点击关系网络后生成事实证据。</span></div>
+      <div class="relationship-network-layout">
+        <div class="relationship-network-graph-wrap">
+          <canvas id="relationshipNetworkGraph" class="relationship-network-graph" width="1000" height="620" role="img" aria-label="账户关系证据网络">账户关系证据网络</canvas>
+          <div class="relationship-network-legend"><span><i class="account"></i>交易账户</span><span><i class="clue"></i>数据线索</span><span><i class="group"></i>聚合关系</span></div>
+        </div>
+        <aside class="relationship-network-detail" aria-live="polite"><div class="relationship-detail-kind" id="relationshipDetailKind">尚未选择</div><h3 class="relationship-detail-title" id="relationshipDetailTitle">点击节点或连线查看事实依据</h3><div class="relationship-detail-meta" id="relationshipDetailMeta"></div><div class="relationship-evidence-title">可核验证据</div><div class="relationship-evidence" id="relationshipEvidence"></div><div class="relationship-evidence-title">范围与限制</div><ul class="relationship-limitations" id="relationshipLimitations"></ul></aside>
+      </div>
     </div>
   </dialog>
   <script>
     const LOGIN=__ACCOUNT_LOGIN_JSON__;
     const $=id=>document.getElementById(id);
     const initialParams=new URLSearchParams(location.search);
-    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},toxic:{jobTimer:null,running:false,lastResult:null}};
+    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,toxic:{jobTimer:null,running:false,lastResult:null}};
     const TOXIC_TYPES=[
       {id:'market_pushing',label:'推盘',tick:true},{id:'quote_latency_arbitrage',label:'报价延迟套利',tick:true},{id:'cross_platform_spread_arbitrage',label:'跨平台点差套利',tick:true},
       {id:'rebate_churning',label:'刷返佣'},{id:'bonus_arbitrage',label:'赠金套利'},{id:'short_close_trading',label:'短平交易'},
       {id:'internal_lock_arbitrage',label:'平台内多账户对锁'},{id:'high_leverage_lock_arbitrage',label:'高杠杆锁仓套利'},
-      {id:'weekend_gap_trading',label:'周末跳空交易'},{id:'open_betting',label:'赌开盘',tick:true},{id:'news_event_betting',label:'新闻 / 高波动赌博',tick:true}
+      {id:'weekend_gap_trading',label:'周末跳空交易'},{id:'open_betting',label:'赌开盘'},{id:'news_event_betting',label:'新闻 / 高波动赌博',tick:true}
     ];
     const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     const num=(value,digits=2)=>new Intl.NumberFormat('zh-CN',{maximumFractionDigits:digits}).format(Number(value||0));
@@ -10654,12 +11279,13 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     }
     async function loadOrders(page=1){
       if(state.orders.loading)return;state.orders.loading=true;$("orderSummary").textContent='正在读取订单...';$("orderPrev").disabled=true;$("orderNext").disabled=true;
-      try{renderOrders(await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/orders?page=${page}&pageSize=100`));}catch(err){$("orderSummary").textContent=err.message;$("orderRows").innerHTML=`<tr><td colspan="16"><div class="empty-state">${esc(err.message)}</div></td></tr>`;}finally{state.orders.loading=false;}
+      const current=filters(),q=new URLSearchParams({page:String(page),pageSize:'100',platform:current.platform||'',server:current.server||''});
+      try{renderOrders(await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/orders?${q}`));}catch(err){$("orderSummary").textContent=err.message;$("orderRows").innerHTML=`<tr><td colspan="16"><div class="empty-state">${esc(err.message)}</div></td></tr>`;}finally{state.orders.loading=false;}
     }
     function render(detail,keepFilters=false){
       state.detail=detail;const db=detail.database||{},source=db.latestSource||{},meta=db.accountMeta||{};$("accountId").textContent=detail.account;document.title=`账号 ${detail.account} · 风控台账`;
       const currencyText=meta.isCentAccount?'USC 美分账户 · 金额已按 USD 折算':(meta.currency==='USD'?'USD 美元账户':(meta.currency?`${meta.currency} 账户`:'币种未识别 · 金额未缩放'));
-      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'数据库暂无订单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;$("copyOriginBtn").hidden=!db.exists;$("eaCommentBtn").hidden=!db.exists;
+      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'数据库暂无订单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;$("copyOriginBtn").hidden=!db.exists;$("eaCommentBtn").hidden=!db.exists;$("relationshipNetworkBtn").hidden=!db.exists;
       $("headMeta").innerHTML=`${esc([source.platform,source.server].filter(Boolean).join(' / ')||'未识别平台')}<br>最近交易 ${esc(db.lastTime||'-')}<br>刷新 ${esc(db.refreshedAt||'-')}`;
       $("metricStatus").textContent=db.exists?`${db.orderCount} 条订单 · ${db.firstTime||'-'} 至 ${db.lastTime||'-'}`:(db.error||'数据库暂无订单');$("dbSource").textContent=db.dbSource?db.dbSource.toUpperCase():'';
       if(!keepFilters){optionList($("platform"),db.platforms||[],'全部平台');optionList($("server"),db.servers||[],'全部服务器');optionList($("symbol"),db.symbols||[],'全部品种');if(state.initialFilters){for(const key of ['platform','server','symbol'])if(state.initialFilters[key])$(key).value=state.initialFilters[key];state.initialFilters=null;}}
@@ -10667,6 +11293,110 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;
     }
     function filters(){return state.initialFilters||{platform:$("platform").value,server:$("server").value,symbol:$("symbol").value};}
+    function automationDialogQuery(){const q=new URLSearchParams(filters());[...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});q.sort();return q;}
+    function clearAutomationDialogCache(){state.dialogCache.copy.clear();state.dialogCache.ea.clear();state.dialogCache.relationship.clear();state.relationshipNetwork=null;}
+    const RELATIONSHIP_GRAPH_WIDTH=1000,RELATIONSHIP_GRAPH_HEIGHT=620,RELATIONSHIP_GRAPH_CACHE_SCALE=3;
+    const relationshipGraph=$('relationshipNetworkGraph');
+    let relationshipCanvasContext=null,relationshipDrag=null;
+    function relationShort(value,limit=18){const text=String(value||'');return text.length>limit?`${text.slice(0,limit-1)}…`:text||'-';}
+    function relationEntityMap(network){return new Map((network.data.entities||[]).map(entity=>[entity.id,entity]));}
+    function relationChild(edge,network){return edge.source!==network.subjectId&&['ea_feature','copy_order','copy_group'].includes(edge.type);}
+    function relationVisibleEdges(network){return (network.data.relationships||[]).filter(edge=>network.visibleTypes.has(edge.type)&&(!relationChild(edge,network)||network.expanded.has(edge.source)));}
+    function relationVisibleEntities(network,edges){const ids=new Set([network.subjectId]);edges.forEach(edge=>{ids.add(edge.source);ids.add(edge.target);});return (network.data.entities||[]).filter(entity=>ids.has(entity.id));}
+    function relationChildCounts(network){const counts=new Map();(network.data.relationships||[]).forEach(edge=>{if(relationChild(edge,network))counts.set(edge.source,(counts.get(edge.source)||0)+1);});return counts;}
+    function relationLane(entity,edges,network){
+      if(entity.id===network.subjectId)return 'subject';
+      if(entity.type==='ip')return 'ip';
+      if(entity.type==='rebate')return 'rebate';
+      if(entity.type==='ea_feature')return 'ea';
+      if(entity.type==='copy_group')return 'copyGroup';
+      const inbound=edges.find(edge=>edge.target===entity.id);
+      if(inbound?.type==='same_crm_user')return 'same';
+      if(inbound?.type==='ea_feature')return 'ea';
+      if(inbound?.type==='copy_order'||inbound?.type==='copy_group')return 'copy';
+      return 'other';
+    }
+    function relationLayout(network,entities,edges){
+      const lanes={same:{x:150,y:150},ip:{x:150,y:435},ea:{x:820,y:130},copy:{x:820,y:350},copyGroup:{x:790,y:510},rebate:{x:500,y:550},other:{x:500,y:90}};
+      const groups=new Map();entities.forEach(entity=>{if(entity.id===network.subjectId)return;const lane=relationLane(entity,edges,network);if(!groups.has(lane))groups.set(lane,[]);groups.get(lane).push(entity);});
+      const subject=entities.find(entity=>entity.id===network.subjectId);if(subject&&!network.positions.has(subject.id))network.positions.set(subject.id,{x:500,y:310});
+      groups.forEach((items,lane)=>{const anchor=lanes[lane]||lanes.other,columns=items.length>3?2:1,rows=Math.ceil(items.length/columns);items.forEach((entity,index)=>{if(network.positions.has(entity.id))return;const column=index%columns,row=Math.floor(index/columns),x=anchor.x+(column-(columns-1)/2)*150,y=anchor.y+(row-(rows-1)/2)*82;network.positions.set(entity.id,{x:Math.max(72,Math.min(928,x)),y:Math.max(48,Math.min(572,y))});});});
+    }
+    function relationNodeSub(entity,childCount,expanded){
+      if(childCount)return `${expanded?'收起':'展开'} ${childCount} 个成员`;
+      return relationShort(entity.detail||[entity.platform,entity.server].filter(Boolean).join(' / '),20);
+    }
+    function relationRenderDetail(network){
+      const entities=relationEntityMap(network),selected=network.selected||{kind:'node',id:network.subjectId},limits=(network.data.limitations||[]).filter(Boolean);
+      $('relationshipLimitations').innerHTML=limits.map(item=>`<li>${esc(item)}</li>`).join('')||'<li>无额外限制。</li>';
+      if(selected.kind==='edge'){
+        const edge=(network.data.relationships||[]).find(item=>item.id===selected.id);if(!edge)return;
+        const source=entities.get(edge.source)||{},target=entities.get(edge.target)||{};
+        $('relationshipDetailKind').textContent=edge.typeLabel||'关系证据';$('relationshipDetailTitle').textContent=edge.label||'关系记录';
+        $('relationshipDetailMeta').innerHTML=[['关系类别',edge.typeLabel||'-'],['关系对象',`${source.label||'-'} → ${target.label||'-'}`]].map(([label,value])=>`<div><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join('');
+        $('relationshipEvidence').innerHTML=(edge.evidence||[]).map((item,index)=>`<div class="relationship-evidence-row"><span class="muted">证据 ${index+1}</span><br>${esc(item)}</div>`).join('')||'<div class="relationship-evidence-row">该关系没有额外证据字段。</div>';
+        return;
+      }
+      const entity=entities.get(selected.id);if(!entity)return;
+      const connected=(network.data.relationships||[]).filter(edge=>edge.source===entity.id||edge.target===entity.id);
+      $('relationshipDetailKind').textContent=entity.isSubject?'当前账户':({account:'交易账户',ip:'登录 IP',ea_feature:'EA / 路由特征',copy_group:'跟单组',rebate:'返佣记录'}[entity.type]||'实体');
+      $('relationshipDetailTitle').textContent=entity.label||'-';
+      $('relationshipDetailMeta').innerHTML=[['平台',entity.platform||'-'],['服务器',entity.server||'-'],['实体说明',entity.detail||'-'],['关联记录',`${connected.length} 条`]].map(([label,value])=>`<div><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join('');
+      const evidence=connected.flatMap(edge=>(edge.evidence||[]).map(item=>`${edge.label||edge.typeLabel}：${item}`));
+      $('relationshipEvidence').innerHTML=evidence.slice(0,24).map((item,index)=>`<div class="relationship-evidence-row"><span class="muted">证据 ${index+1}</span><br>${esc(item)}</div>`).join('')||'<div class="relationship-evidence-row">该实体当前没有可显示的关系证据。</div>';
+    }
+    function relationEdgeLabel(edge){return relationShort(edge.typeLabel||edge.label||'关系证据',18);}
+    function relationCanvasViewport(){const rect=relationshipGraph.getBoundingClientRect(),scale=Math.min(rect.width/RELATIONSHIP_GRAPH_WIDTH,rect.height/RELATIONSHIP_GRAPH_HEIGHT)||1;return {rect,scale,offsetX:(rect.width-RELATIONSHIP_GRAPH_WIDTH*scale)/2,offsetY:(rect.height-RELATIONSHIP_GRAPH_HEIGHT*scale)/2};}
+    function relationCanvasContextFor(viewport){const dpr=Math.min(window.devicePixelRatio||1,2),width=Math.max(1,Math.round(viewport.rect.width*dpr)),height=Math.max(1,Math.round(viewport.rect.height*dpr));if(relationshipGraph.width!==width||relationshipGraph.height!==height){relationshipGraph.width=width;relationshipGraph.height=height;}relationshipCanvasContext=relationshipCanvasContext||relationshipGraph.getContext('2d',{alpha:false,desynchronized:true});if(relationshipCanvasContext)relationshipCanvasContext.setTransform(dpr,0,0,dpr,0,0);return relationshipCanvasContext;}
+    function relationCanvasRawPoint(clientX,clientY,viewport){return {x:(clientX-viewport.rect.left-viewport.offsetX)/viewport.scale,y:(clientY-viewport.rect.top-viewport.offsetY)/viewport.scale};}
+    function relationCanvasPoint(clientX,clientY,network,viewport){const raw=relationCanvasRawPoint(clientX,clientY,viewport);return {x:(raw.x-network.tx)/network.scale,y:(raw.y-network.ty)/network.scale};}
+    function relationCanvasRoundedRect(context,x,y,width,height,radius){const r=Math.min(radius,width/2,height/2);context.beginPath();context.moveTo(x+r,y);context.arcTo(x+width,y,x+width,y+height,r);context.arcTo(x+width,y+height,x,y+height,r);context.arcTo(x,y+height,x,y,r);context.arcTo(x,y,x+width,y,r);context.closePath();}
+    function relationCanvasNode(context,entity,point,childCount,network){const selected=network.selected?.kind==='node'&&network.selected.id===entity.id,isSubject=Boolean(entity.isSubject);context.save();context.translate(point.x,point.y);context.fillStyle=isSubject?'#168cff':({account:'#1679cf',ip:'#bb5d99',ea_feature:'#9c4e8a',copy_group:'#7257aa',rebate:'#ba7943'}[entity.type]||'#1679cf');context.strokeStyle=selected?'#d7c7ff':(isSubject?'#a6ddff':'#315474');context.lineWidth=selected?4:2;if(entity.type==='account'){context.beginPath();context.arc(0,0,isSubject?44:29,0,Math.PI*2);context.fill();context.stroke();}else if(entity.type==='rebate'){context.beginPath();context.moveTo(0,-30);context.lineTo(28,-15);context.lineTo(28,15);context.lineTo(0,30);context.lineTo(-28,15);context.lineTo(-28,-15);context.closePath();context.fill();context.stroke();}else{const width=entity.type==='ip'?118:132;relationCanvasRoundedRect(context,-width/2,-27,width,54,entity.type==='ip'?27:7);context.fill();context.stroke();}context.fillStyle='#eaf7ff';context.font='14px Segoe UI, Microsoft YaHei, sans-serif';context.textAlign='center';context.textBaseline='middle';context.fillText(relationShort(entity.label,16),0,-3);context.fillStyle='#9ab6d0';context.font='10px Segoe UI, Microsoft YaHei, sans-serif';context.fillText(relationNodeSub(entity,childCount,network.expanded.has(entity.id)),0,16);if(childCount){context.fillStyle='#d6c6ff';context.font='9px Segoe UI, Microsoft YaHei, sans-serif';context.fillText('点击切换成员',0,39);}context.restore();}
+    function relationClearCanvas(){const viewport=relationCanvasViewport(),context=relationCanvasContextFor(viewport);if(context){context.fillStyle='#041225';context.fillRect(0,0,viewport.rect.width,viewport.rect.height);}}
+    function relationWorldViewport(network,viewport){const left=(0-viewport.offsetX)/viewport.scale,top=(0-viewport.offsetY)/viewport.scale,right=(viewport.rect.width-viewport.offsetX)/viewport.scale,bottom=(viewport.rect.height-viewport.offsetY)/viewport.scale;return {left:(left-network.tx)/network.scale,top:(top-network.ty)/network.scale,right:(right-network.tx)/network.scale,bottom:(bottom-network.ty)/network.scale};}
+    function relationBoundsIntersect(a,b){return a.left<=b.right&&a.right>=b.left&&a.top<=b.bottom&&a.bottom>=b.top;}
+    function relationNodeBounds(entity,point){if(entity.type==='account'){const radius=entity.isSubject?44:29;return {left:point.x-radius,right:point.x+radius,top:point.y-radius,bottom:point.y+radius};}if(entity.type==='rebate')return {left:point.x-30,right:point.x+30,top:point.y-32,bottom:point.y+32};const width=entity.type==='ip'?118:132;return {left:point.x-width/2,right:point.x+width/2,top:point.y-33,bottom:point.y+44};}
+    function relationEdgeIntersectsViewport(source,target,viewport){return relationBoundsIntersect({left:Math.min(source.x,target.x),right:Math.max(source.x,target.x),top:Math.min(source.y,target.y),bottom:Math.max(source.y,target.y)},viewport);}
+    function relationEdgeLabelMetric(context,network,edge){const label=relationEdgeLabel(edge),cached=network.edgeLabelMetrics?.get(edge.id);if(cached?.label===label)return cached;context.save();context.font='700 10px Segoe UI, Microsoft YaHei, sans-serif';const metric={label,width:Math.max(74,Math.min(170,context.measureText(label).width+20))};context.restore();if(!network.edgeLabelMetrics)network.edgeLabelMetrics=new Map();network.edgeLabelMetrics.set(edge.id,metric);return metric;}
+    function relationCanvasEdgeLabel(context,edge,source,target,index,selected,network,worldViewport){const dx=target.x-source.x,dy=target.y-source.y,distance=Math.hypot(dx,dy)||1,side=index%2?1:-1,offset=16+(index%3)*6,x=(source.x+target.x)/2+(-dy/distance)*side*offset,y=(source.y+target.y)/2+(dx/distance)*side*offset,metric=relationEdgeLabelMetric(context,network,edge);if(!relationBoundsIntersect({left:x-metric.width/2,right:x+metric.width/2,top:y-11,bottom:y+11},worldViewport))return;context.save();context.font='700 10px Segoe UI, Microsoft YaHei, sans-serif';relationCanvasRoundedRect(context,x-metric.width/2,y-11,metric.width,22,11);context.fillStyle=selected?'#352d5c':'#0a2440';context.fill();context.strokeStyle=selected?'#c4aaff':'#4f83ad';context.lineWidth=1;context.stroke();context.fillStyle='#e3f3ff';context.textAlign='center';context.textBaseline='middle';context.fillText(metric.label,x,y+1);context.restore();}
+    function relationDrawEdge(context,edge,source,target,index,selected,network,worldViewport){if(!relationEdgeIntersectsViewport(source,target,worldViewport))return;context.beginPath();context.moveTo(source.x,source.y);context.lineTo(target.x,target.y);context.strokeStyle=selected?'#b69cff':'#315474';context.lineWidth=selected?4:2;context.stroke();relationCanvasEdgeLabel(context,edge,source,target,index,selected,network,worldViewport);}
+    function relationSceneContext(network){const width=RELATIONSHIP_GRAPH_WIDTH*RELATIONSHIP_GRAPH_CACHE_SCALE,height=RELATIONSHIP_GRAPH_HEIGHT*RELATIONSHIP_GRAPH_CACHE_SCALE;if(!network.sceneCanvas)network.sceneCanvas=document.createElement('canvas');if(network.sceneCanvas.width!==width||network.sceneCanvas.height!==height){network.sceneCanvas.width=width;network.sceneCanvas.height=height;network.sceneContext=null;}network.sceneContext=network.sceneContext||network.sceneCanvas.getContext('2d',{alpha:true,desynchronized:true});if(network.sceneContext)network.sceneContext.setTransform(RELATIONSHIP_GRAPH_CACHE_SCALE,0,0,RELATIONSHIP_GRAPH_CACHE_SCALE,0,0);return network.sceneContext;}
+    function relationRecordFrame(network,started,cacheBuildMs=0){const now=performance.now(),stats=network.frameStats||(network.frameStats={frames:0,totalMs:0,maxMs:0,cacheBuilds:0,cacheTotalMs:0,maxCacheMs:0,lastInputToPaintMs:0});const duration=now-started;stats.frames+=1;stats.totalMs+=duration;stats.maxMs=Math.max(stats.maxMs,duration);if(cacheBuildMs){stats.cacheBuilds+=1;stats.cacheTotalMs+=cacheBuildMs;stats.maxCacheMs=Math.max(stats.maxCacheMs,cacheBuildMs);}if(network.latestInputAt)stats.lastInputToPaintMs=now-network.latestInputAt;relationshipGraph.dataset.frameMs=duration.toFixed(2);relationshipGraph.dataset.cacheBuildMs=cacheBuildMs.toFixed(2);relationshipGraph.dataset.cacheBuilds=String(stats.cacheBuilds);relationshipGraph.dataset.inputToPaintMs=stats.lastInputToPaintMs.toFixed(2);window.__kdeskRelationshipPerf=stats;}
+    function relationDrawSceneContent(context,network,worldViewport,excludedNodeId=''){const edges=network.renderedEdges||[],entities=network.renderedEntities||[];edges.forEach((edge,index)=>{if(edge.source===excludedNodeId||edge.target===excludedNodeId)return;const source=network.positions.get(edge.source),target=network.positions.get(edge.target);if(source&&target)relationDrawEdge(context,edge,source,target,index,network.selected?.kind==='edge'&&network.selected.id===edge.id,network,worldViewport);});entities.forEach(entity=>{if(entity.id===excludedNodeId)return;const point=network.positions.get(entity.id);if(point&&relationBoundsIntersect(relationNodeBounds(entity,point),worldViewport))relationCanvasNode(context,entity,point,network.childCounts?.get(entity.id)||0,network);});}
+    function relationBuildSceneCache(network){const context=relationSceneContext(network);if(!context)return null;context.clearRect(0,0,RELATIONSHIP_GRAPH_WIDTH,RELATIONSHIP_GRAPH_HEIGHT);relationDrawSceneContent(context,network,{left:0,top:0,right:RELATIONSHIP_GRAPH_WIDTH,bottom:RELATIONSHIP_GRAPH_HEIGHT},network.dragNodeId||'');network.sceneDirty=false;return network.sceneCanvas;}
+    function relationDrawDragOverlay(context,network,worldViewport){const nodeId=network.dragNodeId;if(!nodeId)return;const entity=(network.renderedEntities||[]).find(item=>item.id===nodeId),point=network.positions.get(nodeId);if(!entity||!point)return;(network.renderedEdges||[]).forEach((edge,index)=>{if(edge.source!==nodeId&&edge.target!==nodeId)return;const source=network.positions.get(edge.source),target=network.positions.get(edge.target);if(source&&target)relationDrawEdge(context,edge,source,target,index,network.selected?.kind==='edge'&&network.selected.id===edge.id,network,worldViewport);});if(relationBoundsIntersect(relationNodeBounds(entity,point),worldViewport))relationCanvasNode(context,entity,point,network.childCounts?.get(entity.id)||0,network);}
+    function relationDrawGraph(network){const started=performance.now(),viewport=relationCanvasViewport(),context=relationCanvasContextFor(viewport);if(!context)return;context.fillStyle='#041225';context.fillRect(0,0,viewport.rect.width,viewport.rect.height);const edges=network.renderedEdges||[];if(!edges.length){context.fillStyle='#7895b8';context.font='14px Segoe UI, Microsoft YaHei, sans-serif';context.textAlign='center';context.fillText('当前筛选条件下没有可显示的关系记录',viewport.rect.width/2,viewport.rect.height/2);relationRecordFrame(network,started);return;}let cacheBuildMs=0;if(network.sceneDirty||!network.sceneCanvas){const cacheStarted=performance.now();relationBuildSceneCache(network);cacheBuildMs=performance.now()-cacheStarted;}const scene=network.sceneCanvas;if(scene){const worldViewport=relationWorldViewport(network,viewport);context.save();context.translate(viewport.offsetX+viewport.scale*network.tx,viewport.offsetY+viewport.scale*network.ty);context.scale(viewport.scale*network.scale,viewport.scale*network.scale);context.drawImage(scene,0,0,scene.width,scene.height,0,0,RELATIONSHIP_GRAPH_WIDTH,RELATIONSHIP_GRAPH_HEIGHT);relationDrawDragOverlay(context,network,worldViewport);context.restore();}relationRecordFrame(network,started,cacheBuildMs);}
+    function relationSetSelection(network,selected){network.selected=selected;network.sceneDirty=true;relationRenderDetail(network);relationScheduleCanvas(network);}
+    function relationApplyPendingInput(network){const drag=relationshipDrag;if(drag?.network===network&&drag.latest){const viewport=relationCanvasViewport();if(drag.kind==='node'){const point=relationCanvasPoint(drag.latest.x,drag.latest.y,network,viewport);network.positions.set(drag.entity.id,{x:Math.max(72,Math.min(928,point.x+drag.dx)),y:Math.max(48,Math.min(572,point.y+drag.dy))});}else if(drag.kind==='pan'){const raw=relationCanvasRawPoint(drag.latest.x,drag.latest.y,viewport);network.tx=drag.tx+(raw.x-drag.raw.x);network.ty=drag.ty+(raw.y-drag.raw.y);}drag.latest=null;}const wheel=network.pendingWheel;if(wheel){network.pendingWheel=null;const viewport=relationCanvasViewport(),raw=relationCanvasRawPoint(wheel.x,wheel.y,viewport),point={x:(raw.x-network.tx)/network.scale,y:(raw.y-network.ty)/network.scale},factor=Math.exp(-Math.max(-360,Math.min(360,wheel.delta))*0.00075),scale=Math.max(.7,Math.min(1.8,network.scale*factor));network.scale=scale;network.tx=raw.x-point.x*scale;network.ty=raw.y-point.y*scale;}}
+    function relationScheduleCanvas(network){if(network.canvasFrame)return;network.canvasFrame=requestAnimationFrame(()=>{network.canvasFrame=0;relationApplyPendingInput(network);relationDrawGraph(network);});}
+    function relationFlushCanvas(network){if(network.canvasFrame){cancelAnimationFrame(network.canvasFrame);network.canvasFrame=0;}relationApplyPendingInput(network);relationDrawGraph(network);}
+    function relationPointToSegmentDistance(point,source,target){const dx=target.x-source.x,dy=target.y-source.y,length=dx*dx+dy*dy||1,t=Math.max(0,Math.min(1,((point.x-source.x)*dx+(point.y-source.y)*dy)/length)),x=source.x+t*dx,y=source.y+t*dy;return Math.hypot(point.x-x,point.y-y);}
+    function relationNodeContains(entity,point,network){const center=network.positions.get(entity.id);if(!center)return false;const dx=point.x-center.x,dy=point.y-center.y;if(entity.type==='account')return Math.hypot(dx,dy)<=((entity.isSubject?44:29)+6);if(entity.type==='rebate')return Math.abs(dx)/34+Math.abs(dy)/36<=1;const width=entity.type==='ip'?118:132;return Math.abs(dx)<=width/2+6&&Math.abs(dy)<=33;}
+    function relationHitTest(network,point){const entities=[...(network.renderedEntities||[])].reverse(),entity=entities.find(item=>relationNodeContains(item,point,network));if(entity)return {kind:'node',entity};const edge=[...(network.renderedEdges||[])].reverse().find(item=>{const source=network.positions.get(item.source),target=network.positions.get(item.target);return source&&target&&relationPointToSegmentDistance(point,source,target)<=10/network.scale;});return edge?{kind:'edge',edge}:null;}
+    function relationActivateNode(network,entity){const childCount=network.childCounts?.get(entity.id)||0;if(childCount){network.expanded.has(entity.id)?network.expanded.delete(entity.id):network.expanded.add(entity.id);network.selected={kind:'node',id:entity.id};relationRenderGraph();}else relationSetSelection(network,{kind:'node',id:entity.id});}
+    function relationRenderGraph(){const network=state.relationshipNetwork;if(!network)return;const edges=relationVisibleEdges(network),entities=relationVisibleEntities(network,edges);network.renderedEdges=edges;network.renderedEntities=entities;network.childCounts=relationChildCounts(network);relationLayout(network,entities,edges);network.sceneDirty=true;relationRenderDetail(network);relationDrawGraph(network);}
+    function relationBindGraph(){
+      relationshipGraph.addEventListener('pointerdown',event=>{const network=state.relationshipNetwork;if(!network)return;const viewport=relationCanvasViewport(),point=relationCanvasPoint(event.clientX,event.clientY,network,viewport),raw=relationCanvasRawPoint(event.clientX,event.clientY,viewport),hit=relationHitTest(network,point);relationshipDrag={network,pointer:event.pointerId,x:event.clientX,y:event.clientY,raw,tx:network.tx,ty:network.ty,moved:false,...(hit||{kind:'pan'})};if(hit?.kind==='node'){const position=network.positions.get(hit.entity.id);relationshipDrag.dx=position.x-point.x;relationshipDrag.dy=position.y-point.y;network.dragNodeId=hit.entity.id;network.sceneDirty=true;relationScheduleCanvas(network);}relationshipGraph.classList.add('dragging');relationshipGraph.setPointerCapture(event.pointerId);});
+      relationshipGraph.addEventListener('pointermove',event=>{const network=state.relationshipNetwork,drag=relationshipDrag;if(!network||!drag||drag.network!==network||drag.pointer!==event.pointerId){if(network){const viewport=relationCanvasViewport(),point=relationCanvasPoint(event.clientX,event.clientY,network,viewport),hit=relationHitTest(network,point);relationshipGraph.style.cursor=hit?.kind==='edge'?'pointer':'grab';}return;}if(!drag.moved&&Math.hypot(event.clientX-drag.x,event.clientY-drag.y)>=4)drag.moved=true;if(drag.kind==='node'||drag.kind==='pan'){drag.latest={x:event.clientX,y:event.clientY};network.latestInputAt=performance.now();relationScheduleCanvas(network);}});
+      function relationEndPointer(event,cancelled=false){const network=state.relationshipNetwork,drag=relationshipDrag;if(!network||!drag||drag.network!==network||drag.pointer!==event.pointerId)return;relationFlushCanvas(network);if(drag.kind==='node'){network.dragNodeId=null;network.sceneDirty=true;relationDrawGraph(network);}relationshipDrag=null;relationshipGraph.classList.remove('dragging');if(cancelled||drag.moved)return;if(drag.kind==='node')relationActivateNode(network,drag.entity);else if(drag.kind==='edge')relationSetSelection(network,{kind:'edge',id:drag.edge.id});else relationSetSelection(network,{kind:'node',id:network.subjectId});}
+      relationshipGraph.addEventListener('pointerup',event=>relationEndPointer(event));relationshipGraph.addEventListener('pointercancel',event=>relationEndPointer(event,true));
+      relationshipGraph.addEventListener('wheel',event=>{const network=state.relationshipNetwork;if(!network)return;event.preventDefault();const pending=network.pendingWheel||{delta:0,x:event.clientX,y:event.clientY};pending.delta+=event.deltaY;pending.x=event.clientX;pending.y=event.clientY;network.pendingWheel=pending;network.latestInputAt=performance.now();relationScheduleCanvas(network);},{passive:false});
+      if(typeof ResizeObserver!=='undefined')new ResizeObserver(()=>{if(state.relationshipNetwork)relationScheduleCanvas(state.relationshipNetwork);}).observe(relationshipGraph);
+    }
+    function relationRenderFilters(network){
+      $('relationshipNetworkFilters').innerHTML=(network.data.relationTypes||[]).map(type=>`<label><input type="checkbox" data-relation-type="${esc(type.id)}" ${network.visibleTypes.has(type.id)?'checked':''}/><span>${esc(type.label)}</span></label>`).join('');
+      document.querySelectorAll('[data-relation-type]').forEach(input=>input.addEventListener('change',()=>{input.checked?network.visibleTypes.add(input.dataset.relationType):network.visibleTypes.delete(input.dataset.relationType);const current=network.selected;if(current?.kind==='edge'&&!relationVisibleEdges(network).some(edge=>edge.id===current.id))network.selected={kind:'node',id:network.subjectId};relationRenderGraph();}));
+    }
+    function renderRelationshipNetwork(data){
+      const subject=(data.entities||[]).find(entity=>entity.isSubject)||data.entities?.[0],availableTypes=new Set((data.relationTypes||[]).map(item=>item.id));
+      state.relationshipNetwork={data,subjectId:subject?.id||'',visibleTypes:availableTypes,expanded:new Set(),positions:new Map(),edgeLabelMetrics:new Map(),sceneCanvas:null,sceneContext:null,sceneDirty:true,dragNodeId:null,frameStats:{frames:0,totalMs:0,maxMs:0,cacheBuilds:0,cacheTotalMs:0,maxCacheMs:0,lastInputToPaintMs:0},selected:{kind:'node',id:subject?.id||''},scale:1,tx:0,ty:0};
+      const summary=data.summary||{},failed=(data.coverage||[]).filter(item=>item.status==='failed');$('relationshipNetworkStatus').textContent=`实体 ${num(summary.entityCount,0)} 个 · 关系 ${num(summary.relationshipCount,0)} 条 · 证据 ${num(summary.evidenceCount,0)} 条${failed.length?` · ${failed.length} 个数据源未完成`:''}`;
+      relationRenderFilters(state.relationshipNetwork);relationRenderGraph();
+    }
+    async function openRelationshipNetwork(){
+      $('relationshipNetworkDialog').showModal();$('relationshipNetworkStatus').textContent='正在读取账户、登录 IP、EA、跟单和返佣事实...';const query=automationDialogQuery(),cacheKey=query.toString();let request=state.dialogCache.relationship.get(cacheKey);if(!request){request=json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/relationship-network?${query}`);state.dialogCache.relationship.set(cacheKey,request);}try{renderRelationshipNetwork(await request);}catch(err){state.dialogCache.relationship.delete(cacheKey);state.relationshipNetwork=null;$('relationshipNetworkStatus').textContent=err.message||'关系网络生成失败';relationClearCanvas();$('relationshipDetailTitle').textContent='未能生成关系网络';$('relationshipEvidence').innerHTML=`<div class="relationship-evidence-row">${esc(err.message||'请求失败')}</div>`;}}
+    function resetRelationshipNetwork(){const network=state.relationshipNetwork;if(!network)return;network.visibleTypes=new Set((network.data.relationTypes||[]).map(item=>item.id));network.expanded.clear();network.positions.clear();network.dragNodeId=null;network.selected={kind:'node',id:network.subjectId};network.scale=1;network.tx=0;network.ty=0;relationRenderFilters(network);relationRenderGraph();}
+    relationBindGraph();
     function renderCopyOrigins(data){
       const origins=data.origins||[];
       if(!data.detected){$("copyOriginStatus").textContent='当前账户订单备注中没有识别到 CPT 跟单订单号';$("copyOriginRows").innerHTML='<div class="empty-state">没有 CPT 来源数据</div>';return;}
@@ -10675,7 +11405,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         const href=`/account/${encodeURIComponent(row.account)}?platform=${encodeURIComponent(row.platform||'')}&server=${encodeURIComponent(row.server||'')}`,followers=row.followers||[],summary=row.followerSummary||{},discovery=row.followerDiscovery||{},currency=summary.currency||'',sourceOrders=row.sourceOrders||[];
         const followerRows=followers.map(item=>{const followerHref=`/account/${encodeURIComponent(item.account)}?platform=${encodeURIComponent(item.platform||row.platform||'')}&server=${encodeURIComponent(item.server||row.server||'')}`;return `<tr class="${item.isCurrentAccount?'current-account':''}"><td><a class="account-link" href="${esc(followerHref)}">${esc(item.account)}</a>${item.isCurrentAccount?' <span class="badge marked">当前账号</span>':''}</td><td>${esc([item.platform,item.server].filter(Boolean).join(' / ')||'-')}</td><td>${num(item.matchedSourceOrders,0)}</td><td><b>${num(item.orders,0)}</b></td><td>${num(item.volume,4)}</td><td class="${profitClass(item.grossProfit)}">${money(item.grossProfit)}</td><td class="${profitClass(item.commission)}">${money(item.commission)}</td><td class="${profitClass(item.swap)}">${money(item.swap)}</td><td class="${profitClass(item.taxes)}">${money(item.taxes)}</td><td class="${profitClass(item.netProfit)}"><b>${money(item.netProfit)}</b></td><td>${esc(item.displayCurrency||item.currency||'-')}${item.isCentAccount?'（USC折算）':''}</td><td>${esc((item.symbols||[]).join('、')||'-')}</td><td>${esc(item.firstTime||'-')}<br><span class="muted">至 ${esc(item.lastTime||'-')}</span></td><td>${esc((item.tickets||[]).join('、')||'-')}</td></tr>`;}).join('');
         const sourceRows=sourceOrders.map(item=>`<tr><td>${esc(item.orderId||'-')}</td><td>${esc(item.ticket||'-')}</td><td>${esc(item.symbol||'-')}</td><td>${esc(item.time||'-')}</td></tr>`).join('');
-        const scanNote=discovery.error?`跟单人员查询失败：${discovery.error}`:[discovery.sourceOrdersTruncated?'源订单超过安全上限，仅扫描前200单':'',discovery.candidateRowsTruncated?'候选订单达到安全上限，结果可能不完整':''].filter(Boolean).join('；');
+        const scanNote=discovery.error?`跟单人员查询失败：${discovery.error}`:[discovery.sourceOrdersTruncated?'源订单查询未完整':'',discovery.candidateRowsTruncated?'候选订单查询未完整':''].filter(Boolean).join('；');
         return `<section class="copy-master-block"><div class="copy-master-head"><div><b>单主：<a class="account-link" href="${esc(href)}">${esc(row.account)}</a></b>${index===0?' <span class="badge marked">主要单主</span>':''}<br><small>${esc([row.platform,row.server].filter(Boolean).join(' / '))} · ${num(row.matchedOrders,0)} 个源订单 · ${esc((row.symbols||[]).join('、')||'-')}</small></div><span>${esc(row.firstTime||'-')} 至 ${esc(row.lastTime||'-')}</span></div><div class="risk-summary">${copyRiskStat('跟单人员',`${num(summary.accounts,0)} 人`)}${copyRiskStat('盈利 / 亏损人员',`${num(summary.profitableAccounts,0)} / ${num(summary.losingAccounts,0)}`)}${copyRiskStat('跟单订单',`${num(summary.orders,0)} 单`)}${copyRiskStat('跟单手数',num(summary.volume,4))}${copyRiskStat(`跟单毛盈亏${currency?` (${currency})`:''}`,money(summary.grossProfit),profitClass(summary.grossProfit))}${copyRiskStat('手续费 / Fee',money(summary.commission),profitClass(summary.commission))}${copyRiskStat('利息 / Swap',money(summary.swap),profitClass(summary.swap))}${copyRiskStat(`跟单净盈亏${currency?` (${currency})`:''}`,money(summary.netProfit),profitClass(summary.netProfit))}${copyRiskStat('当前账号跟单',`${num(row.orders,0)} 单 / ${num(row.volume,4)} 手`)}${copyRiskStat('当前账号净盈亏',money(row.netProfit),profitClass(row.netProfit))}</div>${scanNote?`<div class="risk-note">${esc(scanNote)}</div>`:''}<div class="table-wrap"><table class="risk-table copy-follower-table"><thead><tr><th>跟单账号</th><th>平台 / 服务器</th><th>匹配源单</th><th>跟单订单</th><th>手数</th><th>毛盈亏</th><th>手续费 / Fee</th><th>利息</th><th>税费</th><th>净盈亏</th><th>币种</th><th>品种</th><th>首次 / 最后</th><th>样例跟单单号</th></tr></thead><tbody>${followerRows||'<tr><td colspan="14"><div class="empty-state">没有发现其他跟单人员，或跟单记录超出当前数据范围</div></td></tr>'}</tbody></table></div><details class="copy-source-orders"><summary>查看单主源订单（${num(sourceOrders.length,0)} 单）</summary><div class="table-wrap"><table class="risk-table"><thead><tr><th>源订单号</th><th>单主订单 / Position</th><th>品种</th><th>时间</th></tr></thead><tbody>${sourceRows||'<tr><td colspan="4"><div class="empty-state">没有源订单明细</div></td></tr>'}</tbody></table></div></details></section>`;
       }).join(''):'<div class="empty-state">未找到单主；可能对应订单不在当前导出范围内</div>';
     }
@@ -10688,26 +11418,45 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     }
     async function openCopyOrigins(){
       $("copyDialog").showModal();$("copyOriginStatus").textContent='正在定位单主并汇总全部跟单人员收益...';$("copyOriginRows").innerHTML='<div class="empty-state">查询单主、源订单和跟单人员中...</div>';$("copyGroupStatus").textContent='正在读取 users.comment 并汇总整组历史收益...';$("copyGroupResults").innerHTML='<div class="empty-state">Signal 跟单组查询中...</div>';
-      const q=new URLSearchParams(filters());[...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});
-      const [originResult,groupResult]=await Promise.allSettled([json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-origins?${q}`),json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-group-profit?${q}`)]);
+      const q=automationDialogQuery(),cacheKey=q.toString();
+      let request=state.dialogCache.copy.get(cacheKey);
+      if(!request){
+        request=Promise.allSettled([json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-origins?${q}`),json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-group-profit?${q}`)]);
+        state.dialogCache.copy.set(cacheKey,request);
+      }
+      const [originResult,groupResult]=await request;
+      if(originResult.status!=='fulfilled'||groupResult.status!=='fulfilled')state.dialogCache.copy.delete(cacheKey);
       if(originResult.status==='fulfilled')renderCopyOrigins(originResult.value);else{$("copyOriginStatus").textContent=originResult.reason?.message||'CPT 单主查询失败';$("copyOriginRows").innerHTML='<div class="empty-state">查询失败</div>';}
       if(groupResult.status==='fulfilled')renderCopyGroupProfit(groupResult.value);else{$("copyGroupStatus").textContent=groupResult.reason?.message||'Signal 整组收益查询失败';$("copyGroupResults").innerHTML='<div class="empty-state">查询失败</div>';}
     }
     function renderEaCommentGroups(data){
-      const groups=data.groups||[],errors=(data.errors||[]).filter(Boolean);
+      const groups=data.groups||[],errors=(data.errors||[]).filter(Boolean),eaSummary=data.eaSummary||{},routeSummary=data.possibleCopyRouteSummary||{};
       if(!data.detected||!groups.length){$("eaCommentStatus").textContent=errors.length?`未找到可查询的 EA comment；${errors.join('；')}`:'当前筛选范围内没有识别到有效的 EA comment';$("eaCommentResults").innerHTML='<div class="empty-state">没有相同 comment 的 EA 收益数据</div>';return;}
-      const accountSet=new Set(groups.flatMap(group=>(group.members||[]).map(row=>`${group.server}/${row.account}`)));
-      $("eaCommentStatus").textContent=`识别到 ${groups.length} 个 EA comment · 覆盖 ${accountSet.size} 个服务器账户 · ${data.definition||''}${errors.length?` · 部分查询失败：${errors.join('；')}`:''}`;
+      const accountSet=new Set(groups.flatMap(group=>(group.members||[]).map(row=>`${row.database||''}/${row.server||group.server}/${row.account}`)));
+      $("eaCommentStatus").textContent=`EA ${num(eaSummary.groups,0)} 组 / ${num(eaSummary.accounts,0)} 个账户 / 净盈亏 ${money(eaSummary.netProfit)} · 可能是跟单路由 ${num(routeSummary.groups,0)} 组（不计入 EA） · 共覆盖 ${accountSet.size} 个服务器账户 · ${data.definition||''}${errors.length?` · 部分查询失败：${errors.join('；')}`:''}`;
       $("eaCommentResults").innerHTML=groups.map(group=>{
-        const totals=group.totals||{},members=group.members||[],currency=totals.currency||'',limitations=[...(group.limitations||[]),group.truncated?'命中记录达到 50,000 条安全上限，结果可能不完整':''].filter(Boolean);
-        const rows=members.map(row=>{const href=`/account/${encodeURIComponent(row.account)}?platform=${encodeURIComponent(group.platform||'')}&server=${encodeURIComponent(group.server||'')}`;return `<tr class="${row.isCurrentAccount?'current-account':''}"><td><a class="account-link" href="${esc(href)}">${esc(row.account)}</a>${row.isCurrentAccount?' <span class="badge marked">当前账号</span>':''}</td><td><b>${num(row.orders,0)}</b></td><td>${num(row.volume,4)}</td><td class="${profitClass(row.grossProfit)}">${money(row.grossProfit)}</td><td class="${profitClass(row.commission)}">${money(row.commission)}</td><td class="${profitClass(row.swap)}">${money(row.swap)}</td><td class="${profitClass(row.taxes)}">${money(row.taxes)}</td><td class="${profitClass(row.netProfit)}"><b>${money(row.netProfit)}</b></td><td>${esc(row.currency||'-')}${row.isCentAccount?'（USC折算）':''}</td><td>${esc((row.symbols||[]).join('、')||'-')}</td><td>${esc(row.firstTime||'-')}<br><span class="muted">至 ${esc(row.lastTime||'-')}</span></td><td>${esc((row.tickets||[]).join('、')||'-')}</td></tr>`;}).join('');
-        return `<section class="copy-group-block"><div class="copy-group-head"><div><b>Comment：${esc(group.comment||'-')}</b><br><span>${esc([group.platform,group.server].filter(Boolean).join(' / ')||'-')} · 当前账号 ${num(group.currentOrders,0)} 单 / ${num(group.currentVolume,4)} 手 / 净盈亏 ${money(group.currentNetProfit)}</span></div><span>${num(totals.accounts,0)} 个账户</span></div><div class="risk-summary">${copyRiskStat('账户 / 盈利 / 亏损',`${num(totals.accounts,0)} / ${num(totals.profitableAccounts,0)} / ${num(totals.losingAccounts,0)}`)}${copyRiskStat('已平仓订单',`${num(totals.orders,0)} 单`)}${copyRiskStat('累计手数',num(totals.volume,4))}${copyRiskStat(`毛盈亏${currency?` (${currency})`:''}`,money(totals.grossProfit),profitClass(totals.grossProfit))}${copyRiskStat('手续费 / Fee',money(totals.commission),profitClass(totals.commission))}${copyRiskStat('利息 / Swap',money(totals.swap),profitClass(totals.swap))}${copyRiskStat('税费',money(totals.taxes),profitClass(totals.taxes))}${copyRiskStat(`净盈亏${currency?` (${currency})`:''}`,money(totals.netProfit),profitClass(totals.netProfit))}</div>${limitations.length?`<div class="risk-note">${esc(limitations.join('；'))}</div>`:''}<div class="table-wrap"><table class="risk-table copy-follower-table"><thead><tr><th>账户</th><th>平仓订单</th><th>手数</th><th>毛盈亏</th><th>手续费 / Fee</th><th>利息</th><th>税费</th><th>净盈亏</th><th>币种</th><th>品种</th><th>首次 / 最后</th><th>样例订单号</th></tr></thead><tbody>${rows||'<tr><td colspan="12"><div class="empty-state">未找到使用此 comment 的已平仓交易</div></td></tr>'}</tbody></table></div></section>`;
+        const totals=group.totals||{},members=group.members||[],currency=totals.currency||'',isRoute=group.classification==='possible_copy_route',groupLabel=isRoute?'可能是跟单路由':'EA',limitations=[...(group.limitations||[]),group.truncated?'命中记录达到 50,000 条安全上限，结果可能不完整':''].filter(Boolean);
+        const rows=members.map(row=>{const href=`/account/${encodeURIComponent(row.account)}?platform=${encodeURIComponent(row.platform||group.platform||'')}&server=${encodeURIComponent(row.server||group.server||'')}`,allExpertIds=row.expertIds||[],expertIds=allExpertIds.length>8?`${allExpertIds.slice(0,8).join('、')}…（共${allExpertIds.length}个）`:allExpertIds.join('、')||'-',matchClues=(row.matchClues||[row.matchClue]).filter(Boolean).join('；')||'-';return `<tr class="${row.isCurrentAccount?'current-account':''}"><td>${esc(row.database||'-')}</td><td>${esc(row.server||'-')}</td><td><a class="account-link" href="${esc(href)}">${esc(row.account)}</a>${row.isCurrentAccount?' <span class="badge marked">当前账号</span>':''}</td><td>${esc(expertIds)}</td><td>${esc(matchClues)}</td><td><b>${num(row.orders,0)}</b></td><td>${num(row.volume,4)}</td><td class="${profitClass(row.grossProfit)}">${money(row.grossProfit)}</td><td class="${profitClass(row.commission)}">${money(row.commission)}</td><td class="${profitClass(row.swap)}">${money(row.swap)}</td><td class="${profitClass(row.taxes)}">${money(row.taxes)}</td><td class="${profitClass(row.netProfit)}"><b>${money(row.netProfit)}</b></td><td>${esc(row.currency||'-')}${row.isCentAccount?'（USC折算）':''}</td><td>${esc((row.symbols||[]).join('、')||'-')}</td><td>${esc(row.firstTime||'-')}<br><span class="muted">至 ${esc(row.lastTime||'-')}</span></td><td>${esc((row.tickets||[]).join('、')||'-')}</td></tr>`;}).join('');
+        const groupIdentifier=group.signatureType==='expert-sequence'?`共享完整 ExpertID ${num(group.expertSequence?.sharedAcrossAllAccounts,0)} 个`:`查询账号标识 ${String(group.expertId??'-')}`;
+        return `<details class="copy-group-block ea-group-block" open><summary class="copy-group-head"><div><b>${esc(groupLabel)}：${esc(group.comment||'-')}</b>${isRoute?' <span class="badge">不计入 EA 汇总</span>':''}<br><span>${esc(group.classificationEvidence||'')} · ${esc(groupIdentifier)} · ${esc((group.servers||[group.server]).filter(Boolean).join(' / ')||'-')} · 当前账号 ${num(group.currentOrders,0)} 单 / ${num(group.currentVolume,4)} 手 / 净盈亏 ${money(group.currentNetProfit)}</span></div><span>${num(totals.accounts,0)} 个账户</span></summary><div class="risk-summary">${copyRiskStat('账户 / 盈利 / 亏损',`${num(totals.accounts,0)} / ${num(totals.profitableAccounts,0)} / ${num(totals.losingAccounts,0)}`)}${copyRiskStat('已平仓订单',`${num(totals.orders,0)} 单`)}${copyRiskStat('累计手数',num(totals.volume,4))}${copyRiskStat(`毛盈亏${currency?` (${currency})`:''}`,money(totals.grossProfit),profitClass(totals.grossProfit))}${copyRiskStat('手续费 / Fee',money(totals.commission),profitClass(totals.commission))}${copyRiskStat('利息 / Swap',money(totals.swap),profitClass(totals.swap))}${copyRiskStat('税费',money(totals.taxes),profitClass(totals.taxes))}${copyRiskStat(`净盈亏${currency?` (${currency})`:''}`,money(totals.netProfit),profitClass(totals.netProfit))}</div>${limitations.length?`<div class="risk-note">${esc(limitations.join('；'))}</div>`:''}<div class="table-wrap"><table class="risk-table copy-follower-table"><thead><tr><th>数据库</th><th>服务器</th><th>账户</th><th>EA标识</th><th>匹配线索</th><th>平仓订单</th><th>手数</th><th>毛盈亏</th><th>手续费 / Fee</th><th>利息</th><th>税费</th><th>净盈亏</th><th>币种</th><th>品种</th><th>首次 / 最后</th><th>样例订单号</th></tr></thead><tbody>${rows||'<tr><td colspan="16"><div class="empty-state">未找到使用此 Comment 的已平仓交易</div></td></tr>'}</tbody></table></div></details>`;
       }).join('');
     }
     async function openEaCommentGroups(){
       $("eaCommentDialog").showModal();$("eaCommentStatus").textContent='正在识别 EA comment 并汇总同备注账户收益...';$("eaCommentResults").innerHTML='<div class="empty-state">EA comment 查询中...</div>';
-      const q=new URLSearchParams(filters());[...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});
-      try{renderEaCommentGroups(await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/ea-comment-profit?${q}`));}catch(err){$("eaCommentStatus").textContent=err.message||'EA 查询失败';$("eaCommentResults").innerHTML='<div class="empty-state">查询失败</div>';}
+      const q=automationDialogQuery(),cacheKey=q.toString();
+      let request=state.dialogCache.ea.get(cacheKey);
+      if(!request){request=json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/ea-comment-profit?${q}`);state.dialogCache.ea.set(cacheKey,request);}
+      try{renderEaCommentGroups(await request);}catch(err){state.dialogCache.ea.delete(cacheKey);$("eaCommentStatus").textContent=err.message||'EA 查询失败';$("eaCommentResults").innerHTML='<div class="empty-state">查询失败</div>';}
+    }
+    async function downloadAutomationReport(kind){
+      const isCopy=kind==='copy',button=$(isCopy?'exportCopyReportBtn':'exportEaReportBtn'),status=$(isCopy?'copyExportStatus':'eaExportStatus'),q=new URLSearchParams(filters());
+      [...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});button.disabled=true;status.textContent='正在整理报表...';
+      try{
+        const endpoint=isCopy?'copy-report.xlsx':'ea-report.xlsx',response=await fetch(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/${endpoint}?${q}`);
+        if(!response.ok){let message=`HTTP ${response.status}`;try{const payload=await response.json();message=payload.detail||payload.error||message;}catch(_error){}throw new Error(message);}
+        const blob=await response.blob(),disposition=response.headers.get('content-disposition')||'',matched=disposition.match(/filename="([^"]+)"/i),filename=matched?.[1]||`${isCopy?'copy_profit':'ea_profit'}_${LOGIN}.xlsx`,url=URL.createObjectURL(blob),anchor=document.createElement('a');
+        anchor.href=url;anchor.download=filename;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);status.textContent='报表已导出';
+      }catch(err){status.textContent=err.message||'报表导出失败';}finally{button.disabled=false;}
     }
     async function loadRiskPanels(q){const request=++state.riskRequest;try{const data=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/risk-panels?${q}`);if(request!==state.riskRequest)return;if(state.detail?.database)state.detail.database.riskPanels=data.riskPanels;renderRiskPanels(data.riskPanels);}catch(err){if(request===state.riskRequest)renderRiskPanels({available:false,reason:err.message});}}
     async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{render(await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`),keepFilters);loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
@@ -10754,6 +11503,28 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       const basisText=`结构 ${num(basis.structure,1)}/40 · Tick ${num(basis.tick,1)}/35 · 协同 ${num(basis.coordination,1)}/15 · 辅助 ${num(basis.context,1)}/10 · 一致性加分 ${num(basis.consistencyBonus,1)} · 反证扣分 ${num(basis.counterevidence,1)}`;
       return `<div class="toxic-chain"><div class="toxic-chain-head">${esc(chain.headline)}</div><div class="toxic-chain-reasoning">${esc(chain.reasoning||'')}</div><div class="toxic-chain-facts">${facts}</div><div class="toxic-chain-section"><b>已观察到的风险</b>${list(chain.observedRisks||chain.riskPoints)}</div><div class="toxic-chain-section"><b>反证与替代解释</b>${list(chain.counterpoints)}</div><div class="toxic-chain-section"><b>仍不能确定</b>${list(chain.uncertainties)}</div><div class="toxic-chain-section"><b>下一步复核</b>${list(chain.nextChecks)}</div><div class="toxic-chain-reasoning">评分依据：${esc(basisText)}</div></div>`;
     }
+    function renderPositionRiskEvidence(row){
+      if(!['weekend_gap_trading','open_betting'].includes(row.type))return '';
+      const event=row?.evidence?.bestEvent||{},coverage=event.peerSearchCoverage||{};
+      if(!Object.keys(event).length)return '';
+      const direction=value=>value==='buy'?'买入':value==='sell'?'卖出':value||'-';
+      const matchRows=(rows,empty)=>rows?.length?rows.slice(0,100).map(item=>`<tr><td><b>${esc(item.targetOrderId||'-')}</b><small>仓位 ${esc(item.targetPositionId||'-')}</small></td><td><b>${esc(item.account||'-')}</b><small>${esc(item.platform||'-')} / ${esc(item.server||'-')}</small><small>${esc(item.database||'-')}</small></td><td><b>${esc(item.orderId||'-')}</b><small>仓位 ${esc(item.positionId||'-')} · 成交 ${esc(item.dealId||'-')}</small></td><td><b>${esc(item.symbol||'-')}</b><small>主体 ${esc(direction(item.targetDirection))} ${num(item.targetVolume,2)} 手 / 关联 ${esc(direction(item.direction))} ${num(item.volume,2)} 手</small><small>手数相似度 ${num(Number(item.lotSimilarity||0)*100,1)}%</small></td><td><b>差 ${num(item.openDeltaSeconds,3)} 秒</b><small>主体 ${esc(item.targetOpenTime||'-')}</small><small>关联 ${esc(item.openTime||'-')}</small></td><td><b>差 ${num(item.closeDeltaSeconds,3)} 秒</b><small>主体 ${esc(item.targetCloseTime||'-')}</small><small>关联 ${esc(item.closeTime||'-')}</small></td></tr>`).join(''):`<tr><td colspan="6"><div class="empty-state">${esc(empty)}</div></td></tr>`;
+      const heavyRows=(event.heavyOrders||[]).slice(0,100).map(item=>`<tr><td><b>${esc(item.orderId||'-')}</b><small>仓位 ${esc(item.positionId||'-')} · 成交 ${esc(item.dealId||'-')}</small></td><td>${esc(item.symbol||'-')} / ${esc(direction(item.direction))}</td><td>${num(item.volume,2)} 手</td><td>${esc(item.openTime||'-')}</td><td>${esc(item.closeTime||'未平仓')}</td><td>${num(item.positionNetProfit,2)}</td></tr>`).join('');
+      const failureRows=(coverage.failures||[]).map(item=>`<li>${esc(item.platform||'-')} / ${esc(item.server||'-')} / ${esc(item.database||'-')}：${esc(item.reason||'-')}</li>`).join('');
+      const scannedSources=(coverage.scannedSources||[]).map(item=>`${esc(item.platform||'-')} / ${esc(item.server||'-')} / ${esc(item.database||'-')}`).join('；');
+      const skipped=(coverage.skippedTargetOrders||[]).map(item=>`${esc(item.orderId||'未知订单')}：${esc(item.reason||'-')}`).join('；');
+      return `<div class="toxic-sync-comparison"><div class="toxic-sync-head"><div><h3>重仓与全平台同步开平仓证据</h3><small>${esc(coverage.scope||'AC/DBG 全平台 MT4 + MT5')} · 开仓和平仓均需在 ±${num(coverage.toleranceSeconds??5,0)} 秒内</small></div><span>${esc(coverage.status||'数据不足')} · ${num(coverage.scannedSourceCount,0)}/${num(coverage.physicalSourceTotal,0)} 库</span></div><div class="toxic-sync-kpis"><div><span>峰值仓位</span><b>${num(event.peakLots,2)} 手 / ${num(event.peakOrderCount||event.orderCount,0)} 单</b></div><div><span>账户杠杆</span><b>1:${num(event.leverage,0)}</b></div><div><span>预计占用保证金</span><b>${num(event.estimatedMargin,2)}</b></div><div><span>保证金占权益</span><b>${num(Number(event.marginRatio||0)*100,1)}%（越高越满）</b></div><div><span>估算保证金水平</span><b>${num(event.estimatedMarginLevel,1)}%（越低越满）</b></div><div><span>穿仓判断</span><b>${esc(event.penetrationStatus||'数据不足')}</b></div></div>${scannedSources?`<div class="toxic-accomplices-note">已完成：${scannedSources}</div>`:''}${(event.penetrationDataGaps||[]).length?`<div class="toxic-accomplices-note">数据不足原因：${esc(event.penetrationDataGaps.join('；'))}</div>`:''}${skipped?`<div class="toxic-accomplices-note">未参与同步匹配：${skipped}</div>`:''}${failureRows?`<div class="toxic-chain-section"><b>未完成的数据源</b><ul>${failureRows}</ul></div>`:''}${event.peerMatchesTruncated?`<div class="toxic-accomplices-note">订单对较多，接口最多保留 ${num(event.peerMatchDetailLimit||500,0)} 组明细，本页每类最多显示100组；账号总数和订单对总数仍按完整结果计算。</div>`:''}<div class="toxic-sync-detail-head"><div><h3>重仓开赌订单</h3><small>${num((event.heavyOrders||[]).length,0)} 单</small></div></div><div class="toxic-sync-detail-wrap"><table class="toxic-sync-detail-table"><thead><tr><th>订单 / 仓位</th><th>品种 / 方向</th><th>手数</th><th>开仓时间</th><th>平仓时间</th><th>仓位净盈亏</th></tr></thead><tbody>${heavyRows||'<tr><td colspan="6"><div class="empty-state">没有订单级明细</div></td></tr>'}</tbody></table></div><div class="toxic-sync-detail-head"><div><h3>同步同向订单</h3><small>共 ${num(event.sameDirectionMatchTotal??(event.sameDirectionMatches||[]).length,0)} 组</small></div></div><div class="toxic-sync-detail-wrap"><table class="toxic-sync-detail-table"><thead><tr><th>目标订单</th><th>同行账号 / 来源</th><th>同行订单 / 仓位</th><th>品种 / 方向 / 手数</th><th>同步开仓</th><th>同步平仓</th></tr></thead><tbody>${matchRows(event.sameDirectionMatches,'未找到同步同向开平仓订单')}</tbody></table></div><div class="toxic-sync-detail-head"><div><h3>同步反向疑似对锁订单</h3><small>共 ${num(event.oppositeDirectionMatchTotal??(event.oppositeDirectionMatches||[]).length,0)} 组</small></div></div><div class="toxic-sync-detail-wrap"><table class="toxic-sync-detail-table"><thead><tr><th>目标订单</th><th>反向账号 / 来源</th><th>反向订单 / 仓位</th><th>品种 / 方向 / 手数</th><th>同步开仓</th><th>同步平仓</th></tr></thead><tbody>${matchRows(event.oppositeDirectionMatches,'未找到同步反向开平仓订单')}</tbody></table></div></div>`;
+    }
+    function renderInternalLockEvidence(row){
+      if(row.type!=='internal_lock_arbitrage')return '';
+      const query=row?.evidence?.hedgeQuery||{},coverage=query.coverage||{};
+      if(!Object.keys(query).length)return '';
+      const direction=value=>value==='buy'?'买入':value==='sell'?'卖出':value||'-';
+      const accountRows=(query.accounts||[]).map(item=>{const href=`/account/${encodeURIComponent(item.account||'')}?platform=${encodeURIComponent(item.platform||'')}&server=${encodeURIComponent(item.server||'')}`;return `<tr><td><a href="${esc(href)}" target="_blank">${esc(item.account||'-')}</a></td><td>${esc(item.platform||'-')} / ${esc(item.server||'-')}<small>${esc(item.database||'-')}</small></td><td>${num(item.matchCount,0)}</td><td>${num(item.targetLots,2)} / ${num(item.peerLots,2)} 手</td></tr>`;}).join('');
+      const matchRows=(query.matches||[]).slice(0,100).map(item=>`<tr><td><b>${esc(item.targetOrderId||'-')}</b><small>仓位 ${esc(item.targetPositionId||'-')}</small></td><td><a href="/account/${encodeURIComponent(item.account||'')}?platform=${encodeURIComponent(item.platform||'')}&server=${encodeURIComponent(item.server||'')}" target="_blank">${esc(item.account||'-')}</a><small>${esc(item.platform||'-')} / ${esc(item.server||'-')}</small><small>${esc(item.database||'-')}</small></td><td><b>${esc(item.orderId||'-')}</b><small>仓位 ${esc(item.positionId||'-')} · 成交 ${esc(item.dealId||'-')}</small></td><td><b>${esc(item.symbol||'-')}</b><small>主体 ${esc(direction(item.targetDirection))} ${num(item.targetVolume,2)} 手 / 对方 ${esc(direction(item.direction))} ${num(item.volume,2)} 手</small><small>手数相似度 ${num(Number(item.lotSimilarity||0)*100,1)}%</small></td><td><b>差 ${num(item.openDeltaSeconds,3)} 秒</b><small>主体 ${esc(item.targetOpenTime||'-')}</small><small>对方 ${esc(item.openTime||'-')}</small></td><td><b>差 ${num(item.closeDeltaSeconds,3)} 秒</b><small>主体 ${esc(item.targetCloseTime||'-')}</small><small>对方 ${esc(item.closeTime||'-')}</small></td></tr>`).join('');
+      const failures=(coverage.failures||[]).map(item=>`<li>${esc(item.platform||'-')} / ${esc(item.server||'-')} / ${esc(item.database||'-')}：${esc(item.reason||'-')}</li>`).join('');
+      return `<div class="toxic-sync-comparison"><div class="toxic-sync-head"><div><h3>平台内多账户对锁查询</h3><small>${esc(query.rule||'同品种、反方向、手数相似度至少80%，且双方开仓和平仓时间差都不超过5秒')} · ${esc(query.scope||'AC/DBG 全平台 MT4 + MT5')}</small></div><span>${esc(coverage.status||'数据不足')} · ${num(coverage.scannedSourceCount,0)}/${num(coverage.physicalSourceTotal,0)} 库</span></div><div class="toxic-sync-kpis"><div><span>已检查目标订单</span><b>${num(query.targetOrderCount,0)}</b></div><div><span>疑似对锁账号</span><b>${num(query.accountCount,0)}</b></div><div><span>反向同步订单对</span><b>${num(query.matchTotal,0)}</b></div><div><span>对锁手数门槛</span><b>${num(Number(query.lotSimilarityThreshold||0.8)*100,0)}%</b></div><div><span>未平仓未参与</span><b>${num(query.openPositionCount,0)}</b></div></div>${failures?`<div class="toxic-chain-section"><b>未完成的数据源</b><ul>${failures}</ul></div>`:''}${query.detailsTruncated?`<div class="toxic-accomplices-note">账号与订单对总数按完整结果计算；订单明细最多保留 ${num(query.detailLimit,0)} 组，本页显示前100组。</div>`:''}<div class="toxic-sync-detail-head"><div><h3>疑似对锁账号</h3><small>${num(query.accountCount,0)} 个</small></div></div><div class="toxic-sync-detail-wrap"><table class="toxic-sync-detail-table"><thead><tr><th>账号</th><th>平台 / 服务器 / 数据库</th><th>匹配订单对</th><th>主体 / 对方手数合计</th></tr></thead><tbody>${accountRows||'<tr><td colspan="4"><div class="empty-state">未发现同时满足开平仓同步与手数接近条件的反向账户</div></td></tr>'}</tbody></table></div><div class="toxic-sync-detail-head"><div><h3>反向同步开平仓订单</h3><small>共 ${num(query.matchTotal,0)} 组</small></div></div><div class="toxic-sync-detail-wrap"><table class="toxic-sync-detail-table"><thead><tr><th>主体订单</th><th>对锁账号 / 来源</th><th>对方订单 / 仓位</th><th>品种 / 方向 / 手数</th><th>同步开仓</th><th>同步平仓</th></tr></thead><tbody>${matchRows||'<tr><td colspan="6"><div class="empty-state">未找到同时满足手数相似度至少80%的反向同步开平仓订单</div></td></tr>'}</tbody></table></div><div class="toxic-accomplices-note">反向同步只表示疑似对锁，不能单独证明双方存在套利关系。</div></div>`;
+    }
     function renderToxicResults(result){
       state.toxic.lastResult=result;const rows=result?.results||[];
       if(!rows.length){$("toxicResults").innerHTML='<div class="toxic-empty">没有检测结果</div>';return;}
@@ -10766,9 +11537,11 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         const accompliceList=accomplices.map(item=>{const href=`/account/${encodeURIComponent(item.account||'')}?platform=${encodeURIComponent(item.platform||'')}&server=${encodeURIComponent(item.server||'')}`;return `<div class="toxic-accomplice"><a href="${esc(href)}" target="_blank">${esc(item.account||'-')}</a><br>${esc(item.server||item.platform||'-')} · 开仓同步 ${num(item.matches,0)} 次 (${num(item.matchRatio,1)}%) · 平仓同步 ${num(item.closeMatches,0)} 次</div>`;}).join('');
         const accompliceHtml=row.type==='market_pushing'?`<div class="toxic-accomplices"><div class="toxic-accomplices-title">疑似同伙账户</div>${accompliceList?`<div class="toxic-accomplice-list">${accompliceList}</div>`:`<div class="toxic-accomplices-note">当前未找到达到反复匹配门槛的协同账户；这不会降低本账户自身的推盘嫌疑。</div>`}</div>`:'';
         const chain=renderEvidenceChain(row);
-        const readable=(chain|| (analysis?`<div class="toxic-analysis">${analysis}</div>`:`<div>${esc(row.summary||'')}</div>`))+accompliceHtml;
+        const readable=(chain|| (analysis?`<div class="toxic-analysis">${analysis}</div>`:`<div>${esc(row.summary||'')}</div>`))+accompliceHtml+renderInternalLockEvidence(row)+renderPositionRiskEvidence(row);
         const tech=(metrics||triggers||limits)?`<details class="toxic-tech"><summary>查看技术明细</summary><div class="toxic-tech-body">${metrics}${triggers?`<br><span>触发规则：</span>${triggers}`:''}${limits?`<div class="toxic-limit">模型限制：${esc(limits)}</div>`:''}</div></details>`:'';
-        return `<div class="toxic-result ${toxicResultClass(row)}"><div class="toxic-score">${num(row.score,1)}<small>${esc(row.level)}</small></div><div class="toxic-result-title"><b>${esc(row.label)}</b><span>${row.stage==='deep'?'深度检测':'初筛'} · 置信度 ${num(row.confidence,0)}%</span></div><div class="toxic-result-summary">${readable}${tech}</div><div class="toxic-result-actions">${row.stage!=='deep'?`<button type="button" data-toxic-deep="${esc(row.type)}">深度检测</button>`:''}</div></div>`;
+        const queryOnly=row.type==='internal_lock_arbitrage',query=row?.evidence?.hedgeQuery||{};
+        const scoreValue=queryOnly?num(query.accountCount,0):num(row.score,1),scoreLabel=queryOnly?'疑似账号':esc(row.level);
+        return `<div class="toxic-result ${toxicResultClass(row)}"><div class="toxic-score">${scoreValue}<small>${scoreLabel}</small></div><div class="toxic-result-title"><b>${esc(row.label)}</b><span>${queryOnly?'专项查询':(row.stage==='deep'?'深度检测':'初筛')} · 置信度 ${num(row.confidence,0)}%</span></div><div class="toxic-result-summary">${readable}${tech}</div><div class="toxic-result-actions">${row.stage!=='deep'?`<button type="button" data-toxic-deep="${esc(row.type)}">深度检测</button>`:''}</div></div>`;
       }).join('')+renderToxicSyncComparison(result);
       document.querySelectorAll('[data-toxic-deep]').forEach(btn=>btn.addEventListener('click',()=>deepToxic(btn.dataset.toxicDeep)));
       const syncFilter=$("toxicSyncPeerFilter");if(syncFilter)syncFilter.addEventListener('change',()=>{$("toxicSyncRows").innerHTML=renderToxicSyncRows(result.pushSync,syncFilter.value);});
@@ -10791,7 +11564,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         state.toxic.jobTimer=setTimeout(()=>pollToxic(id),800);
       }catch(err){$("toxicStatus").textContent=err.message;state.toxic.running=false;$("startToxic").disabled=false;$("toxicBtn").disabled=false;}
     }
-    $("accountId").textContent=LOGIN;renderToxicSelector();$("refreshBtn").addEventListener('click',()=>load(true));$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
+    $("accountId").textContent=LOGIN;renderToxicSelector();$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
     ["customAction","group","tags","note","owner"].forEach(id=>$(id).addEventListener('input',()=>{state.formDirty=true;}));
     $("orderDetails").addEventListener('toggle',()=>{if($("orderDetails").open&&!state.orders.loaded)loadOrders(1);});$("orderPrev").addEventListener('click',()=>loadOrders(state.orders.page-1));$("orderNext").addEventListener('click',()=>loadOrders(state.orders.page+1));
     loadLedger();load().catch(err=>{$("metricStatus").textContent=err.message;});loadIps();

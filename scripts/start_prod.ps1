@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+    [switch]$AccountOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -68,18 +73,22 @@ function Start-KDeskProductionProcess {
 }
 
 Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kdesk.api.account_app" -Arguments @("-m", "uvicorn", "kdesk.api.account_app:app", "--host", "127.0.0.1", "--port", "8777", "--workers", "1")
-Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
+if (-not $AccountOnly) {
+    Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
 
-foreach ($queue in @("interactive", "discovery")) {
-    $workers = @(Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
-        $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*"
-    })
-    if ($workers.Count -eq 0) {
-        Start-KDeskProductionProcess -Name "worker-$queue" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod", "--queue", $queue)
+    foreach ($queue in @("interactive", "discovery")) {
+        $workers = @(Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
+            $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*"
+        })
+        if ($workers.Count -eq 0) {
+            Start-KDeskProductionProcess -Name "worker-$queue" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod", "--queue", $queue)
+        }
     }
 }
 
 Start-Sleep -Seconds 2
 Write-Host "Account production: http://127.0.0.1:8777"
-Write-Host "K-line production: http://127.0.0.1:8766"
+if (-not $AccountOnly) {
+    Write-Host "K-line production: http://127.0.0.1:8766"
+}

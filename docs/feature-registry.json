@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "060b56701387",
+  "registryVersion": "e353fab7befb",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -10,10 +10,13 @@
       "apis": [
         "GET /account/{login}",
         "GET /api/accounts/by-login/{login}/detail",
-        "GET /api/accounts/by-login/{login}/risk-panels"
+        "GET /api/accounts/by-login/{login}/risk-panels",
+        "GET /api/accounts/by-login/{login}/relationship-network",
+        "GET /api/accounts/by-login/{login}/orders"
       ],
       "code": [
         "src/kdesk/api/account_app.py",
+        "src/kdesk/application/relationship_network.py",
         "legacy/apps/problem_account_registry/app.py",
         "frontend/src/main.ts"
       ],
@@ -26,11 +29,44 @@
         "ACC-SEARCH-001",
         "FIN-COMP-001",
         "AUT-COPY-001",
-        "TOX-PUSH-001"
+        "AUT-FOLLOWER-001",
+        "AUT-EA-001",
+        "TOX-PUSH-001",
+        "TOX-POSITION-001",
+        "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-29",
       "document": "docs/features/account/account-detail-legacy.md"
+    },
+    {
+      "feature_id": "ACC-REL-001",
+      "title": "Account relationship network",
+      "module": "account",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/relationship-network"
+      ],
+      "code": [
+        "src/kdesk/application/relationship_network.py",
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "tests/test_api.py",
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-DETAIL-001",
+        "ACC-SEARCH-001",
+        "AUT-COPY-001",
+        "AUT-EA-001",
+        "AUT-FOLLOWER-001",
+        "FIN-REBATE-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-29",
+      "document": "docs/features/account/relationship-network.md"
     },
     {
       "feature_id": "ACC-SEARCH-001",
@@ -54,7 +90,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/account/account-search.md"
     },
     {
@@ -63,19 +99,24 @@
       "module": "automation",
       "status": "active",
       "apis": [
-        "GET /api/accounts/by-login/{login}/copy-origins"
+        "GET /api/accounts/by-login/{login}/copy-origins",
+        "GET /api/accounts/by-login/{login}/copy-report.xlsx"
       ],
       "code": [
-        "legacy/apps/problem_account_registry/app.py"
+        "legacy/apps/problem_account_registry/app.py",
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/infrastructure/automation_reports.py"
       ],
       "tests": [
-        "legacy/apps/problem_account_registry/test_app.py"
+        "legacy/apps/problem_account_registry/test_app.py",
+        "tests/test_api.py",
+        "tests/test_automation_reports.py"
       ],
       "depends_on": [
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/automation/copy-origin-query.md"
     },
     {
@@ -84,20 +125,25 @@
       "module": "automation",
       "status": "active",
       "apis": [
-        "GET /api/accounts/by-login/{login}/ea-comment-profit"
+        "GET /api/accounts/by-login/{login}/ea-comment-profit",
+        "GET /api/accounts/by-login/{login}/ea-report.xlsx"
       ],
       "code": [
         "legacy/apps/problem_account_registry/ea_comment_group.py",
-        "legacy/apps/problem_account_registry/app.py"
+        "legacy/apps/problem_account_registry/app.py",
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/infrastructure/automation_reports.py"
       ],
       "tests": [
-        "legacy/apps/problem_account_registry/test_app.py"
+        "legacy/apps/problem_account_registry/test_app.py",
+        "tests/test_api.py",
+        "tests/test_automation_reports.py"
       ],
       "depends_on": [
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-24",
       "document": "docs/features/automation/ea-comment-profit.md"
     },
     {
@@ -107,22 +153,89 @@
       "status": "active",
       "apis": [
         "GET /api/accounts/by-login/{login}/copy-origins",
-        "GET /api/accounts/by-login/{login}/copy-group-profit"
+        "GET /api/accounts/by-login/{login}/copy-group-profit",
+        "GET /api/accounts/by-login/{login}/copy-report.xlsx"
       ],
       "code": [
         "legacy/apps/problem_account_registry/app.py",
-        "legacy/apps/problem_account_registry/signal_copy_group.py"
+        "legacy/apps/problem_account_registry/signal_copy_group.py",
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/infrastructure/automation_reports.py"
       ],
       "tests": [
-        "legacy/apps/problem_account_registry/test_app.py"
+        "legacy/apps/problem_account_registry/test_app.py",
+        "tests/test_api.py",
+        "tests/test_automation_reports.py"
       ],
       "depends_on": [
         "AUT-COPY-001",
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/automation/follower-profit.md"
+    },
+    {
+      "feature_id": "AUT-POOL-001",
+      "title": "Dynamic copy-pool monitor",
+      "module": "automation",
+      "status": "active",
+      "apis": [
+        "GET /copy-pool",
+        "GET /api/copy-pool/dashboard",
+        "GET /copy-pool/accounts/{alias}"
+      ],
+      "code": [
+        ".env.example",
+        "src/kdesk/settings.py",
+        "src/kdesk/application/copy_pool_monitor.py",
+        "src/kdesk/infrastructure/copy_pool_monitor.py",
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py",
+        "frontend/src/main.ts",
+        "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/pages/CopyPoolPage.vue",
+        "frontend/src/copyPool.ts",
+        "services/copy_pool_runtime/run_copy_demo_live.ps1",
+        "services/copy_pool_runtime/copy_delay_replay_domain.py",
+        "services/copy_pool_runtime/copy_dynamic_pool_domain.py",
+        "services/copy_pool_runtime/copy_independent_execution.py",
+        "services/copy_pool_runtime/copy_pool_equity_reconstruction.py",
+        "services/copy_pool_runtime/copy_pool_factor_domain.py",
+        "services/copy_pool_runtime/copy_pool_factor_service.py",
+        "services/copy_pool_runtime/copy_pool_history_adapter.py",
+        "services/copy_pool_runtime/copy_pool_history_repository.py",
+        "services/copy_pool_runtime/copy_pool_multisource.py",
+        "services/copy_pool_runtime/copy_product_catalog.py",
+        "services/copy_pool_runtime/copy_quote_replay_cache.py",
+        "services/copy_pool_runtime/copy_trading_demo.py",
+        "services/copy_pool_runtime/copy_trading_live_core.py",
+        "services/copy_pool_runtime/copy_trading_live_demo.py",
+        "services/copy_pool_runtime/copy_trading_multi_demo.py",
+        "services/copy_pool_runtime/mt5_quote_partition_provider.py"
+      ],
+      "tests": [
+        "tests/test_copy_pool_monitor.py",
+        "legacy/apps/problem_account_registry/test_app.py",
+        "frontend/src/copyPool.spec.ts",
+        "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py",
+        "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py",
+        "services/copy_pool_runtime/tests/test_copy_independent_execution.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py",
+        "services/copy_pool_runtime/tests/test_copy_pool_multisource.py",
+        "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py",
+        "services/copy_pool_runtime/tests/test_copy_trading_live.py"
+      ],
+      "depends_on": [
+        "ACC-DETAIL-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-30",
+      "document": "docs/features/automation/dynamic-copy-pool-monitor.md"
     },
     {
       "feature_id": "FIN-COMP-001",
@@ -144,8 +257,31 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/finance/comprehensive-profit.md"
+    },
+    {
+      "feature_id": "FIN-HIERARCHY-001",
+      "title": "Hierarchy net-deposit and product analysis",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "GET /api/hierarchy-products",
+        "GET /api/hierarchy-net-deposit"
+      ],
+      "code": [
+        "legacy/apps/problem_account_registry/hierarchy_net_deposit.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-27",
+      "document": "docs/features/finance/hierarchy-net-deposit.md"
     },
     {
       "feature_id": "FIN-REBATE-001",
@@ -166,7 +302,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/finance/rebate-display.md"
     },
     {
@@ -182,19 +318,57 @@
         "src/kdesk/api/account_app.py",
         "frontend/src/components/RebateAuditPanel.vue",
         "frontend/src/components/RebateTreeNode.vue",
+        "frontend/src/rebateTreeRisk.ts",
         "frontend/src/pages/WorkbenchPage.vue"
       ],
       "tests": [
         "tests/test_rebate_churning.py",
-        "tests/test_api.py"
+        "tests/test_api.py",
+        "frontend/src/rebateTreeRisk.spec.ts"
       ],
       "depends_on": [
         "FIN-REBATE-001",
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/finance/rebate-churning-audit.md"
+    },
+    {
+      "feature_id": "FIN-REBATE-SCAN-001",
+      "title": "Platform rebate-churning discovery",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "POST /api/rebate-churning/scans",
+        "GET /api/rebate-churning/scans/{job_id}",
+        "GET /api/rebate-churning/ibs/{environment}/{ib_id}"
+      ],
+      "code": [
+        "src/kdesk/domain/rebate_churning.py",
+        "src/kdesk/application/rebate_churning_scan.py",
+        "src/kdesk/infrastructure/rebate_churning.py",
+        "src/kdesk/worker/runner.py",
+        "src/kdesk/api/account_app.py",
+        "frontend/src/components/RebateDiscoveryPanel.vue",
+        "frontend/src/components/RebateTreeNode.vue",
+        "frontend/src/rebateTreeRisk.ts",
+        "frontend/src/pages/WorkbenchPage.vue"
+      ],
+      "tests": [
+        "tests/test_rebate_churning_scan.py",
+        "tests/test_api.py",
+        "tests/test_worker.py",
+        "frontend/src/rebateTreeRisk.spec.ts"
+      ],
+      "depends_on": [
+        "FIN-REBATE-AUDIT-001",
+        "FIN-REBATE-001",
+        "JOB-RECOVERY-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/finance/rebate-churning-scan.md"
     },
     {
       "feature_id": "GOV-LIFECYCLE-001",
@@ -243,12 +417,22 @@
         "GET /api/kline/jobs/{job_id}",
         "GET /api/toxic/jobs/{job_id}",
         "GET /api/push-discovery/jobs/{job_id}",
+        "GET /api/push-discovery/active",
+        "GET /api/rebate-churning/scans/{job_id}",
+        "GET /api/bonus-arbitrage/scans/active",
+        "GET /api/bonus-arbitrage/scans/{job_id}",
+        "GET /api/position-risk/scans/active",
+        "GET /api/position-risk/scans/{job_id}",
         "POST /api/jobs/{job_id}/cancel"
       ],
       "code": [
         "src/kdesk/infrastructure/database.py",
         "src/kdesk/worker/runner.py",
         "src/kdesk/api/account_app.py",
+        "frontend/src/pushDiscovery.ts",
+        "frontend/src/frontendUpdate.ts",
+        "frontend/src/components/BonusArbitrageDiscoveryPanel.vue",
+        "frontend/src/components/PositionRiskDiscoveryPanel.vue",
         "scripts/start_dev.ps1",
         "scripts/start_prod.ps1",
         "scripts/stop_prod.ps1"
@@ -256,11 +440,16 @@
       "tests": [
         "tests/test_api.py",
         "tests/test_ledger.py",
+        "tests/test_worker.py",
+        "frontend/src/pushDiscovery.spec.ts",
+        "frontend/src/frontendUpdate.spec.ts",
+        "frontend/src/bonusDiscovery.spec.ts",
+        "frontend/src/positionRiskDiscovery.spec.ts",
         "legacy/apps/problem_account_registry/test_app.py"
       ],
       "depends_on": [],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-20",
       "document": "docs/features/jobs/job-progress-recovery.md"
     },
     {
@@ -275,19 +464,31 @@
         "GET /output/{name}"
       ],
       "code": [
+        ".env.example",
+        "config/kline_quote_sources.example.json",
+        "frontend/src/kdesk-theme.css",
+        "src/kdesk/domain/kline.py",
+        "src/kdesk/application/kline_generation.py",
+        "src/kdesk/infrastructure/quote_sources.py",
         "src/kdesk/api/account_app.py",
         "src/kdesk/api/kline_app.py",
-        "src/kdesk/worker/runner.py"
+        "src/kdesk/worker/runner.py",
+        "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
+        "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py",
+        "legacy/tools/trade_kline_tool/API.md",
+        "legacy/tools/trade_kline_tool/README.md"
       ],
       "tests": [
-        "tests/test_api.py"
+        "tests/test_api.py",
+        "tests/test_kline.py",
+        "tests/test_worker.py"
       ],
       "depends_on": [
         "JOB-RECOVERY-001",
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/kline/database-generation.md"
     },
     {
@@ -316,6 +517,167 @@
       "document": "docs/features/ledger/account-ledger.md"
     },
     {
+      "feature_id": "TOX-BONUS-001",
+      "title": "Bonus-arbitrage cycle detection",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "GET /api/toxic/check-types",
+        "POST /api/accounts/by-login/{login}/toxic-checks",
+        "GET /api/toxic/jobs/{job_id}"
+      ],
+      "code": [
+        "src/kdesk/domain/bonus_arbitrage.py",
+        "src/kdesk/application/bonus_arbitrage.py",
+        "src/kdesk/infrastructure/bonus_arbitrage.py",
+        "src/kdesk/worker/runner.py"
+      ],
+      "tests": [
+        "tests/test_bonus_arbitrage.py",
+        "tests/test_worker.py"
+      ],
+      "depends_on": [
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/toxic/bonus-arbitrage.md"
+    },
+    {
+      "feature_id": "TOX-BONUS-SCAN-001",
+      "title": "Platform bonus-arbitrage discovery",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "POST /api/bonus-arbitrage/scans",
+        "GET /api/bonus-arbitrage/scans/active",
+        "GET /api/bonus-arbitrage/scans/{job_id}"
+      ],
+      "code": [
+        "src/kdesk/application/bonus_arbitrage_scan.py",
+        "src/kdesk/infrastructure/bonus_arbitrage_scan.py",
+        "src/kdesk/worker/runner.py",
+        "src/kdesk/api/account_app.py",
+        "frontend/src/components/BonusArbitrageDiscoveryPanel.vue",
+        "frontend/src/bonusDiscovery.ts",
+        "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/styles.css"
+      ],
+      "tests": [
+        "tests/test_bonus_arbitrage_scan.py",
+        "tests/test_api.py",
+        "tests/test_worker.py",
+        "frontend/src/bonusDiscovery.spec.ts"
+      ],
+      "depends_on": [
+        "TOX-BONUS-001",
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/toxic/bonus-arbitrage-scan.md"
+    },
+    {
+      "feature_id": "TOX-HEDGE-001",
+      "title": "Cross-account synchronized hedge query",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "GET /api/toxic/check-types",
+        "POST /api/accounts/by-login/{login}/toxic-checks",
+        "GET /api/toxic/jobs/{job_id}"
+      ],
+      "code": [
+        "src/kdesk/application/hedge_detection.py",
+        "src/kdesk/domain/position_risk.py",
+        "src/kdesk/infrastructure/position_risk.py",
+        "src/kdesk/worker/runner.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "tests/test_hedge_detection.py",
+        "tests/test_position_risk.py",
+        "tests/test_position_risk_infrastructure.py",
+        "tests/test_worker.py"
+      ],
+      "depends_on": [
+        "TOX-POSITION-001",
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/toxic/cross-account-hedge.md"
+    },
+    {
+      "feature_id": "TOX-POSITION-001",
+      "title": "Heavy-position weekend and opening risk detection",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "GET /api/toxic/check-types",
+        "POST /api/accounts/by-login/{login}/toxic-checks",
+        "GET /api/toxic/jobs/{job_id}"
+      ],
+      "code": [
+        "src/kdesk/domain/position_risk.py",
+        "src/kdesk/application/position_risk.py",
+        "src/kdesk/infrastructure/position_risk.py",
+        "src/kdesk/worker/runner.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "tests/test_position_risk.py",
+        "tests/test_position_risk_infrastructure.py",
+        "tests/test_worker.py"
+      ],
+      "depends_on": [
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/toxic/position-risk.md"
+    },
+    {
+      "feature_id": "TOX-POSITION-SCAN-001",
+      "title": "Platform heavy-position timing discovery",
+      "module": "toxic",
+      "status": "active",
+      "apis": [
+        "POST /api/position-risk/scans",
+        "GET /api/position-risk/scans/active",
+        "GET /api/position-risk/scans/{job_id}"
+      ],
+      "code": [
+        "src/kdesk/application/position_risk_scan.py",
+        "src/kdesk/infrastructure/position_risk_scan.py",
+        "src/kdesk/worker/runner.py",
+        "src/kdesk/api/account_app.py",
+        "frontend/src/components/PositionRiskDiscoveryPanel.vue",
+        "frontend/src/positionRiskDiscovery.ts",
+        "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/styles.css"
+      ],
+      "tests": [
+        "tests/test_position_risk_scan.py",
+        "tests/test_position_risk_infrastructure.py",
+        "tests/test_api.py",
+        "tests/test_worker.py",
+        "frontend/src/positionRiskDiscovery.spec.ts"
+      ],
+      "depends_on": [
+        "TOX-POSITION-001",
+        "JOB-RECOVERY-001",
+        "ACC-SEARCH-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-07-23",
+      "document": "docs/features/toxic/position-risk-scan.md"
+    },
+    {
       "feature_id": "TOX-PUSH-001",
       "title": "Market-pushing detection",
       "module": "toxic",
@@ -323,7 +685,8 @@
       "apis": [
         "POST /api/accounts/by-login/{login}/toxic-checks",
         "GET /api/toxic/jobs/{job_id}",
-        "POST /api/push-discovery/start"
+        "POST /api/push-discovery/start",
+        "GET /api/push-discovery/active"
       ],
       "code": [
         "legacy/apps/problem_account_registry/app.py",
@@ -332,18 +695,21 @@
         "src/kdesk/worker/runner.py",
         "frontend/src/pages/AccountPage.vue",
         "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/pushDiscovery.ts",
         "frontend/src/styles.css"
       ],
       "tests": [
         "legacy/apps/problem_account_registry/test_app.py",
-        "legacy/scripts/test_run_platform_push_discovery.py"
+        "legacy/scripts/test_run_platform_push_discovery.py",
+        "tests/test_worker.py",
+        "frontend/src/pushDiscovery.spec.ts"
       ],
       "depends_on": [
         "JOB-RECOVERY-001",
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-17",
+      "last_verified_date": "2026-07-23",
       "document": "docs/features/toxic/market-pushing.md"
     }
   ]

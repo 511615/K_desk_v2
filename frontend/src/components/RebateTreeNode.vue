@@ -1,9 +1,20 @@
 <script setup lang="ts">
+import {
+  accountHasRebateActivity,
+  accountRiskLevel,
+  hasExcessiveHierarchyRebate,
+  hasVisibleRebateActivity,
+  nodeRiskLevel,
+  riskClass,
+} from '../rebateTreeRisk'
+
 defineOptions({ name: 'RebateTreeNode' })
 
-defineProps<{
+const props = defineProps<{
   node: any
   targetAccount: string
+  hideInactive?: boolean
+  fullHistory?: boolean
 }>()
 
 function number(value: unknown, digits = 1): string {
@@ -23,10 +34,6 @@ function valueClass(value: unknown): string {
   return Number(value) > 0 ? 'positive' : Number(value) < 0 ? 'negative' : ''
 }
 
-function riskClass(level: string): string {
-  return level === '严重' ? 'severe' : level === '高危' ? 'high' : level === '预警' ? 'warning' : ''
-}
-
 function accountHref(account: any): string {
   const params = new URLSearchParams()
   if (account.platform) params.set('platform', account.platform)
@@ -34,13 +41,24 @@ function accountHref(account: any): string {
   return `/account/${encodeURIComponent(String(account.account || ''))}?${params}`
 }
 
+function visibleChildren(node: any, hideInactive: boolean): any[] {
+  const children = node?.children || []
+  return hideInactive ? children.filter(hasVisibleRebateActivity) : children
+}
+
+function visibleAccounts(node: any, hideInactive: boolean): any[] {
+  const accounts = node?.accounts || []
+  return hideInactive ? accounts.filter(accountHasRebateActivity) : accounts
+}
+
 function financialItems(node: any): Array<[string, string, string?]> {
   const item = node.financials || {}
+  const periodLabel = props.fullHistory ? '全历史' : '区间'
   if (node.type === 'ib') {
     return [
       ['下属账户', number(item.accounts, 0)],
-      ['区间订单', number(item.orders, 0)],
-      ['区间手数', number(item.lots, 2)],
+      [`${periodLabel}订单`, number(item.orders, 0)],
+      [`${periodLabel}手数`, number(item.lots, 2)],
       ['下属交易盈亏', money(item.tradeProfit), valueClass(item.tradeProfit)],
       ['IB实收返佣', money(item.currentIbRebate)],
       ['IB口径综合收益', money(item.combinedProfit), valueClass(item.combinedProfit)],
@@ -49,8 +67,8 @@ function financialItems(node: any): Array<[string, string, string?]> {
   }
   return [
     ['账户数', number(item.accounts, 0)],
-    ['区间订单', number(item.orders, 0)],
-    ['区间手数', number(item.lots, 2)],
+    [`${periodLabel}订单`, number(item.orders, 0)],
+    [`${periodLabel}手数`, number(item.lots, 2)],
     ['客户交易盈亏', money(item.tradeProfit), valueClass(item.tradeProfit)],
     ['产生层级返佣', money(item.hierarchyRebate)],
     ['外部净入金', money(item.externalNetDeposit), valueClass(item.externalNetDeposit)],
@@ -59,7 +77,7 @@ function financialItems(node: any): Array<[string, string, string?]> {
 </script>
 
 <template>
-  <details class="rebate-tree-node" open>
+  <details class="rebate-tree-node" :class="[riskClass(nodeRiskLevel(node)), { 'excessive-rebate': hasExcessiveHierarchyRebate(node) }]" open>
     <summary class="rebate-node-summary">
       <div class="rebate-node-heading">
         <span class="relation">{{ node.relationship || node.type }}</span>
@@ -68,6 +86,8 @@ function financialItems(node: any): Array<[string, string, string?]> {
           <span class="risk-pill" :class="riskClass(node.risk.level)">{{ node.risk.level }}</span>
           <strong>{{ number(node.risk.score, 1) }}分</strong>
         </template>
+        <span v-else-if="nodeRiskLevel(node)" class="risk-pill" :class="riskClass(nodeRiskLevel(node))">{{ nodeRiskLevel(node) }}</span>
+        <span v-if="hasExcessiveHierarchyRebate(node)" class="excessive-rebate-pill">返佣过大</span>
       </div>
       <div class="rebate-finance-grid rebate-finance-summary">
         <div v-for="item in financialItems(node)" :key="item[0]"><span>{{ item[0] }}</span><b :class="item[2] || ''">{{ item[1] }}</b></div>
@@ -86,16 +106,17 @@ function financialItems(node: any): Array<[string, string, string?]> {
         <div class="rebate-tags"><span v-for="tag in node.risk.evidenceTags || []" :key="tag">{{ tag }}</span></div>
       </template>
 
-      <div v-if="node.accounts?.length" class="rebate-account-list">
-        <details v-for="account in node.accounts" :key="`${account.serverCode}-${account.account}`" class="rebate-account" :class="{ target: String(account.account) === targetAccount }" :open="String(account.account) === targetAccount">
+      <div v-if="visibleAccounts(node, Boolean(hideInactive)).length" class="rebate-account-list">
+        <details v-for="account in visibleAccounts(node, Boolean(hideInactive))" :key="`${account.serverCode}-${account.account}`" class="rebate-account" :class="[{ target: String(account.account) === targetAccount }, riskClass(accountRiskLevel(account))]" :open="String(account.account) === targetAccount">
           <summary>
             <span v-if="String(account.account) === targetAccount" class="target-flag">目标账户</span>
             <span v-if="account.isHistorical" class="relation">历史账户</span>
             <span class="account-name"><a :href="accountHref(account)">{{ account.account }}</a><small>{{ account.server || account.platform || '-' }} · {{ account.typeName || '-' }}</small></span>
+            <span v-if="accountRiskLevel(account)" class="risk-pill" :class="riskClass(accountRiskLevel(account))">{{ accountRiskLevel(account) }}</span>
             <span class="account-facts">{{ number(account.orders, 0) }}单 · {{ number(account.lots, 2) }}手 · 贡献 {{ number(account.riskContribution, 1) }}分</span>
           </summary>
           <div class="rebate-account-grid">
-            <div><span>区间交易盈亏</span><b :class="valueClass(account.tradeProfit)">{{ money(account.tradeProfit) }}</b></div>
+            <div><span>{{ fullHistory ? '全历史交易盈亏' : '区间交易盈亏' }}</span><b :class="valueClass(account.tradeProfit)">{{ money(account.tradeProfit) }}</b></div>
             <div><span>贡献当前IB返佣</span><b>{{ money(account.currentIbRebate) }}</b></div>
             <div><span>IB口径综合收益</span><b :class="valueClass(Number(account.tradeProfit || 0) + Number(account.currentIbRebate || 0))">{{ money(Number(account.tradeProfit || 0) + Number(account.currentIbRebate || 0)) }}</b></div>
             <div><span>产生层级返佣</span><b>{{ money(account.hierarchyRebate) }}</b></div>
@@ -109,13 +130,21 @@ function financialItems(node: any): Array<[string, string, string?]> {
         </details>
       </div>
 
-      <RebateTreeNode v-for="child in node.children || []" :key="child.userId" :node="child" :target-account="targetAccount" />
+      <RebateTreeNode v-for="child in visibleChildren(node, Boolean(hideInactive))" :key="child.userId" :node="child" :target-account="targetAccount" :hide-inactive="hideInactive" :full-history="fullHistory" />
     </div>
   </details>
 </template>
 
 <style scoped>
 .rebate-tree-node { margin: 7px 0 7px 18px; border-left: 2px solid #1b5279; padding-left: 12px }
+.rebate-tree-node.warning, .rebate-account.warning { border-left-color: #c8952e }
+.rebate-tree-node.high, .rebate-account.high { border-left-color: #ef743b }
+.rebate-tree-node.severe, .rebate-account.severe { border-left-color: #ff5363 }
+.rebate-tree-node.warning>.rebate-node-summary { box-shadow: inset 4px 0 #c8952e }
+.rebate-tree-node.high>.rebate-node-summary { box-shadow: inset 4px 0 #ef743b }
+.rebate-tree-node.severe>.rebate-node-summary { box-shadow: inset 4px 0 #ff5363 }
+.rebate-tree-node.excessive-rebate>.rebate-node-summary { border-color: #ff5363; background: #3b1019; box-shadow: inset 5px 0 #ff5363, 0 0 14px #ff536344 }
+.rebate-tree-node.excessive-rebate>.rebate-node-summary>.rebate-finance-summary { border-color: #7d2935; background: #2b0d14 }
 .rebate-tree-node:first-child { margin-left: 0 }
 .rebate-node-summary, .rebate-account>summary { cursor: pointer; list-style: none }
 .rebate-node-summary { position: relative; display: block; border: 1px solid #17466d; background: #061b31 }
@@ -132,6 +161,7 @@ details[open]>.rebate-node-summary::before, .rebate-account[open]>summary::befor
 .risk-pill.warning { color: #ffd27b; border-color: #926b23; background: #38290e }
 .risk-pill.high { color: #ffb073; border-color: #a34e22; background: #3b1d10 }
 .risk-pill.severe { color: #ff8d99; border-color: #a63c4b; background: #3d1720 }
+.excessive-rebate-pill { padding: 4px 8px; border: 1px solid #ff7180; border-radius: 4px; color: #fff; background: #c6283a; box-shadow: 0 0 10px #ff536366; font-size: 10px; font-weight: 800 }
 .node-name, .account-name { min-width: 180px; flex: 1 }
 .node-name b, .node-name small, .account-name a, .account-name small { display: block }
 .node-name small, .account-name small, .account-facts { margin-top: 3px; color: #7895ad; font-size: 10px }

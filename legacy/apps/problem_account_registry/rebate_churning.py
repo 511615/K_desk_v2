@@ -5,17 +5,23 @@ import math
 import re
 import statistics
 import threading
+import time
 import uuid
 from collections import Counter, defaultdict, deque
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Callable, Iterable
-
 
 MAX_RANGE_DAYS = 366
 MAX_ACCOUNT_RANGE_DAYS = 2200
 MAX_USERS = 2500
 MAX_ACCOUNTS = 5000
-DETAIL_BATCH_SIZE = 25
+DETAIL_BATCH_SIZE = 100
+TRADE_AGGREGATE_BATCH_SIZE = 10
+EXACT_ID_BATCH_SIZE = 1000
+MAX_EXACT_REBATE_ORDERS_PER_ACCOUNT = 1000
+ACCOUNT_AUDIT_CACHE_SIZE = 8
+ACCOUNT_AUDIT_CACHE_TTL_SECONDS = 300
 SCAN_ENVIRONMENTS = {
     "gb": {"label": "AC GB", "crm_schema": "int_sass_crm_ac"},
     "cn": {"label": "AC CN", "crm_schema": "sass_crm_ac"},
@@ -309,6 +315,29 @@ def account_features(trades: list[dict], *, active_days: object = 0) -> dict:
     }
 
 
+def _merge_complete_trade_aggregate(feature: dict, aggregate: dict | None) -> dict:
+    """Replace display/economic totals with the complete period aggregate.
+
+    Candidate evidence still owns structural fields such as pairing and short-hold
+    coverage. A missing aggregate row is a confirmed zero because the aggregate
+    query covers every routed tree account and fails the whole audit on read error.
+    """
+    aggregate = aggregate or {}
+    orders = _integer(aggregate.get("orders"))
+    active_days = _integer(aggregate.get("activeDays"))
+    result = dict(feature)
+    result.update({
+        "orders": orders,
+        "lots": _round(aggregate.get("lots"), 4),
+        "tradeProfit": _round(aggregate.get("tradeProfit"), 5),
+        "activeDays": active_days,
+        "ordersPerActiveDay": _round(orders / active_days, 2) if active_days else 0.0,
+        "tradeProfitIncomplete": False,
+        "tradeStatisticsComplete": True,
+    })
+    return result
+
+
 def cohort_thresholds(rows: list[dict]) -> dict:
     return {
         "ordersPerDayP95": percentile((row.get("ordersPerActiveDay") for row in rows), 0.95),
@@ -343,12 +372,13 @@ def _account_paths(account: dict, thresholds: dict, stable_loss_points: float) -
         + max(ramp(account.get("short10Coverage"), 0.25, 0.8, 5), ramp(account.get("repeatCoverage"), 0.3, 0.8, 5))
         + max(ramp(account.get("eaCoverage"), 0.5, 0.9, 5), ramp(account.get("fixedLotCoverage"), 0.5, 0.9, 5))
     )
-    profit = _number(account.get("tradeProfit"))
-    lots = max(_number(account.get("lots")), 1e-9)
-    if profit <= 0:
-        turnover_path += 7 if abs(profit) / lots <= 500 else 4
-    elif profit / lots <= 1:
-        turnover_path += 3
+    if not account.get("tradeProfitIncomplete"):
+        profit = _number(account.get("tradeProfit"))
+        lots = max(_number(account.get("lots")), 1e-9)
+        if profit <= 0:
+            turnover_path += 7 if abs(profit) / lots <= 500 else 4
+        elif profit / lots <= 1:
+            turnover_path += 3
     tags = []
     if _number(account.get("pairCoverage")) >= 0.9:
         tags.append("反向配对覆盖高")
@@ -360,6 +390,8 @@ def _account_paths(account: dict, thresholds: dict, stable_loss_points: float) -
         tags.append("周转强度P99")
     if _number(account.get("eaCoverage")) >= 0.8:
         tags.append("EA执行占比高")
+    if account.get("tradeProfitIncomplete"):
+        tags.append("高频账户使用返佣结构元数据，未回查完整盈亏")
     return min(pair_path, 50.0), min(turnover_path, 50.0), tags
 
 
@@ -412,11 +444,14 @@ def score_ib(accounts: list[dict], *, ib_id: object = "", environment: str = "",
     rebate_rows = sum(_integer(row.get("currentIbRebateRows")) for row in accounts)
     matched_rebate_orders = sum(_integer(row.get("matchedRebateOrders")) for row in accounts)
     rebate_coverage = min(matched_rebate_orders / orders, 1.0) if orders else 0.0
-    client_loss = sum(max(-_number(row.get("tradeProfit")), 0.0) for row in accounts)
+    complete_profit_accounts = [row for row in accounts if not row.get("tradeProfitIncomplete")]
+    economic_trade_profit = sum(_number(row.get("tradeProfit")) for row in complete_profit_accounts)
+    economic_rebate = sum(_number(row.get("currentIbRebate")) for row in complete_profit_accounts)
+    client_loss = sum(max(-_number(row.get("tradeProfit")), 0.0) for row in complete_profit_accounts)
     external_deposit = sum(max(_number(row.get("externalNetDeposit")), 0.0) for row in accounts)
 
     economics = ramp(rebate_coverage, 0.2, 0.8, 5)
-    economics += ramp(current_rebate / client_loss if client_loss else 0.0, 0.2, 0.6, 10)
+    economics += ramp(economic_rebate / client_loss if client_loss else 0.0, 0.2, 0.6, 10)
     if current_rebate > 0 and external_deposit <= 0:
         economics += 6
     else:
@@ -430,8 +465,10 @@ def score_ib(accounts: list[dict], *, ib_id: object = "", environment: str = "",
         economics += 2
     elif rebate_cv is not None:
         economics += ramp(0.35 - rebate_cv, 0, 0.25, 4)
-    if current_rebate > 0 and trade_profit <= 0:
-        economics += 5 if trade_profit + current_rebate >= 0 else ramp(current_rebate / max(-trade_profit, 1), 0.1, 0.6, 5)
+    if economic_rebate > 0 and economic_trade_profit <= 0:
+        economics += 5 if economic_trade_profit + economic_rebate >= 0 else ramp(
+            economic_rebate / max(-economic_trade_profit, 1), 0.1, 0.6, 5,
+        )
     economics = min(economics, 30.0)
 
     suspicious_users = {_integer(row.get("userId")) for row in suspicious if _integer(row.get("userId"))}
@@ -459,7 +496,8 @@ def score_ib(accounts: list[dict], *, ib_id: object = "", environment: str = "",
 
     counterevidence = 0.0
     counter_tags = []
-    if trade_profit > max(current_rebate, 1.0) and strongest_pair < 20 and coordination < 5:
+    has_incomplete_profit = len(complete_profit_accounts) != len(accounts)
+    if not has_incomplete_profit and trade_profit > max(current_rebate, 1.0) and strongest_pair < 20 and coordination < 5:
         counterevidence += 8
         counter_tags.append("独立交易利润高于返佣")
     if current_rebate > 0 and trade_profit > 0 and current_rebate < trade_profit * 0.1 and rebate_coverage < 0.2:
@@ -490,9 +528,12 @@ def score_ib(accounts: list[dict], *, ib_id: object = "", environment: str = "",
         evidence.append("重复同秒双亏并伴随资金闭环")
 
     economic_turnover = (
-        orders >= 1000
-        and rebate_coverage >= 0.8
-        and current_rebate >= max(abs(trade_profit) * 0.5, 100)
+        sum(_integer(row.get("orders")) for row in complete_profit_accounts) >= 1000
+        and (
+            sum(_integer(row.get("matchedRebateOrders")) for row in complete_profit_accounts)
+            / max(sum(_integer(row.get("orders")) for row in complete_profit_accounts), 1)
+        ) >= 0.8
+        and economic_rebate >= max(abs(economic_trade_profit) * 0.5, 100)
     )
     if economic_turnover:
         raw_score = max(raw_score, 75)
@@ -603,8 +644,214 @@ def _money_scale(account: dict, rebate_rows: list[dict] | None = None) -> float:
 
 
 def _rebate_amount(row: dict) -> float:
-    scale = 0.01 if "USC" in _text(row.get("usd_or_usc")).upper() else 1.0
-    return _round(_number(row.get("rebate_amount")) * scale, 5)
+    return _round(_number(row.get("rebate_amount")), 5)
+
+
+def _rebate_row_count(row: dict) -> int:
+    return max(_integer(row.get("rebate_row_count"), 1), 1)
+
+
+def _cashflow_account_keys(
+    rebates: dict[tuple[str, int], list[dict]],
+    trades: dict[tuple[str, int], list[dict]],
+) -> set[tuple[str, int]]:
+    keys = set(rebates)
+    keys.update(key for key, rows in trades.items() if rows)
+    return keys
+
+
+def _aggregate_rebate_rows(rows: Iterable[dict]) -> list[dict]:
+    aggregated: dict[tuple, dict] = {}
+    for row in rows:
+        key = (
+            _integer(row.get("rebate_ib_id")),
+            _integer(row.get("trade_user_id")),
+            _integer(row.get("trade_mt_login")),
+            _text(row.get("mt_server_code")),
+            _text(row.get("trade_mt_ticket")),
+            _text(row.get("trade_mt_deal")),
+        )
+        existing = aggregated.get(key)
+        if existing is None:
+            aggregated[key] = {
+                **row,
+                "rebate_amount": _rebate_amount(row),
+                "rebate_row_count": _rebate_row_count(row),
+            }
+            continue
+        existing["rebate_amount"] = _round(
+            _rebate_amount(existing) + _rebate_amount(row), 5,
+        )
+        existing["rebate_row_count"] += _rebate_row_count(row)
+        if "USC" in _text(row.get("usd_or_usc")).upper():
+            existing["usd_or_usc"] = "USC"
+    return list(aggregated.values())
+
+
+def _rebate_order_rows(rows: list[dict]) -> list[dict]:
+    orders = {}
+    for index, row in enumerate(rows):
+        identity = (
+            _text(row.get("trade_mt_deal"))
+            or _text(row.get("trade_mt_ticket"))
+            or f"row-{index}"
+        )
+        current = orders.get(identity)
+        if current is None:
+            orders[identity] = dict(row)
+        else:
+            current["rebate_amount"] = _round(
+                _rebate_amount(current) + _rebate_amount(row), 5,
+            )
+    return list(orders.values())
+
+
+def _rebate_metadata_features(rows: list[dict], scale: float) -> dict:
+    orders = _rebate_order_rows(rows)
+    total_volume = 0.0
+    short_volume = 0.0
+    holding = []
+    lot_counts = Counter()
+    signatures = Counter()
+    symbols = Counter()
+    dates = set()
+    first_trade = None
+    last_trade = None
+    for row in orders:
+        volume = max(_number(row.get("mt_volume")) * scale, 0.0)
+        if volume <= 0:
+            continue
+        opened = _datetime(row.get("mt_open_time"))
+        closed = _datetime(row.get("mt_close_time"))
+        seconds = max((closed - opened).total_seconds(), 0.0) if opened and closed else -1.0
+        total_volume += volume
+        if seconds >= 0:
+            holding.append(seconds)
+            if seconds <= 10:
+                short_volume += volume
+        symbol = _text(row.get("mt_symbol")).upper()
+        lot_counts[round(volume, 4)] += 1
+        signatures[(symbol, round(volume, 4), round(seconds, 0))] += 1
+        symbols[symbol] += 1
+        if opened:
+            dates.add(opened.date())
+            first_trade = opened if first_trade is None else min(first_trade, opened)
+        evidence_end = closed or opened
+        if evidence_end:
+            last_trade = evidence_end if last_trade is None else max(last_trade, evidence_end)
+    valid_orders = sum(lot_counts.values())
+    days = max(len(dates), 1 if valid_orders else 0)
+    fixed_count = max(lot_counts.values(), default=0)
+    repeat_count = sum(count for count in signatures.values() if count >= 2)
+    return {
+        "orders": valid_orders,
+        "lots": _round(total_volume, 4),
+        "tradeProfit": 0.0,
+        "activeDays": days,
+        "ordersPerActiveDay": _round(valid_orders / days, 2) if days else 0.0,
+        "short10Coverage": short_volume / total_volume if total_volume else 0.0,
+        "eaCoverage": 0.0,
+        "fixedLotCoverage": fixed_count / valid_orders if valid_orders else 0.0,
+        "repeatCoverage": repeat_count / valid_orders if valid_orders else 0.0,
+        "medianHoldingSeconds": statistics.median(holding) if holding else None,
+        "symbols": sorted(symbol for symbol in symbols if symbol),
+        "firstTrade": _datetime_text(first_trade),
+        "lastTrade": _datetime_text(last_trade),
+        "tradeKeys": [],
+        "ticketKeys": [],
+        "pairCoverage": 0.0,
+        "sameSecondCoverage": 0.0,
+        "bothLossCoverage": 0.0,
+        "pairCount": 0,
+        "pairedLossPerLot": 0.0,
+        "tradeProfitIncomplete": True,
+    }
+
+
+def _rebate_exact_id_count(rows: list[dict], source_kind: str) -> int:
+    field = "trade_mt_deal" if source_kind == "mt5_deals" else "trade_mt_ticket"
+    return len({_integer(row.get(field)) for row in rows if _integer(row.get(field))})
+
+
+def _rebate_summaries_by_ib(account: dict, rows: list[dict]) -> dict[int, dict]:
+    trade_keys = set(account.get("tradeKeys", []))
+    ticket_keys = set(account.get("ticketKeys", []))
+    incomplete = bool(account.get("tradeProfitIncomplete"))
+    summaries = defaultdict(lambda: {"amount": 0.0, "rows": 0, "matchedOrders": 0})
+    for item in rows:
+        ib_id = _integer(item.get("rebate_ib_id"))
+        if not ib_id:
+            continue
+        summary = summaries[ib_id]
+        summary["amount"] += _rebate_amount(item)
+        summary["rows"] += _rebate_row_count(item)
+        deal = _text(item.get("trade_mt_deal"))
+        ticket = _text(item.get("trade_mt_ticket"))
+        if incomplete:
+            summary["matchedOrders"] += int(deal not in {"", "0"} or ticket not in {"", "0"})
+        elif deal in trade_keys or ticket in ticket_keys:
+            summary["matchedOrders"] += 1
+    return {
+        ib_id: {
+            "amount": _round(summary["amount"], 5),
+            "rows": summary["rows"],
+            "matchedOrders": summary["matchedOrders"],
+        }
+        for ib_id, summary in summaries.items()
+    }
+
+
+def _rebate_candidate_keys(
+    rebates: dict[tuple[str, int], list[dict]],
+    target_key: tuple[str, int],
+) -> set[tuple[str, int]]:
+    profiles = {}
+    signature_accounts = defaultdict(set)
+    for account_key, rows in rebates.items():
+        order_rows = _rebate_order_rows(rows)
+        for row in order_rows:
+            volume = max(_number(row.get("mt_volume")), 0.0)
+            signature = (
+                _text(row.get("mt_symbol")).upper(),
+                _datetime_text(row.get("mt_open_time")),
+                _datetime_text(row.get("mt_close_time")),
+                round(volume, 4),
+            )
+            if signature[0] and signature[1] and signature[2] and volume > 0:
+                signature_accounts[signature].add(account_key)
+        volumes = [max(_number(row.get("mt_volume")), 0.0) for row in order_rows]
+        weighted_total = sum(volume if volume > 0 else 1.0 for volume in volumes)
+        short_weight = 0.0
+        for row, volume in zip(order_rows, volumes, strict=False):
+            opened = _datetime(row.get("mt_open_time"))
+            closed = _datetime(row.get("mt_close_time"))
+            if opened and closed and 0 <= (closed - opened).total_seconds() <= 10:
+                short_weight += volume if volume > 0 else 1.0
+        volume_counts = Counter(round(volume, 4) for volume in volumes if volume > 0)
+        lots = sum(volumes)
+        rebate = sum(_rebate_amount(row) for row in rows)
+        profiles[account_key] = {
+            "orders": len(order_rows),
+            "shortCoverage": short_weight / weighted_total if weighted_total else 0.0,
+            "fixedCoverage": max(volume_counts.values(), default=0) / len(order_rows) if order_rows else 0.0,
+            "rebatePerLot": rebate / lots if lots else 0.0,
+        }
+    order_p95 = percentile((row["orders"] for row in profiles.values()), 0.95)
+    rebate_lot_p95 = percentile((row["rebatePerLot"] for row in profiles.values()), 0.95)
+    repeated_accounts = set().union(
+        *(accounts for accounts in signature_accounts.values() if len(accounts) >= 2),
+    ) if signature_accounts else set()
+    candidates = {target_key}
+    for account_key, profile in profiles.items():
+        if (
+            profile["shortCoverage"] >= 0.3
+            or (profile["orders"] >= 2 and profile["orders"] >= order_p95 > 0)
+            or (profile["orders"] >= 2 and profile["rebatePerLot"] >= rebate_lot_p95 > 0)
+            or (profile["orders"] >= 3 and profile["fixedCoverage"] >= 0.8)
+            or account_key in repeated_accounts
+        ):
+            candidates.add(account_key)
+    return candidates
 
 
 def _mt5_rows_to_trades(rows: list[dict], scale_by_login: dict[int, float], source: dict) -> dict[int, list[dict]]:
@@ -630,7 +877,7 @@ def _mt5_rows_to_trades(rows: list[dict], scale_by_login: dict[int, float], sour
                     "platform": "MT5", "server": source.get("server"),
                     "type": "buy" if _integer(open_row.get("Action")) == 0 else "sell",
                     "symbol": _text(close_row.get("Symbol") or open_row.get("Symbol")),
-                    "volume": _number(volume_raw) / 10000.0,
+        "volume": _number(volume_raw) / 10000.0 * scale,
                     "open_time": _datetime_text(open_row.get("TimeMsc") or open_row.get("Time")),
                     "close_time": _datetime_text(close_row.get("TimeMsc") or close_row.get("Time")),
                     "profit": _number(close_row.get("Profit")) * scale,
@@ -653,7 +900,7 @@ def _mt4_rows_to_trades(rows: list[dict], scale_by_login: dict[int, float], sour
             "id": _text(row.get("TICKET")), "ticket": _text(row.get("TICKET")),
             "platform": "MT4", "server": source.get("server"),
             "type": "buy" if _integer(row.get("CMD")) == 0 else "sell",
-            "symbol": _text(row.get("SYMBOL")), "volume": _number(row.get("VOLUME")) / 100.0,
+            "symbol": _text(row.get("SYMBOL")), "volume": _number(row.get("VOLUME")) / 100.0 * scale,
             "open_time": _datetime_text(row.get("OPEN_TIME")), "close_time": _datetime_text(row.get("CLOSE_TIME")),
             "profit": _number(row.get("PROFIT")) * scale, "commission": _number(row.get("COMMISSION")) * scale,
             "swap": _number(row.get("SWAPS")) * scale, "taxes": _number(row.get("TAXES")) * scale,
@@ -684,6 +931,26 @@ class RebateChurningService:
         self.jobs: dict[str, dict] = {}
         self.jobs_lock = threading.Lock()
         self.detail_cache: dict[tuple, dict] = {}
+        self.account_audit_cache: dict[tuple, tuple[float, dict]] = {}
+        self.account_audit_cache_lock = threading.Lock()
+
+    def _cached_account_audit(self, key: tuple) -> dict | None:
+        now = time.monotonic()
+        with self.account_audit_cache_lock:
+            cached = self.account_audit_cache.get(key)
+            if not cached:
+                return None
+            created_at, payload = cached
+            if now - created_at > ACCOUNT_AUDIT_CACHE_TTL_SECONDS:
+                self.account_audit_cache.pop(key, None)
+                return None
+            return copy.deepcopy(payload)
+
+    def _cache_account_audit(self, key: tuple, payload: dict) -> None:
+        with self.account_audit_cache_lock:
+            if len(self.account_audit_cache) >= ACCOUNT_AUDIT_CACHE_SIZE:
+                self.account_audit_cache.pop(next(iter(self.account_audit_cache)))
+            self.account_audit_cache[key] = (time.monotonic(), copy.deepcopy(payload))
 
     def _update_job(self, job_id: str, **changes) -> None:
         with self.jobs_lock:
@@ -823,7 +1090,7 @@ class RebateChurningService:
     def _ancestor_chain(self, subject: dict) -> list[dict]:
         source = subject["source"]
         schema = subject["crmSchema"]
-        fields = "id,supper_id,top_ib_id,user_type,customer_type,ib_level,status,full_name,first_name,middle_name,last_name"
+        fields = "id,supper_id,top_ib_id,user_type,customer_type,role_id,ib_level,status,full_name,first_name,middle_name,last_name"
         chain = []
         seen = set()
         current_id = subject["userId"]
@@ -871,13 +1138,21 @@ class RebateChurningService:
             raise ValueError("账户所属客户没有可用交易账户")
         return rows
 
-    def _historical_ib_accounts(self, environment: str, ib_ids: set[int], end: object) -> list[dict]:
+    def _historical_ib_accounts(
+        self,
+        environment: str,
+        ib_ids: set[int],
+        start: object,
+        end: object,
+    ) -> list[dict]:
         if not ib_ids:
             return []
         source = self._environment_source(environment)
         schema = SCAN_ENVIRONMENTS[environment]["crm_schema"]
         end_time = _datetime(end) or datetime.now()
-        history_start = end_time - timedelta(days=5 * 366)
+        earliest_history = end_time - timedelta(days=5 * 366)
+        requested_start = _datetime(start) or earliest_history
+        history_start = max(requested_start, earliest_history)
         output = []
         with self.connect(source) as conn:
             with conn.cursor() as cur:
@@ -885,13 +1160,11 @@ class RebateChurningService:
                     placeholders = ",".join(["%s"] * len(batch))
                     cur.execute(
                         f"""
-                        select trade_user_id as user_id, trade_mt_login as mt_login,
-                               mt_server_code, min(create_time) as create_time,
-                               max(create_time) as last_rebate_time
+                        select distinct trade_user_id as user_id, trade_mt_login as mt_login,
+                               mt_server_code
                         from `{schema}`.`rebate_task_detail` force index (idx_covering)
                         where rebate_ib_id in ({placeholders})
                           and create_time >= %s and create_time < %s
-                        group by trade_user_id, trade_mt_login, mt_server_code
                         """,
                         [*batch, history_start.strftime("%Y-%m-%d %H:%M:%S"), end_time.strftime("%Y-%m-%d %H:%M:%S")],
                     )
@@ -964,9 +1237,14 @@ class RebateChurningService:
         }
         for feature in features:
             owner_id = _integer(feature.get("userId"))
-            rebate_by_ib = defaultdict(float)
-            for rebate in feature.get("_rebateRows", []):
-                rebate_by_ib[_integer(rebate.get("rebate_ib_id"))] += _rebate_amount(rebate)
+            rebate_by_ib = {
+                _integer(ib_id): _number(summary.get("amount"))
+                for ib_id, summary in (feature.get("_rebateByIb") or {}).items()
+            }
+            if not rebate_by_ib:
+                for rebate in feature.get("_rebateRows", []):
+                    ib_id = _integer(rebate.get("rebate_ib_id"))
+                    rebate_by_ib[ib_id] = rebate_by_ib.get(ib_id, 0.0) + _rebate_amount(rebate)
             current_id = owner_id
             seen = set()
             while current_id in users and current_id not in seen:
@@ -1000,6 +1278,7 @@ class RebateChurningService:
         root_id: int,
         direct_ib_id: int,
         ancestor_ib_ids: set[int],
+        display_ib_ids: set[int],
         target_account: int,
     ) -> dict:
         children = defaultdict(list)
@@ -1016,10 +1295,10 @@ class RebateChurningService:
 
         def build(user_id: int) -> dict:
             row = users[user_id]
-            is_ib = _integer(row.get("user_type"), -1) == 1
+            is_ib = _integer(row.get("user_type"), -1) == 1 or user_id in display_ib_ids
             if is_ib and user_id == direct_ib_id:
                 relationship = "直属IB"
-            elif is_ib and user_id in ancestor_ib_ids:
+            elif is_ib and (user_id in ancestor_ib_ids or user_id in display_ib_ids):
                 relationship = "上级IB"
             elif is_ib:
                 relationship = "下级IB"
@@ -1028,7 +1307,7 @@ class RebateChurningService:
             child_ids = sorted(
                 children.get(user_id, []),
                 key=lambda item: (
-                    0 if _integer(users[item].get("user_type"), -1) == 1 else 1,
+                    0 if _integer(users[item].get("user_type"), -1) == 1 or item in display_ib_ids else 1,
                     _full_name(users[item]),
                     item,
                 ),
@@ -1061,43 +1340,61 @@ class RebateChurningService:
             end,
             max_range_days=MAX_ACCOUNT_RANGE_DAYS,
         )
+        cache_key = (
+            subject["environment"],
+            subject["serverCode"],
+            subject["account"],
+            period["startText"],
+            period["endText"] if _text(end) else "latest",
+        )
+        cached = self._cached_account_audit(cache_key)
+        if cached is not None:
+            return cached
         chain = self._ancestor_chain(subject)
         ib_rows = [row for row in chain if _integer(row.get("user_type"), -1) == 1]
         if not ib_rows:
             raise ValueError("该账户没有可识别的上级IB")
-        first_ib_index = next(
+        direct_ib_index = max(
             index for index, row in enumerate(chain) if _integer(row.get("user_type"), -1) == 1
         )
-        chain = chain[first_ib_index:]
+        display_ib_ids = {
+            _integer(row.get("id")) for index, row in enumerate(chain) if index <= direct_ib_index
+        }
 
         root_ib_id = _integer(ib_rows[0].get("id"))
         users, current_accounts = self._fetch_tree(subject["environment"], root_ib_id)
+        for depth, row in enumerate(chain):
+            user_id = _integer(row.get("id"))
+            if user_id:
+                users[user_id] = {**users.get(user_id, {}), **row, "depth": depth - len(chain)}
+        tree_root_id = _integer(chain[0].get("id"))
         raw_accounts = [
             {**row, "isHistorical": False}
             for row in current_accounts
-            if _integer(users.get(_integer(row.get("user_id")), {}).get("user_type"), -1) != 1
         ]
+        ancestor_ib_ids = {_integer(row.get("id")) for row in ib_rows}
+        rebates = self._rebate_details_for_ibs(
+            subject["environment"], ancestor_ib_ids, None, period,
+        )
         current_keys = {
             (_text(row.get("mt_server_code")), _integer(row.get("mt_login")))
             for row in raw_accounts
         }
-        historical_rows = self._historical_ib_accounts(
-            subject["environment"],
-            {_integer(row.get("id")) for row in ib_rows},
-            period["end"],
-        )
-        for row in historical_rows:
-            user_id = _integer(row.get("user_id"))
-            key = (_text(row.get("mt_server_code")), _integer(row.get("mt_login")))
+        for key, details in rebates.items():
+            user_id = next(
+                (_integer(row.get("trade_user_id")) for row in details if _integer(row.get("trade_user_id"))),
+                0,
+            )
             if (
                 user_id not in users
-                or _integer(users[user_id].get("user_type"), -1) == 1
                 or not key[1]
                 or key in current_keys
             ):
                 continue
             raw_accounts.append({
-                **row,
+                "user_id": user_id,
+                "mt_login": key[1],
+                "mt_server_code": key[0],
                 "mt_type_name": "历史返佣账户",
                 "status": None,
                 "isHistorical": True,
@@ -1125,20 +1422,42 @@ class RebateChurningService:
         if not raw_accounts:
             raise ValueError("上级IB子树没有可访问的交易账户")
         account_keys = {(_text(row.get("mt_server_code")), _integer(row.get("mt_login"))) for row in raw_accounts}
-        rebates = self._rebate_details(subject["environment"], account_keys, period)
-        trades = self._detailed_trades(subject["environment"], mappings, rebates, period)
-        cashflows = self._cashflow_metrics(subject["environment"], mappings, rebates, trades, period)
-        aggregate_rows = self._trade_aggregates_for_accounts(subject["environment"], raw_accounts, period)
-        aggregate_map = {(row["serverCode"], row["login"]): row for row in aggregate_rows}
+        rebates = {key: details for key, details in rebates.items() if key in account_keys}
+        target_key = (subject["serverCode"], subject["account"])
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            complete_statistics_future = executor.submit(
+                self._account_audit_complete_statistics,
+                subject["environment"],
+                account_keys,
+                raw_accounts,
+                period,
+            )
+            trades, cashflows, metadata_feature_keys = self._candidate_account_evidence(
+                subject["environment"],
+                subject["crmSchema"],
+                mappings,
+                rebates,
+                target_key,
+                period,
+            )
+            rebate_totals, trade_aggregate_rows = complete_statistics_future.result()
+        trade_aggregates = {
+            (_text(row.get("serverCode")), _integer(row.get("login"))): row
+            for row in trade_aggregate_rows
+        }
 
         features = []
         for raw in raw_accounts:
             key = (_text(raw.get("mt_server_code")), _integer(raw.get("mt_login")))
-            aggregate = aggregate_map.get(key, {})
-            feature = account_features(trades.get(key, []), active_days=aggregate.get("activeDays"))
+            details = rebates.get(key, [])
+            if key in metadata_feature_keys:
+                feature = _rebate_metadata_features(details, _money_scale(raw, details))
+            else:
+                feature = account_features(trades.get(key, []))
+            feature = _merge_complete_trade_aggregate(feature, trade_aggregates.get(key))
             feature.update(cashflows.get(key, {}))
             source = _source_for(self.sources, subject["crmSchema"], key[0]) or {}
-            details = rebates.get(key, [])
+            rebate_total = rebate_totals.get(key, {})
             user_id = _integer(raw.get("user_id"))
             owner = users.get(user_id, mappings.get(key, {}))
             feature.update({
@@ -1151,10 +1470,10 @@ class RebateChurningService:
                 "server": _text(source.get("server") or source.get("name")),
                 "isHistorical": bool(raw.get("isHistorical")),
                 "isCent": _money_scale(raw, details) == 0.01,
-                "hierarchyRebate": _round(sum(_rebate_amount(row) for row in details), 5),
-                "hierarchyRebateRows": len(details),
-                "_rebateRows": details,
+                "hierarchyRebate": _round(rebate_total.get("amount"), 5),
+                "hierarchyRebateRows": _integer(rebate_total.get("rows")),
             })
+            feature["_rebateByIb"] = _rebate_summaries_by_ib(feature, details)
             features.append(feature)
 
         risk_by_ib = {}
@@ -1210,9 +1529,10 @@ class RebateChurningService:
             account_nodes,
             risk_by_ib,
             financials_by_user,
-            root_ib_id,
+            tree_root_id,
             direct_ib_id,
             set(risk_by_ib),
+            display_ib_ids,
             subject["account"],
         )
         ib_risks = list(risk_by_ib.values())
@@ -1220,14 +1540,14 @@ class RebateChurningService:
         direct_risk = risk_by_ib[direct_ib_id]
         lineage = [
             {
-                "type": "ib" if _integer(row.get("user_type"), -1) == 1 else "customer",
+                "type": "ib" if _integer(row.get("id")) in display_ib_ids else "customer",
                 "userId": _integer(row.get("id")),
                 "name": _full_name(row),
                 "ibLevel": row.get("ib_level"),
             }
             for row in chain
         ]
-        return {
+        payload = {
             "ok": True,
             "query": {
                 "account": subject["account"],
@@ -1235,6 +1555,7 @@ class RebateChurningService:
                 "serverCode": subject["serverCode"],
                 "start": period["startText"],
                 "end": period["endText"],
+                "fullHistory": not _text(start) and not _text(end),
             },
             "account": {
                 key: subject[key]
@@ -1259,24 +1580,33 @@ class RebateChurningService:
             "ibRisks": ib_risks,
             "tree": tree,
             "scope": {
-                "ibs": sum(1 for row in users.values() if _integer(row.get("user_type"), -1) == 1),
-                "customers": sum(1 for row in users.values() if _integer(row.get("user_type"), -1) != 1),
+                "ibs": sum(
+                    1 for user_id, row in users.items()
+                    if _integer(row.get("user_type"), -1) == 1 or user_id in display_ib_ids
+                ),
+                "customers": sum(
+                    1 for user_id, row in users.items()
+                    if _integer(row.get("user_type"), -1) != 1 and user_id not in display_ib_ids
+                ),
                 "accounts": len(account_nodes),
                 "historicalAccounts": sum(1 for row in account_nodes if row.get("isHistorical")),
             },
             "refreshedAt": self.now_text(),
             "limitations": [
-                "本次分析目标账户最高上级IB的完整CRM子树，并补充五年内存在返佣的历史账户",
+                "本次分析保留目标账户完整CRM上级链，并分析最高正式IB的完整子树",
+                "树内所有可路由账户的订单、手数、交易盈亏和活跃天数均按完整查询区间聚合；候选筛选仅控制结构证据深检",
                 "各级IB仅使用该IB在所选期间实际收到的返佣计分",
             ],
         }
+        self._cache_account_audit(cache_key, payload)
+        return payload
 
     def _rebate_summaries(self, environment: str, period: dict) -> tuple[list[dict], dict[tuple, dict]]:
         source = self._environment_source(environment)
         schema = SCAN_ENVIRONMENTS[environment]["crm_schema"]
         sql = f"""
             select rebate_ib_id, trade_user_id, trade_mt_login, mt_server_code,
-                   sum(coalesce(rebate_amount,0) * case when upper(coalesce(usd_or_usc,''))='USC' then 0.01 else 1 end) as CurrentIbRebate,
+                   sum(coalesce(rebate_amount, 0)) as CurrentIbRebate,
                    count(*) as CurrentIbRebateRows,
                    count(distinct case when trade_mt_deal > 0 then trade_mt_deal else trade_mt_ticket end) as RebateOrders
             from `{schema}`.`rebate_task_detail`
@@ -1285,7 +1615,7 @@ class RebateChurningService:
         """
         total_sql = f"""
             select trade_user_id, trade_mt_login, mt_server_code,
-                   sum(coalesce(rebate_amount,0) * case when upper(coalesce(usd_or_usc,''))='USC' then 0.01 else 1 end) as HierarchyRebate, count(*) as HierarchyRebateRows
+                   sum(coalesce(rebate_amount, 0)) as HierarchyRebate, count(*) as HierarchyRebateRows
             from `{schema}`.`rebate_task_detail`
             where create_time >= %s and create_time < %s
             group by trade_user_id, trade_mt_login, mt_server_code
@@ -1440,16 +1770,144 @@ class RebateChurningService:
                         cur.execute(
                             f"""
                             select rebate_ib_id, trade_user_id, trade_mt_login, mt_server_code,
-                                   trade_mt_ticket, trade_mt_deal, rebate_amount, create_time,
-                                   mt_symbol, mt_volume, mt_open_time, mt_close_time, usd_or_usc, rebate_type
-                            from `{schema}`.`rebate_task_detail` force index (idx_mtLogin)
+                                   trade_mt_ticket, trade_mt_deal, mt_symbol, mt_volume,
+                                   mt_open_time, mt_close_time, rebate_amount, usd_or_usc
+                            from `{schema}`.`rebate_task_detail`
                             where mt_server_code=%s and trade_mt_login in ({placeholders})
                               and create_time >= %s and create_time < %s
                             """, [code, *batch, period["startText"], period["endText"]],
                         )
-                        for row in cur.fetchall():
+                        for row in _aggregate_rebate_rows(cur.fetchall()):
                             grouped[(_text(row.get("mt_server_code")), _integer(row.get("trade_mt_login")))].append(row)
         return grouped
+
+    def _rebate_details_for_ibs(
+        self,
+        environment: str,
+        ib_ids: set[int],
+        account_keys: set[tuple[str, int]] | None,
+        period: dict,
+    ) -> dict[tuple[str, int], list[dict]]:
+        if not ib_ids or account_keys == set():
+            return {}
+        source = self._environment_source(environment)
+        schema = SCAN_ENVIRONMENTS[environment]["crm_schema"]
+        grouped = defaultdict(list)
+        with self.connect(source) as conn:
+            with conn.cursor() as cur:
+                for batch in _batches(sorted(ib_ids)):
+                    placeholders = ",".join(["%s"] * len(batch))
+                    cur.execute(
+                        f"""
+                        select rebate_ib_id, trade_user_id, trade_mt_login, mt_server_code,
+                               trade_mt_ticket, trade_mt_deal, mt_symbol, mt_volume,
+                               mt_open_time, mt_close_time, rebate_amount, usd_or_usc
+                        from `{schema}`.`rebate_task_detail` force index (idx_covering)
+                        where rebate_ib_id in ({placeholders})
+                          and create_time >= %s and create_time < %s
+                        """,
+                        [*batch, period["startText"], period["endText"]],
+                    )
+                    for row in _aggregate_rebate_rows(cur.fetchall()):
+                        key = (_text(row.get("mt_server_code")), _integer(row.get("trade_mt_login")))
+                        if account_keys is None or key in account_keys:
+                            grouped[key].append(row)
+        return grouped
+
+    def _rebate_totals_for_accounts(
+        self,
+        environment: str,
+        account_keys: set[tuple[str, int]],
+        period: dict,
+    ) -> dict[tuple[str, int], dict]:
+        if not account_keys:
+            return {}
+        source = self._environment_source(environment)
+        schema = SCAN_ENVIRONMENTS[environment]["crm_schema"]
+        by_code = defaultdict(list)
+        for code, login in account_keys:
+            by_code[code].append(login)
+        totals = defaultdict(lambda: {"amount": 0.0, "rows": 0})
+        with self.connect(source) as conn:
+            with conn.cursor() as cur:
+                for code, logins in by_code.items():
+                    for batch in _batches(sorted(set(logins))):
+                        placeholders = ",".join(["%s"] * len(batch))
+                        cur.execute(
+                            f"""
+                            select trade_mt_login, mt_server_code,
+                                   sum(coalesce(rebate_amount, 0)) as rebate_amount,
+                                   count(*) as rebate_row_count
+                            from `{schema}`.`rebate_task_detail`
+                            where mt_server_code=%s and trade_mt_login in ({placeholders})
+                              and create_time >= %s and create_time < %s
+                            group by trade_mt_login, mt_server_code
+                            """,
+                            [code, *batch, period["startText"], period["endText"]],
+                        )
+                        for row in cur.fetchall():
+                            key = (_text(row.get("mt_server_code")), _integer(row.get("trade_mt_login")))
+                            totals[key]["amount"] += _number(row.get("rebate_amount"))
+                            totals[key]["rows"] += _integer(row.get("rebate_row_count"))
+        return dict(totals)
+
+    def _account_audit_complete_statistics(
+        self,
+        environment: str,
+        account_keys: set[tuple[str, int]],
+        accounts: list[dict],
+        period: dict,
+    ) -> tuple[dict[tuple[str, int], dict], list[dict]]:
+        rebate_totals = self._rebate_totals_for_accounts(environment, account_keys, period)
+        trade_aggregates = self._trade_aggregates_for_accounts(environment, accounts, period)
+        return rebate_totals, trade_aggregates
+
+    def _candidate_account_evidence(
+        self,
+        environment: str,
+        crm_schema: str,
+        mappings: dict[tuple[str, int], dict],
+        rebates: dict[tuple[str, int], list[dict]],
+        target_key: tuple[str, int],
+        period: dict,
+    ) -> tuple[dict, dict, set[tuple[str, int]]]:
+        candidate_keys = _rebate_candidate_keys(rebates, target_key)
+        candidate_rebates = {
+            key: details for key, details in rebates.items() if key in candidate_keys
+        }
+        metadata_feature_keys = set()
+        for key, details in candidate_rebates.items():
+            source = _source_for(self.sources, crm_schema, key[0]) or {}
+            if (
+                key != target_key
+                and _rebate_exact_id_count(details, _text(source.get("kind")))
+                > MAX_EXACT_REBATE_ORDERS_PER_ACCOUNT
+            ):
+                metadata_feature_keys.add(key)
+        exact_keys = candidate_keys - metadata_feature_keys
+        exact_rebates = {
+            key: details for key, details in candidate_rebates.items() if key in exact_keys
+        }
+        exact_mappings = {key: mappings[key] for key in exact_keys if key in mappings}
+        trades = self._exact_rebate_trades(environment, exact_mappings, exact_rebates)
+        fallback_keys = set()
+        for key in exact_keys:
+            details = exact_rebates.get(key, [])
+            source = _source_for(self.sources, crm_schema, key[0]) or {}
+            id_field = "trade_mt_deal" if source.get("kind") == "mt5_deals" else "trade_mt_ticket"
+            if not any(_integer(row.get(id_field)) for row in details):
+                fallback_keys.add(key)
+        fallback_mappings = {key: mappings[key] for key in fallback_keys if key in mappings}
+        fallback_trades = self._detailed_trades(
+            environment, fallback_mappings, exact_rebates, period,
+        )
+        trades.update(fallback_trades)
+        cashflow_keys = _cashflow_account_keys(exact_rebates, trades)
+        cashflow_mappings = {key: mappings[key] for key in cashflow_keys if key in mappings}
+        cashflows = self._cashflow_metrics(
+            environment, cashflow_mappings, candidate_rebates, trades, period,
+        )
+        return trades, cashflows, metadata_feature_keys
 
     def ib_contributor_keys(self, environment: str, ib_ids: set[int], period: dict) -> set[tuple[str, int]]:
         if not ib_ids:
@@ -1485,20 +1943,23 @@ class RebateChurningService:
             if source:
                 by_source[source.get("name")].append((key, account, source))
         output = defaultdict(list)
-        for source_name, rows in by_source.items():
+        for rows in by_source.values():
             source = rows[0][2]
-            for batch_rows in _batches(rows):
-                logins = [key[1] for key, _, _ in batch_rows]
-                placeholders = ",".join(["%s"] * len(logins))
-                scale_by_login = {key[1]: _money_scale(account, rebates.get(key)) for key, account, _ in batch_rows}
-                with self.connect(source) as conn:
-                    with conn.cursor() as cur:
+            with self.connect(source) as conn:
+                with conn.cursor() as cur:
+                    for batch_rows in _batches(rows):
+                        logins = [key[1] for key, _, _ in batch_rows]
+                        placeholders = ",".join(["%s"] * len(logins))
+                        scale_by_login = {
+                            key[1]: _money_scale(account, rebates.get(key))
+                            for key, account, _ in batch_rows
+                        }
                         if source.get("kind") == "mt5_deals":
                             cur.execute(
                                 f"""
                                 select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
                                        Symbol, Volume, VolumeClosed, Profit, Commission, Storage, Fee, Comment, ExpertID
-                                from `{source['schema']}`.`{source['table']}` force index (idx_mt5_deals_Login_Time_Comment)
+                                from `{source['schema']}`.`{source['table']}`
                                 where Login in ({placeholders}) and Action in (0,1) and Entry in (0,1,2,3)
                                   and Time >= %s and Time < %s
                                 order by Login, PositionID, Time, Deal
@@ -1517,8 +1978,87 @@ class RebateChurningService:
                                 """, [*logins, period["startText"], period["endText"]],
                             )
                             converted = _mt4_rows_to_trades(cur.fetchall(), scale_by_login, source)
-                for key, _, _ in batch_rows:
-                    output[key] = converted.get(key[1], [])
+                        for key, _, _ in batch_rows:
+                            output[key] = converted.get(key[1], [])
+        return output
+
+    def _exact_rebate_trades(
+        self,
+        environment: str,
+        accounts: dict[tuple[str, int], dict],
+        rebates: dict[tuple[str, int], list[dict]],
+    ) -> dict[tuple[str, int], list[dict]]:
+        crm_schema = SCAN_ENVIRONMENTS[environment]["crm_schema"]
+        by_source = defaultdict(list)
+        for key, account in accounts.items():
+            source = _source_for(self.sources, crm_schema, key[0])
+            if source:
+                by_source[source.get("name")].append((key, account, source))
+        output = defaultdict(list)
+        for rows in by_source.values():
+            source = rows[0][2]
+            scale_by_login = {
+                key[1]: _money_scale(account, rebates.get(key))
+                for key, account, _ in rows
+            }
+            raw_rows = []
+            with self.connect(source) as conn:
+                with conn.cursor() as cur:
+                    if source.get("kind") == "mt5_deals":
+                        deal_ids = {
+                            _integer(item.get("trade_mt_deal"))
+                            for key, _, _ in rows for item in rebates.get(key, [])
+                            if _integer(item.get("trade_mt_deal"))
+                        }
+                        position_ids = set()
+                        for batch in _batches(sorted(deal_ids), EXACT_ID_BATCH_SIZE):
+                            placeholders = ",".join(["%s"] * len(batch))
+                            cur.execute(
+                                f"select Deal,Login,`Order`,PositionID,Action,Entry,Reason,Time,TimeMsc,Symbol,Volume,VolumeClosed,Profit,Commission,Storage,Fee,Comment,ExpertID from `{source['schema']}`.`{source['table']}` where Deal in ({placeholders})",
+                                batch,
+                            )
+                            located = cur.fetchall()
+                            raw_rows.extend(located)
+                            position_ids.update(
+                                _integer(row.get("PositionID"))
+                                for row in located if _integer(row.get("PositionID"))
+                            )
+                        for batch in _batches(sorted(position_ids), EXACT_ID_BATCH_SIZE):
+                            placeholders = ",".join(["%s"] * len(batch))
+                            cur.execute(
+                                f"select Deal,Login,`Order`,PositionID,Action,Entry,Reason,Time,TimeMsc,Symbol,Volume,VolumeClosed,Profit,Commission,Storage,Fee,Comment,ExpertID from `{source['schema']}`.`{source['table']}` where PositionID in ({placeholders}) order by Login,PositionID,Time,Deal",
+                                batch,
+                            )
+                            raw_rows.extend(cur.fetchall())
+                        unique_rows = {
+                            _integer(row.get("Deal")): row
+                            for row in raw_rows if _integer(row.get("Deal"))
+                        }
+                        converted = _mt5_rows_to_trades(
+                            list(unique_rows.values()), scale_by_login, source,
+                        )
+                    else:
+                        ticket_ids = {
+                            _integer(item.get("trade_mt_ticket"))
+                            for key, _, _ in rows for item in rebates.get(key, [])
+                            if _integer(item.get("trade_mt_ticket"))
+                        }
+                        for batch in _batches(sorted(ticket_ids), EXACT_ID_BATCH_SIZE):
+                            placeholders = ",".join(["%s"] * len(batch))
+                            cur.execute(
+                                f"select TICKET,LOGIN,CMD,SYMBOL,VOLUME,OPEN_TIME,CLOSE_TIME,COMMISSION,SWAPS,PROFIT,TAXES,REASON,MAGIC,COMMENT from `{source['schema']}`.`{source['table']}` where TICKET in ({placeholders}) and CMD in (0,1) order by LOGIN,OPEN_TIME,TICKET",
+                                batch,
+                            )
+                            raw_rows.extend(cur.fetchall())
+                        unique_rows = {
+                            _integer(row.get("TICKET")): row
+                            for row in raw_rows if _integer(row.get("TICKET"))
+                        }
+                        converted = _mt4_rows_to_trades(
+                            list(unique_rows.values()), scale_by_login, source,
+                        )
+            for key, _, _ in rows:
+                output[key] = converted.get(key[1], [])
         return output
 
     def _cashflow_metrics(self, environment: str, accounts: dict[tuple[str, int], dict], rebates: dict, trades: dict, period: dict) -> dict[tuple[str, int], dict]:
@@ -1531,15 +2071,15 @@ class RebateChurningService:
                 by_source[source.get("name")].append((key, account, source))
         for rows in by_source.values():
             source = rows[0][2]
-            for batch_rows in _batches(rows):
-                logins = [key[1] for key, _, _ in batch_rows]
-                placeholders = ",".join(["%s"] * len(logins))
-                raw_by_login = defaultdict(list)
-                with self.connect(source) as conn:
-                    with conn.cursor() as cur:
+            with self.connect(source) as conn:
+                with conn.cursor() as cur:
+                    for batch_rows in _batches(rows):
+                        logins = [key[1] for key, _, _ in batch_rows]
+                        placeholders = ",".join(["%s"] * len(logins))
+                        raw_by_login = defaultdict(list)
                         if source.get("kind") == "mt5_deals":
                             cur.execute(
-                                f"select Login, Action, Profit, Comment, Time, TimeMsc from `{source['schema']}`.`{source['table']}` force index (idx_mt5_deals_Login_Time_Comment) where Login in ({placeholders}) and Action not in (0,1) and Time >= %s and Time < %s",
+                                f"select Login, Action, Profit, Comment, Time, TimeMsc from `{source['schema']}`.`{source['table']}` where Login in ({placeholders}) and Action not in (0,1) and Time >= %s and Time < %s",
                                 [*logins, period["startText"], period["endText"]],
                             )
                             for row in cur.fetchall():
@@ -1551,25 +2091,55 @@ class RebateChurningService:
                             )
                             for row in cur.fetchall():
                                 raw_by_login[_integer(row.get("LOGIN"))].append(row)
-                for key, account, _ in batch_rows:
-                    scale = _money_scale(account, rebates.get(key))
-                    classifier = self.classify_mt5_cashflows if source.get("kind") == "mt5_deals" else self.classify_mt4_cashflows
-                    cash = classifier(raw_by_login.get(key[1], []), scale) if classifier else {}
-                    account_trades = trades.get(key, [])
-                    first_trade = min((_trade_time(row, "open") for row in account_trades if _trade_time(row, "open")), default=None)
-                    last_trade = max((_trade_time(row, "close") or _trade_time(row, "open") for row in account_trades if _trade_time(row, "close") or _trade_time(row, "open")), default=None)
-                    deposits = [_datetime(value) for value in cash.get("depositTimes", []) if _datetime(value)]
-                    withdrawals = [_datetime(value) for value in cash.get("withdrawalTimes", []) if _datetime(value)]
-                    before_trade = max((value for value in deposits if first_trade and value <= first_trade), default=None)
-                    after_trade = min((value for value in withdrawals if last_trade and value >= last_trade), default=None)
-                    output[key] = {
-                        "externalNetDeposit": _number(cash.get("netDeposit")),
-                        "deposit": _number(cash.get("depositTotal")), "withdrawal": _number(cash.get("withdrawalTotal")),
-                        "internalTransfer": _number(cash.get("internalTransfer")), "negativeBalanceClear": _number(cash.get("negativeBalanceClear")),
-                        "compensation": _number(cash.get("compensation")),
-                        "depositToTradeHours": (first_trade - before_trade).total_seconds() / 3600 if first_trade and before_trade else None,
-                        "tradeToWithdrawalHours": (after_trade - last_trade).total_seconds() / 3600 if after_trade and last_trade else None,
-                    }
+                        for key, account, _ in batch_rows:
+                            scale = _money_scale(account, rebates.get(key))
+                            classifier = (
+                                self.classify_mt5_cashflows
+                                if source.get("kind") == "mt5_deals"
+                                else self.classify_mt4_cashflows
+                            )
+                            cash = classifier(raw_by_login.get(key[1], []), scale) if classifier else {}
+                            account_trades = trades.get(key, [])
+                            first_trade = min(
+                                (_trade_time(row, "open") for row in account_trades if _trade_time(row, "open")),
+                                default=None,
+                            )
+                            last_trade = max(
+                                (
+                                    _trade_time(row, "close") or _trade_time(row, "open")
+                                    for row in account_trades
+                                    if _trade_time(row, "close") or _trade_time(row, "open")
+                                ),
+                                default=None,
+                            )
+                            deposits = [_datetime(value) for value in cash.get("depositTimes", []) if _datetime(value)]
+                            withdrawals = [
+                                _datetime(value) for value in cash.get("withdrawalTimes", []) if _datetime(value)
+                            ]
+                            before_trade = max(
+                                (value for value in deposits if first_trade and value <= first_trade),
+                                default=None,
+                            )
+                            after_trade = min(
+                                (value for value in withdrawals if last_trade and value >= last_trade),
+                                default=None,
+                            )
+                            output[key] = {
+                                "externalNetDeposit": _number(cash.get("netDeposit")),
+                                "deposit": _number(cash.get("depositTotal")),
+                                "withdrawal": _number(cash.get("withdrawalTotal")),
+                                "internalTransfer": _number(cash.get("internalTransfer")),
+                                "negativeBalanceClear": _number(cash.get("negativeBalanceClear")),
+                                "compensation": _number(cash.get("compensation")),
+                                "depositToTradeHours": (
+                                    (first_trade - before_trade).total_seconds() / 3600
+                                    if first_trade and before_trade else None
+                                ),
+                                "tradeToWithdrawalHours": (
+                                    (after_trade - last_trade).total_seconds() / 3600
+                                    if after_trade and last_trade else None
+                                ),
+                            }
         return output
 
     def _feature_rows(self, environment: str, keys: set[tuple[str, int]], aggregate_map: dict, current_rows: list[dict], totals: dict, period: dict) -> list[dict]:
@@ -1604,20 +2174,44 @@ class RebateChurningService:
         return features
 
     def _attach_ib_rebate(self, account: dict, ib_id: int) -> dict:
-        row = copy.deepcopy(account)
-        details = [item for item in row.pop("_rebateRows", []) if _integer(item.get("rebate_ib_id")) == ib_id]
-        row.pop("_currentByIb", None)
+        summary_by_ib = account.get("_rebateByIb") or {}
+        if summary_by_ib:
+            row = copy.deepcopy({
+                key: value for key, value in account.items()
+                if key not in {"_rebateByIb", "_rebateRows", "_currentByIb"}
+            })
+            summary = summary_by_ib.get(ib_id, {})
+            row["currentIbRebate"] = _round(summary.get("amount"), 5)
+            row["currentIbRebateRows"] = _integer(summary.get("rows"))
+            row["matchedRebateOrders"] = _integer(summary.get("matchedOrders"))
+            return row
+        details = [
+            item for item in account.get("_rebateRows", [])
+            if _integer(item.get("rebate_ib_id")) == ib_id
+        ]
+        row = copy.deepcopy({
+            key: value for key, value in account.items()
+            if key not in {"_rebateRows", "_currentByIb"}
+        })
         row["currentIbRebate"] = _round(sum(_rebate_amount(item) for item in details), 5)
-        row["currentIbRebateRows"] = len(details)
-        trade_keys = set(row.get("tradeKeys", []))
-        ticket_keys = set(row.get("ticketKeys", []))
-        matched = set()
-        for item in details:
-            deal = _text(item.get("trade_mt_deal"))
-            ticket = _text(item.get("trade_mt_ticket"))
-            if deal in trade_keys or ticket in ticket_keys:
-                matched.add(deal if deal in trade_keys else ticket)
-        row["matchedRebateOrders"] = len(matched)
+        row["currentIbRebateRows"] = sum(_rebate_row_count(item) for item in details)
+        if row.get("tradeProfitIncomplete"):
+            row["matchedRebateOrders"] = len({
+                _text(item.get("trade_mt_deal")) or _text(item.get("trade_mt_ticket"))
+                for item in details
+                if _text(item.get("trade_mt_deal")) not in {"", "0"}
+                or _text(item.get("trade_mt_ticket")) not in {"", "0"}
+            })
+        else:
+            trade_keys = set(row.get("tradeKeys", []))
+            ticket_keys = set(row.get("ticketKeys", []))
+            matched = set()
+            for item in details:
+                deal = _text(item.get("trade_mt_deal"))
+                ticket = _text(item.get("trade_mt_ticket"))
+                if deal in trade_keys or ticket in ticket_keys:
+                    matched.add(deal if deal in trade_keys else ticket)
+            row["matchedRebateOrders"] = len(matched)
         return row
 
     def _ib_names(self, environment: str, ib_ids: set[int]) -> dict[int, dict]:
@@ -1755,7 +2349,7 @@ class RebateChurningService:
             for user_id, owner_rows in by_owner.items():
                 totals[(user_id, key[1], key[0])] = {
                     "HierarchyRebate": sum(_rebate_amount(row) for row in owner_rows),
-                    "HierarchyRebateRows": len(owner_rows),
+                    "HierarchyRebateRows": sum(_rebate_row_count(row) for row in owner_rows),
                 }
         aggregate_rows = self._trade_aggregates_for_accounts(environment, raw_accounts, period)
         aggregate_map = {(row["serverCode"], row["login"]): row for row in aggregate_rows}
@@ -1816,15 +2410,16 @@ class RebateChurningService:
         for row in accounts:
             source = _source_for(self.sources, crm_schema, row.get("mt_server_code"))
             if source:
-                by_source[source.get("name")].append((_integer(row.get("mt_login")), source))
+                by_source[source.get("name")].append((_integer(row.get("mt_login")), source, row))
         output = []
         for rows in by_source.values():
             source = rows[0][1]
-            for batch in _batches(rows):
-                logins = [login for login, _ in batch]
-                placeholders = ",".join(["%s"] * len(logins))
-                with self.connect(source) as conn:
-                    with conn.cursor() as cur:
+            with self.connect(source) as conn:
+                with conn.cursor() as cur:
+                    for batch in _batches(rows, TRADE_AGGREGATE_BATCH_SIZE):
+                        logins = [login for login, _, _ in batch]
+                        scale_by_login = {login: _money_scale(account) for login, _, account in batch}
+                        placeholders = ",".join(["%s"] * len(logins))
                         if source.get("kind") == "mt5_deals":
                             cur.execute(
                                 f"select Login,count(*) Orders,count(distinct date(Time)) ActiveDays,sum(coalesce(nullif(VolumeClosed,0),Volume))/10000.0 Lots,sum(coalesce(Profit,0)+coalesce(Commission,0)+coalesce(Storage,0)+coalesce(Fee,0)) TradeProfit from `{source['schema']}`.`{source['table']}` where Login in ({placeholders}) and Action in (0,1) and Entry in (1,2,3) and Time >= %s and Time < %s group by Login",
@@ -1837,9 +2432,21 @@ class RebateChurningService:
                                 [*logins, period["startText"], period["endText"]],
                             )
                             rows_out, login_key = cur.fetchall(), "LOGIN"
-                for row in rows_out:
-                    orders, days = _integer(row.get("Orders")), max(_integer(row.get("ActiveDays")), 1)
-                    output.append({"login": _integer(row.get(login_key)), "serverCode": _source_route_code(source, crm_schema), "source": source, "orders": orders, "activeDays": days, "ordersPerActiveDay": orders / days, "lots": _number(row.get("Lots")), "tradeProfit": _number(row.get("TradeProfit"))})
+                        for row in rows_out:
+                            orders = _integer(row.get("Orders"))
+                            days = max(_integer(row.get("ActiveDays")), 1)
+                            login = _integer(row.get(login_key))
+                            scale = scale_by_login.get(login, 1.0)
+                            output.append({
+                                "login": login,
+                                "serverCode": _source_route_code(source, crm_schema),
+                                "source": source,
+                                "orders": orders,
+                                "activeDays": days,
+                                "ordersPerActiveDay": orders / days,
+                                "lots": _number(row.get("Lots")) * scale,
+                                "tradeProfit": _number(row.get("TradeProfit")) * scale,
+                            })
         return output
 
     @staticmethod

@@ -10,6 +10,9 @@ from datetime import timedelta, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(os.environ.get("K_DESK_ROOT", Path(__file__).resolve().parents[2]))
+SOURCE_ROOT = (Path(__file__).resolve().parents[3] / "src").resolve()
+if SOURCE_ROOT.exists():
+    sys.path.insert(0, str(SOURCE_ROOT))
 LEGACY_RISK_ROOT = Path(r"D:\risk")
 DEFAULT_PYDEPS = LEGACY_RISK_ROOT / "pydeps" if (LEGACY_RISK_ROOT / "pydeps").exists() else PROJECT_ROOT / "pydeps"
 PYDEPS = Path(os.environ.get("TRADE_KLINE_PYDEPS", DEFAULT_PYDEPS))
@@ -22,6 +25,16 @@ import pandas as pd
 
 from build_enhanced_trade_kline_from_cache import build_html, safe_name
 from fused_trade_kline_features import enhance_trade_kline_html
+from kdesk.application.kline_generation import generation_result, missing_same_source_failure, symbol_failure
+from kdesk.domain.kline import (
+    canonical_symbol,
+    confidence_for,
+    endpoint_check,
+    symbol_candidates,
+    validation_metrics,
+    validation_passes,
+)
+from kdesk.infrastructure.quote_sources import QuoteSourceRegistry
 
 
 DEFAULT_OUT_DIR = LEGACY_RISK_ROOT / "output_data" if LEGACY_RISK_ROOT.exists() else PROJECT_ROOT / "outputs" / "kline"
@@ -29,6 +42,14 @@ OUT_DIR = Path(os.environ.get("TRADE_KLINE_OUT_DIR", DEFAULT_OUT_DIR))
 TERMINAL = os.environ.get("TRADE_KLINE_TERMINAL", r"C:\Program Files\AC Capital Market MT5 Terminal\terminal64.exe")
 TIMEFRAME_LABEL = "M1"
 MT5_TIMEFRAME = mt5.TIMEFRAME_M1
+
+
+class SymbolValidationError(RuntimeError):
+    def __init__(self, message: str, *, stage: str, code: str, metrics: dict | None = None):
+        super().__init__(message)
+        self.stage = stage
+        self.code = code
+        self.metrics = metrics or {}
 
 
 def utc(ts):
@@ -308,74 +329,21 @@ def base_symbol(report_symbol: str) -> str:
     return str(report_symbol).split(".")[0].upper()
 
 
+def mt5_symbol_candidates(report_symbol: str, configured_aliases: dict | None = None) -> list[str]:
+    available = [info.name for info in (mt5.symbols_get() or [])]
+    candidates = symbol_candidates(report_symbol, available, configured_aliases)
+    if not candidates:
+        raise SymbolValidationError(
+            f"Terminal 中找不到品种 {report_symbol}",
+            stage="mapping",
+            code="SYMBOL_NOT_FOUND",
+            metrics={"availableSymbols": len(available)},
+        )
+    return candidates
+
+
 def mt5_symbol_for(report_symbol: str) -> str:
-    candidates = []
-    raw = str(report_symbol).upper()
-    base = base_symbol(report_symbol)
-    base_no_roll = base.replace("ROLL", "")
-    roll_base = raw.replace("ROLL", "")
-    roll_title = f"{base_no_roll}Roll" if base_no_roll else f"{base}Roll"
-    alias_candidates = {
-        "CHINA50": ["CN50Roll", "CN50Roll.ECN", "CN50Roll.PRO"],
-        "CN50": ["CN50Roll", "CN50Roll.ECN", "CN50Roll.PRO"],
-        "HKG50": ["HKG50Roll", "HKG50Roll.ECN", "HKG50Roll.PRO"],
-        "HK50": ["HKG50Roll", "HKG50Roll.ECN", "HKG50Roll.PRO"],
-        "NAS100": ["NAS100Roll", "NAS100Roll.ECN", "NAS100Roll.PRO"],
-        "US30": ["US30Roll", "US30Roll.ECN", "US30Roll.PRO"],
-        "SPX500": ["SPX500Roll", "SPX500Roll.ECN", "SPX500Roll.PRO"],
-        "UK100": ["UK100Roll", "UK100Roll.ECN", "UK100Roll.PRO"],
-        "GER40": ["GER40Roll", "GER40Roll.ECN", "GER40Roll.PRO"],
-        "JPN225": ["JPN225Roll", "JPN225Roll.ECN", "JPN225Roll.PRO"],
-        "AUS200": ["AUS200Roll", "AUS200Roll.ECN", "AUS200Roll.PRO"],
-        "UKOIL": ["UKOILRoll", "UKOILRoll.ECN", "UKOILRoll.PRO"],
-        "USOIL": ["USOILRoll", "USOILRoll.ECN", "USOILRoll.PRO"],
-        "NGAS": ["NGASRoll", "NGASRoll.ECN", "NGASRoll.PRO"],
-    }
-    aliases = [*alias_candidates.get(base, []), *alias_candidates.get(base_no_roll, [])]
-    for item in [
-        raw,
-        base,
-        base_no_roll,
-        roll_title,
-        f"{base_no_roll}Roll",
-        f"{base_no_roll}Roll.ECN",
-        f"{base_no_roll}Roll.PRO",
-        f"{base}Roll",
-        f"{base}Roll.ECN",
-        f"{base}Roll.PRO",
-        *aliases,
-    ]:
-        if item and item not in candidates:
-            candidates.append(item)
-    for sym in candidates:
-        info = mt5.symbol_info(sym)
-        if info:
-            mt5.symbol_select(sym, True)
-            return sym
-    search_keys = [raw, base, base_no_roll, roll_base, roll_title, *aliases]
-    found = []
-    for key in search_keys:
-        if not key:
-            continue
-        for info in mt5.symbols_get(f"*{key}*") or []:
-            if info.name not in found:
-                found.append(info.name)
-    preferred = sorted(
-        found,
-        key=lambda name: (
-            0 if name.upper() == raw else 1,
-            0 if name == roll_title else 1,
-            0 if name.endswith(".ECN") else 1,
-            len(name),
-            name,
-        ),
-    )
-    for sym in preferred:
-        info = mt5.symbol_info(sym)
-        if info:
-            mt5.symbol_select(sym, True)
-            return sym
-    raise RuntimeError(f"MT5 symbol not found for report symbol {report_symbol}; tried {candidates}")
+    return mt5_symbol_candidates(report_symbol)[0]
 
 
 def sample_even(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
@@ -395,86 +363,153 @@ def distance_to_bar(price: float, row) -> float:
     return min(abs(price - low), abs(price - high))
 
 
-def choose_by_m1_envelope(report_symbol: str, trades: pd.DataFrame) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
-    mt5_symbol = mt5_symbol_for(report_symbol)
+def _evaluate_alignment(mt5_symbol: str, sample: pd.DataFrame, hour_delta: int) -> tuple[dict, list[dict]]:
+    info = mt5.symbol_info(mt5_symbol)
+    point = float(getattr(info, "point", 0) or 0)
+    checks = []
+    evidence = []
+    for _, trade in sample.iterrows():
+        for time_column, price_column in (("Open Time", "Open Price"), ("Close Time", "Close Price")):
+            trade_time = trade[time_column]
+            if pd.isna(trade_time) or pd.isna(trade[price_column]):
+                continue
+            query_time = trade_time + timedelta(hours=hour_delta)
+            rates = copy_rates_range_retry(
+                mt5_symbol,
+                MT5_TIMEFRAME,
+                utc(query_time - timedelta(minutes=2)),
+                utc(query_time + timedelta(minutes=2)),
+                attempts=3,
+                delay=0.35,
+                warn=False,
+            )
+            if rates is None or not len(rates):
+                continue
+            target = int(utc(query_time.floor("min")).timestamp())
+            bar = min(rates, key=lambda row: abs(int(row["time"]) - target))
+            if abs(int(bar["time"]) - target) > 60:
+                continue
+            check = endpoint_check(
+                float(trade[price_column]),
+                float(bar["low"]),
+                float(bar["high"]),
+                point=point,
+                spread_points=float(bar["spread"]),
+            )
+            checks.append(check)
+            evidence.append(
+                {
+                    "ticket": str(trade.get("Ticket", "")),
+                    "endpoint": "open" if time_column == "Open Time" else "close",
+                    "inside": check.inside,
+                    "distance": check.distance,
+                    "normalizedDistance": check.normalized_distance,
+                }
+            )
+    return validation_metrics(checks), evidence
+
+
+def choose_by_m1_envelope(
+    report_symbol: str,
+    trades: pd.DataFrame,
+    *,
+    aliases: dict | None = None,
+    fallback_source: bool = False,
+    allowed_hour_offsets: tuple[int, ...] = tuple(range(-4, 5)),
+) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     sample = sample_even(trades.sort_values("Open Time"), min(5, len(trades)))
     rows = []
-    for mode, hour_delta in {"report_is_GMT": 0, "report_is_GMT+3": -3}.items():
-        parts = []
-        for _, tr in sample.iterrows():
-            start = tr["Open Time"] + timedelta(hours=hour_delta) - timedelta(minutes=3)
-            end = tr["Open Time"] + timedelta(hours=hour_delta) + timedelta(minutes=3)
-            rates = copy_rates_range_retry(mt5_symbol, MT5_TIMEFRAME, utc(start), utc(end), attempts=3, delay=0.4, warn=False)
-            if rates is not None and len(rates):
-                df = pd.DataFrame(rates)
-                df["time"] = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_convert(None) - timedelta(hours=hour_delta)
-                parts.append(df)
-        bars = pd.concat(parts, ignore_index=True).drop_duplicates(subset=["time"]).sort_values("time") if parts else pd.DataFrame()
-        by_minute = {t: row for t, row in bars.set_index("time").iterrows()} if not bars.empty else {}
-        distances = []
-        matched = 0
-        inside = 0
-        for _, tr in sample.iterrows():
-            minute = tr["Open Time"].floor("min").to_pydatetime()
-            row = by_minute.get(minute)
-            d = distance_to_bar(float(tr["Open Price"]), row)
-            if not np.isnan(d):
-                matched += 1
-                distances.append(d)
-                if d == 0:
-                    inside += 1
-        rows.append(
-            {
-                "Report Symbol": report_symbol,
-                "MT5 Symbol": mt5_symbol,
-                "Time Mode": mode,
-                "Hour Delta To MT5": hour_delta,
-                "Sample Count": len(sample),
-                "Matched Count": matched,
-                "Inside M1 Range Count": inside,
-                "Inside M1 Range Ratio": inside / matched if matched else None,
-                "Avg Distance To M1 Range": float(np.mean(distances)) if distances else None,
-                "Median Distance To M1 Range": float(np.median(distances)) if distances else None,
-                "Max Distance To M1 Range": float(np.max(distances)) if distances else None,
-            }
-        )
-    align = pd.DataFrame(rows).sort_values(
-        [
-            "Inside M1 Range Ratio",
-            "Inside M1 Range Count",
-            "Median Distance To M1 Range",
-            "Avg Distance To M1 Range",
-        ],
-        ascending=[False, False, True, True],
-        na_position="last",
+    candidates = mt5_symbol_candidates(report_symbol, aliases)
+    initial_offsets = tuple(offset for offset in (0, -3) if offset in allowed_hour_offsets)
+    if not initial_offsets:
+        initial_offsets = tuple(allowed_hour_offsets[:2])
+    for candidate in candidates:
+        mt5.symbol_select(candidate, True)
+        for hour_delta in initial_offsets:
+            metrics, _ = _evaluate_alignment(candidate, sample, hour_delta)
+            rows.append({"symbol": candidate, "hourDelta": hour_delta, **metrics})
+    any_initial_pass = any(validation_passes(row, fallback=fallback_source) for row in rows)
+    if not any_initial_pass:
+        for candidate in candidates:
+            for hour_delta in (offset for offset in (-4, -2, -1, 1, 2, 3, 4) if offset in allowed_hour_offsets):
+                metrics, _ = _evaluate_alignment(candidate, sample, hour_delta)
+                rows.append({"symbol": candidate, "hourDelta": hour_delta, **metrics})
+    valid_rows = [row for row in rows if validation_passes(row, fallback=fallback_source)]
+    ranked = sorted(
+        valid_rows or rows,
+        key=lambda row: (
+            -float(row.get("insideRatio") or 0),
+            float(row.get("medianNormalizedDistance")) if row.get("medianNormalizedDistance") is not None else float("inf"),
+            -int(row.get("matched") or 0),
+            candidates.index(row["symbol"]),
+        ),
     )
-    valid = align.dropna(subset=["Median Distance To M1 Range"])
-    best = valid.iloc[0] if not valid.empty else align.iloc[0]
+    best = ranked[0]
+    if not valid_rows:
+        raise SymbolValidationError(
+            f"{report_symbol} 的候选报价均未通过成交端点校验",
+            stage="calibration",
+            code="LOW_CONFIDENCE",
+            metrics={"fallback": fallback_source, "best": best, "attempts": rows},
+        )
+    mt5_symbol = str(best["symbol"])
+    hour_delta = int(best["hourDelta"])
+    mode = "report_is_GMT" if hour_delta == 0 else "report_is_GMT+3" if hour_delta == -3 else f"report_offset_{hour_delta:+d}h"
     mapping = {
         "report_symbol": report_symbol,
         "mt5_symbol": mt5_symbol,
-        "time_mode": best["Time Mode"],
-        "hour_delta": int(best["Hour Delta To MT5"]),
-        "sample_count": int(best["Sample Count"]),
-        "matched_count": int(best["Matched Count"]),
-        "inside_m1_range_ratio": None if pd.isna(best["Inside M1 Range Ratio"]) else float(best["Inside M1 Range Ratio"]),
-        "median_distance_to_m1_range": None if pd.isna(best["Median Distance To M1 Range"]) else float(best["Median Distance To M1 Range"]),
-        "max_distance_to_m1_range": None if pd.isna(best["Max Distance To M1 Range"]) else float(best["Max Distance To M1 Range"]),
+        "time_mode": mode,
+        "hour_delta": hour_delta,
+        "sample_count": int(len(sample)),
+        "matched_count": int(best["matched"]),
+        "inside_m1_range_ratio": float(best["insideRatio"]),
+        "median_distance_to_m1_range": float(best["medianNormalizedDistance"]),
+        "max_distance_to_m1_range": float(best["maxNormalizedDistance"]),
+        "validation_status": "accepted",
+        "confidence": confidence_for(best, fallback=fallback_source),
+        "fallback_source": fallback_source,
     }
+    align = pd.DataFrame(
+        {
+            "Report Symbol": report_symbol,
+            "MT5 Symbol": row["symbol"],
+            "Time Mode": "report_is_GMT" if row["hourDelta"] == 0 else f"report_offset_{row['hourDelta']:+d}h",
+            "Hour Delta To MT5": row["hourDelta"],
+            "Sample Count": len(sample),
+            "Matched Count": row["matched"],
+            "Inside M1 Range Count": row["inside"],
+            "Inside M1 Range Ratio": row["insideRatio"],
+            "Median Normalized Distance": row["medianNormalizedDistance"],
+            "Max Normalized Distance": row["maxNormalizedDistance"],
+            "Accepted": validation_passes(row, fallback=fallback_source),
+        }
+        for row in rows
+    )
     return mapping, align, sample
 
 
-def load_or_fetch_bars(stem: str, report_symbol: str, mt5_symbol: str, time_mode: str, hour_delta: int, trades: pd.DataFrame) -> pd.DataFrame:
-    cache_path = OUT_DIR / f"{stem}_{safe_name(report_symbol)}_quote_cache_{safe_name(mt5_symbol)}_{TIMEFRAME_LABEL}_{time_mode}.csv"
+def load_or_fetch_bars(
+    stem: str,
+    report_symbol: str,
+    mt5_symbol: str,
+    time_mode: str,
+    hour_delta: int,
+    trades: pd.DataFrame,
+    *,
+    provider_id: str = "default",
+) -> pd.DataFrame:
+    cache_path = OUT_DIR / f"{stem}_{safe_name(report_symbol)}_quote_cache_{safe_name(provider_id)}_{safe_name(mt5_symbol)}_{TIMEFRAME_LABEL}_{time_mode}.csv"
+    legacy_cache_path = OUT_DIR / f"{stem}_{safe_name(report_symbol)}_quote_cache_{safe_name(mt5_symbol)}_{TIMEFRAME_LABEL}_{time_mode}.csv"
     query_start = trades["Open Time"].min() + timedelta(hours=hour_delta) - timedelta(minutes=30)
     query_end = trades["Close Time"].max() + timedelta(hours=hour_delta) + timedelta(minutes=30)
     display_delta = -hour_delta
-    if cache_path.exists():
-        bars = pd.read_csv(cache_path, parse_dates=["time"])
+    readable_cache = cache_path if cache_path.exists() else legacy_cache_path
+    if readable_cache.exists():
+        bars = pd.read_csv(readable_cache, parse_dates=["time"])
         expected_start = query_start + timedelta(hours=display_delta)
         expected_end = query_end + timedelta(hours=display_delta)
         if not bars.empty and bars["time"].min() <= expected_start + timedelta(minutes=5) and bars["time"].max() >= expected_end - timedelta(minutes=5):
-            print(f"cache hit: {cache_path} rows={len(bars)}")
+            print(f"cache hit: {readable_cache} rows={len(bars)}")
             return bars
         print(f"cache ignored (range mismatch): {cache_path} rows={len(bars)}")
     frames = []
@@ -521,71 +556,16 @@ def make_price_check_from_bars(report_symbol: str, sample: pd.DataFrame, bars: p
 
 
 def apply_display_price_alignment(report_symbol: str, bars: pd.DataFrame, sample: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    if bars.empty or sample.empty:
-        mapping["display_price_shift"] = 0.0
-        mapping["display_price_shift_applied"] = False
-        return bars
-    by_minute = {t: row for t, row in bars.set_index("time").iterrows()}
-    deltas = []
-    for _, tr in sample.iterrows():
-        for time_col, price_col in [("Open Time", "Open Price"), ("Close Time", "Close Price")]:
-            row = by_minute.get(tr[time_col].floor("min").to_pydatetime())
-            if row is None:
-                continue
-            price = float(tr[price_col])
-            low, high = float(row["low"]), float(row["high"])
-            if price > high:
-                deltas.append(price - high)
-            elif price < low:
-                deltas.append(price - low)
-            else:
-                deltas.append(0.0)
-    if not deltas:
-        mapping["display_price_shift"] = 0.0
-        mapping["display_price_shift_applied"] = False
-        return bars
-    intervals = []
-    for _, tr in sample.iterrows():
-        for time_col, price_col in [("Open Time", "Open Price"), ("Close Time", "Close Price")]:
-            row = by_minute.get(tr[time_col].floor("min").to_pydatetime())
-            if row is None:
-                continue
-            price = float(tr[price_col])
-            intervals.append((price - float(row["high"]), price - float(row["low"])))
-    candidates = set(deltas)
-    for lo_shift, hi_shift in intervals:
-        candidates.add(lo_shift)
-        candidates.add(hi_shift)
-        candidates.add((lo_shift + hi_shift) / 2)
-    best = None
-    for candidate in candidates:
-        distances = []
-        inside_count = 0
-        for lo_shift, hi_shift in intervals:
-            if lo_shift <= candidate <= hi_shift:
-                inside_count += 1
-                distances.append(0.0)
-            else:
-                distances.append(min(abs(candidate - lo_shift), abs(candidate - hi_shift)))
-        median_dist = float(np.median(distances)) if distances else float("inf")
-        mean_dist = float(np.mean(distances)) if distances else float("inf")
-        score = (inside_count, -median_dist, -mean_dist, -abs(candidate))
-        if best is None or score > best[0]:
-            best = (score, candidate, inside_count)
-    shift = float(best[1]) if best else float(np.median(deltas))
-    nonzero_ratio = sum(abs(v) > 1e-12 for v in deltas) / len(deltas)
-    threshold = 0.2 if "XAU" in str(report_symbol).upper() else 0.0003
+    shift = float(mapping.get("configured_price_correction") or 0.0)
     mapping["display_price_shift"] = shift
-    mapping["display_price_shift_applied"] = abs(shift) >= threshold and nonzero_ratio >= 0.35
-    mapping["display_price_shift_nonzero_ratio"] = nonzero_ratio
-    mapping["display_price_shift_inside_count"] = int(best[2]) if best else 0
-    mapping["display_price_shift_sample_count"] = len(intervals)
-    if not mapping["display_price_shift_applied"]:
+    mapping["display_price_shift_applied"] = bool(shift)
+    mapping["display_price_shift_source"] = "quote-source configuration" if shift else "none"
+    if not shift:
         return bars
     out = bars.copy()
     for col in ["open", "high", "low", "close"]:
         out[col] = out[col].astype(float) + shift
-    print(f"{report_symbol}: applied display price shift {shift:.8f} to align K-line display with report prices")
+    print(f"{report_symbol}: applied configured price correction {shift:.8f}")
     return out
 
 
@@ -597,6 +577,9 @@ def main() -> None:
     parser.add_argument("--account", default="", help="Account id used with --trades-csv when it cannot be inferred from the file name.")
     parser.add_argument("--out-dir", default=str(OUT_DIR), help=f"Output/cache directory. Default: {OUT_DIR}")
     parser.add_argument("--terminal", default=TERMINAL, help="MT5 terminal64.exe path used for read-only M1 data fetch.")
+    parser.add_argument("--quote-sources", default="", help="Optional local read-only quote-source registry JSON.")
+    parser.add_argument("--platform", default="", help="Order platform used to select a same-source provider.")
+    parser.add_argument("--server", default="", help="Order server used to select a same-source provider.")
     parser.add_argument("--mt5-timeout", type=int, default=10000, help="MT5 initialize timeout in milliseconds.")
     parser.add_argument("--symbols", default="", help="Comma/space separated report symbols to generate, for example XAUUSD.PRO,EURUSD.PRO.")
     parser.add_argument("--start", default="", help="Only include trades overlapping this report-time start, e.g. 2026-06-01 00:00.")
@@ -632,52 +615,142 @@ def main() -> None:
     print(f"range={trades['Open Time'].min()} -> {trades['Close Time'].max()}")
     print(f"trades_csv={trades_path}")
 
-    if not mt5.initialize(path=TERMINAL, timeout=args.mt5_timeout):
-        raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
-    acc = mt5.account_info()
-    print(f"MT5 account={acc.login if acc else None} server={acc.server if acc else None}")
-    try:
-        mapping_by_symbol = {}
-        align_parts = []
-        check_parts = []
-        bars_by_symbol = {}
-        skipped_symbols = []
-        symbol_groups = sorted(trades.groupby("Item", sort=True), key=lambda item: len(item[1]), reverse=True)
-        fallback_time = None
-        for report_symbol, group in symbol_groups:
-            group = group.sort_values("Open Time").reset_index(drop=True)
-            mapping, align, sample = choose_by_m1_envelope(report_symbol, group)
-            if mapping["median_distance_to_m1_range"] is None and fallback_time is not None:
-                mapping["time_mode"] = fallback_time["time_mode"]
-                mapping["hour_delta"] = fallback_time["hour_delta"]
-                mapping["fallback_time_mode_from"] = fallback_time["report_symbol"]
-            elif mapping["median_distance_to_m1_range"] is not None:
-                fallback_time = {
-                    "report_symbol": report_symbol,
-                    "time_mode": mapping["time_mode"],
-                    "hour_delta": mapping["hour_delta"],
-                }
-            mapping_by_symbol[report_symbol] = mapping
-            align_parts.append(align)
-            try:
-                bars = load_or_fetch_bars(stem, report_symbol, mapping["mt5_symbol"], mapping["time_mode"], mapping["hour_delta"], group)
-            except RuntimeError as exc:
-                mapping["quote_error"] = str(exc)
-                skipped_symbols.append(report_symbol)
-                print(f"WARNING: skipped {report_symbol}: {exc}")
+    registry = QuoteSourceRegistry.load(TERMINAL, args.quote_sources or None)
+    mapping_by_symbol: dict[str, dict] = {}
+    align_parts: list[pd.DataFrame] = []
+    check_parts: list[pd.DataFrame] = []
+    bars_by_symbol: dict[str, pd.DataFrame] = {}
+    failures: list[dict] = []
+    successful_symbols: list[dict] = []
+    quote_sources: dict[str, dict] = {}
+    symbol_groups = sorted(trades.groupby("Item", sort=True), key=lambda item: len(item[1]), reverse=True)
+    for report_symbol, group in symbol_groups:
+        group = group.sort_values("Open Time").reset_index(drop=True)
+        platforms = sorted({str(value).strip() for value in group.get("Platform", pd.Series(dtype=str)).dropna() if str(value).strip()})
+        servers = sorted({str(value).strip() for value in group.get("Server", pd.Series(dtype=str)).dropna() if str(value).strip()})
+        order_platform = args.platform or (platforms[0] if len(platforms) == 1 else "")
+        order_server = args.server or (servers[0] if len(servers) == 1 else "")
+        mixed_sources = len(platforms) > 1 or len(servers) > 1
+        source_candidates = [] if mixed_sources else registry.candidates(order_platform, order_server)
+        attempted_sources: list[str] = []
+        attempt_details: list[dict] = []
+        accepted = False
+        accepted_options: list[dict] = []
+        for provider, configured_fallback in source_candidates:
+            attempted_sources.append(provider.id)
+            if not mt5.initialize(path=provider.terminal, timeout=args.mt5_timeout):
+                attempt_details.append({"provider": provider.id, "stage": "source", "code": "MT5_INIT_FAILED", "reason": str(mt5.last_error())})
                 continue
-            bars = apply_display_price_alignment(report_symbol, bars, sample, mapping)
-            bars_by_symbol[report_symbol] = bars
-            check_parts.append(make_price_check_from_bars(report_symbol, sample, bars, mapping))
+            try:
+                account_info = mt5.account_info()
+                terminal_server = str(getattr(account_info, "server", "") or "")
+                actual_fallback = configured_fallback
+                quote_sources[provider.id] = {
+                    "id": provider.id,
+                    "terminal": provider.terminal,
+                    "server": terminal_server,
+                    "requestedServer": order_server,
+                    "fallback": actual_fallback,
+                    "readOnly": True,
+                }
+                print(f"quote source={provider.id} server={terminal_server or '-'} fallback={actual_fallback}")
+                mapping, align, sample = choose_by_m1_envelope(
+                    report_symbol,
+                    group,
+                    aliases=provider.aliases,
+                    fallback_source=actual_fallback,
+                    allowed_hour_offsets=provider.allowed_hour_offsets,
+                )
+                mapping.update(
+                    {
+                        "provider": provider.id,
+                        "provider_server": terminal_server,
+                        "requested_server": order_server,
+                        "tried_quote_sources": list(attempted_sources),
+                    }
+                )
+                correction = provider.price_corrections.get(report_symbol)
+                if correction is None:
+                    correction = provider.price_corrections.get(canonical_symbol(report_symbol), 0.0)
+                mapping["configured_price_correction"] = float(correction or 0.0)
+                bars = load_or_fetch_bars(
+                    stem,
+                    report_symbol,
+                    mapping["mt5_symbol"],
+                    mapping["time_mode"],
+                    mapping["hour_delta"],
+                    group,
+                    provider_id=provider.id,
+                )
+                mapping["cache_file"] = f"{stem}_{safe_name(report_symbol)}_quote_cache_{safe_name(provider.id)}_{safe_name(mapping['mt5_symbol'])}_{TIMEFRAME_LABEL}_{mapping['time_mode']}.csv"
+                bars = apply_display_price_alignment(report_symbol, bars, sample, mapping)
+                accepted_options.append(
+                    {"mapping": mapping, "align": align, "sample": sample, "bars": bars, "server": terminal_server}
+                )
+                accepted = True
+                if order_server:
+                    break
+            except SymbolValidationError as exc:
+                attempt_details.append(
+                    {"provider": provider.id, "stage": exc.stage, "code": exc.code, "reason": str(exc), "metrics": exc.metrics}
+                )
+            except Exception as exc:
+                attempt_details.append({"provider": provider.id, "stage": "quotes", "code": "QUOTE_FETCH_FAILED", "reason": str(exc)})
+            finally:
+                mt5.shutdown()
+        if accepted:
+            selected = max(accepted_options, key=lambda item: float(item["mapping"].get("confidence") or 0))
+            mapping = selected["mapping"]
+            bars_by_symbol[report_symbol] = selected["bars"]
+            mapping_by_symbol[report_symbol] = mapping
+            align_parts.append(selected["align"].assign(Provider=mapping["provider"], ProviderServer=selected["server"]))
+            check_parts.append(make_price_check_from_bars(report_symbol, selected["sample"], selected["bars"], mapping))
+            successful_symbols.append(
+                {
+                    "symbol": report_symbol,
+                    "mappedSymbol": mapping["mt5_symbol"],
+                    "provider": mapping["provider"],
+                    "server": selected["server"],
+                    "confidence": mapping["confidence"],
+                    "validationStatus": "accepted",
+                }
+            )
             print(f"{report_symbol}: {json.dumps(mapping, ensure_ascii=False)}")
-    finally:
-        mt5.shutdown()
-
-    if not bars_by_symbol:
-        raise RuntimeError("No symbols have usable M1 bars; cannot build chart.")
+            continue
+        if not attempt_details and not mixed_sources:
+            failure = missing_same_source_failure(
+                report_symbol,
+                platform=order_platform,
+                server=order_server,
+                configured_providers=registry.provider_summary(),
+            )
+            last = failure
+        else:
+            last = attempt_details[-1] if attempt_details else {
+                "stage": "source",
+                "code": "MIXED_ORDER_SOURCES",
+                "reason": "同一品种包含多个订单服务器，无法选择唯一同源报价",
+            }
+            failure = symbol_failure(
+                report_symbol,
+                stage=last["stage"],
+                code=last["code"],
+                quote_sources=attempted_sources,
+                metrics=last.get("metrics") or {},
+                reason=last["reason"],
+                attempts=attempt_details,
+            )
+        failures.append(failure)
+        mapping_by_symbol[report_symbol] = {
+            "report_symbol": report_symbol,
+            "validation_status": "rejected",
+            "tried_quote_sources": attempted_sources,
+            "failure": failure,
+        }
+        print(f"WARNING: skipped {report_symbol}: {last['reason']}")
 
     align_path = OUT_DIR / f"{stem}_alignment_sample.csv"
-    pd.concat(align_parts, ignore_index=True).to_csv(align_path, index=False, encoding="utf-8-sig")
+    (pd.concat(align_parts, ignore_index=True) if align_parts else pd.DataFrame()).to_csv(align_path, index=False, encoding="utf-8-sig")
     checks_path = OUT_DIR / f"{stem}_m1_price_check_sample.csv"
     if check_parts:
         pd.concat(check_parts, ignore_index=True).to_csv(checks_path, index=False, encoding="utf-8-sig")
@@ -686,16 +759,27 @@ def main() -> None:
     mapping_path = OUT_DIR / f"{stem}_mapping.json"
     mapping_path.write_text(json.dumps(mapping_by_symbol, ensure_ascii=False, indent=2), encoding="utf-8")
     html_path = OUT_DIR / f"{stem}_trade_kline.html"
-    html = enhance_trade_kline_html(build_html(account, stem, trades, bars_by_symbol, mapping_by_symbol), statement, trades)
-    html_path.write_text(html, encoding="utf-8")
+    if bars_by_symbol:
+        chart_trades = trades[trades["Item"].isin(bars_by_symbol)].copy()
+        html = enhance_trade_kline_html(build_html(account, stem, chart_trades, bars_by_symbol, mapping_by_symbol), statement, chart_trades)
+        html_path.write_text(html, encoding="utf-8")
+
+    result = generation_result(
+        chart=str(html_path) if html_path.exists() else "",
+        symbols=successful_symbols,
+        failures=failures,
+        quote_sources=list(quote_sources.values()),
+    )
+    result_path = OUT_DIR / f"{stem}_kline_result.json"
+    result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("outputs")
     print(align_path)
     print(checks_path)
     print(mapping_path)
-    print(html_path)
-    if skipped_symbols:
-        print(f"warnings: skipped symbols without usable M1 bars: {','.join(skipped_symbols)}")
+    if html_path.exists():
+        print(html_path)
+    print(f"KLINE_RESULT {json.dumps(result, ensure_ascii=False)}")
 
 
 if __name__ == "__main__":

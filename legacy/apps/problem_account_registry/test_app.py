@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -35,6 +36,145 @@ class HierarchyNetDepositTests(unittest.TestCase):
         self.assertTrue(app.hierarchy_net_deposit.is_promotion_product("GOLDmicro"))
         self.assertFalse(app.hierarchy_net_deposit.is_promotion_product("BTCUSD"))
         self.assertFalse(app.hierarchy_net_deposit.is_promotion_product("USOILRoll"))
+
+    def test_hierarchy_routes_dbg_live2_by_crm_schema_and_server_code(self):
+        source = app.hierarchy_net_deposit._source_for_account(
+            app.MYSQL_SOURCES, "crm_vn", "5"
+        )
+
+        self.assertEqual(source["name"], "DBG MT5 Live2")
+        self.assertEqual(source["schema"], "crm_vn_mt5_live2")
+        self.assertEqual(
+            app.hierarchy_net_deposit._source_for_account(
+                app.MYSQL_SOURCES, "crm_vn", "2"
+            )["schema"],
+            "mt5_export_new",
+        )
+        self.assertIsNone(
+            app.hierarchy_net_deposit._source_for_account(
+                app.MYSQL_SOURCES, "crm_vn", "999"
+            )
+        )
+
+    def test_hierarchy_target_prefixes_cover_both_dbg_crm_environments(self):
+        self.assertEqual(
+            app.hierarchy_net_deposit._target_mode("dbg-cn:100"),
+            ("user", "100", "crm_cn"),
+        )
+        self.assertEqual(
+            app.hierarchy_net_deposit._target_mode("dbg-vn:200"),
+            ("user", "200", "crm_vn"),
+        )
+
+    def test_hierarchy_account_lookup_uses_all_configured_codes_for_crm(self):
+        sources = [
+            {
+                "name": "DBG GB MT5", "host": "dbg", "schema": "mt5_export_new",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "2"},
+            },
+            {
+                "name": "DBG MT5 Live2", "host": "dbg", "schema": "crm_vn_mt5_live2",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "5"},
+            },
+        ]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [{
+            "id": 88, "supper_id": 1, "top_ib_id": 1, "user_type": 2,
+            "customer_type": "VN", "ib_level": None, "status": 0,
+            "full_name": "Live2 User", "matched_account": 5200101,
+        }]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        connect = MagicMock()
+        connect.return_value.__enter__.return_value = connection
+
+        subject = app.hierarchy_net_deposit.resolve_subject(
+            "account:5200101", sources, connect
+        )
+
+        sql, parameters = cursor.execute.call_args.args
+        self.assertIn("a.mt_server_code in (%s,%s)", " ".join(sql.split()))
+        self.assertEqual(parameters, [5200101, "2", "5"])
+        self.assertEqual(subject["schema"], "crm_vn")
+
+    def test_hierarchy_tree_account_query_includes_live2_code(self):
+        sources = [
+            {
+                "name": "DBG GB MT5", "host": "dbg", "schema": "mt5_export_new",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "2"},
+            },
+            {
+                "name": "DBG MT5 Live2", "host": "dbg", "schema": "crm_vn_mt5_live2",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "5"},
+            },
+        ]
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "id": 88, "supper_id": None, "top_ib_id": 88, "user_type": 2,
+            "customer_type": "VN", "ib_level": None, "status": 0,
+            "full_name": "Live2 User",
+        }
+        cursor.fetchall.side_effect = [[], [{
+            "user_id": 88, "mt_login": 5200101, "mt_server_code": "5",
+            "mt_type_name": "Standard", "status": 0,
+        }]]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        connect = MagicMock()
+        connect.return_value.__enter__.return_value = connection
+
+        _, accounts = app.hierarchy_net_deposit._fetch_tree_and_accounts(
+            {"schema": "crm_vn", "source": sources[0], "userId": 88},
+            sources,
+            connect,
+        )
+
+        sql, parameters = cursor.execute.call_args.args
+        self.assertIn("mt_server_code in (%s,%s)", " ".join(sql.split()))
+        self.assertEqual(parameters, [88, "2", "5"])
+        self.assertEqual(accounts[0]["mt_login"], 5200101)
+
+    def test_hierarchy_product_list_scans_live2_and_deduplicates_physical_sources(self):
+        sources = [
+            {
+                "name": "DBG CN MT5", "host": "dbg", "schema": "mt5_export_new",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_cn", "mt_server_code": "4"},
+            },
+            {
+                "name": "DBG GB MT5", "host": "dbg", "schema": "mt5_export_new",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "2"},
+            },
+            {
+                "name": "DBG MT5 Live2", "host": "dbg", "schema": "crm_vn_mt5_live2",
+                "table": "mt5_deals", "kind": "mt5_deals",
+                "account_route": {"schema": "crm_vn", "mt_server_code": "5"},
+            },
+        ]
+        queried = []
+
+        def connect(source):
+            queried.append(source["schema"])
+            cursor = MagicMock()
+            cursor.fetchall.return_value = [{
+                "Product": "LIVE2ONLY" if source["schema"] == "crm_vn_mt5_live2" else "XAUUSD"
+            }]
+            connection = MagicMock()
+            connection.cursor.return_value.__enter__.return_value = cursor
+            context = MagicMock()
+            context.__enter__.return_value = connection
+            return context
+
+        payload = app.hierarchy_net_deposit.list_products(sources, connect)
+
+        self.assertEqual(queried.count("mt5_export_new"), 1)
+        self.assertEqual(queried.count("crm_vn_mt5_live2"), 1)
+        self.assertIn("LIVE2ONLY", payload["products"])
 
     def test_home_ui_shows_orders_and_lots_as_separate_metrics(self):
         self.assertIn("`${product}订单数`", app.WORKBENCH_HTML)
@@ -177,6 +317,19 @@ class MoneyScalingTests(unittest.TestCase):
             {"schema": "sass_crm_ac", "mt_server_code": "3"},
         ])
 
+    def test_dbg_mt5_live2_uses_its_own_code_five_route(self):
+        sources = {source["name"]: source for source in app.MYSQL_SOURCES}
+        live2 = sources["DBG MT5 Live2"]
+
+        self.assertEqual(live2["schema"], "crm_vn_mt5_live2")
+        self.assertEqual(live2["server"], "DBG MT5 Live2")
+        self.assertEqual(live2["aliases"], ["DBG MT5", "DBG GB MT5 Live2"])
+        self.assertEqual(app.source_crm_routes(live2), [
+            {"schema": "crm_vn", "mt_server_code": "5"},
+        ])
+        self.assertIs(app.source_for_crm_route("crm_vn", "5"), live2)
+        self.assertEqual(app.source_for_crm_route("crm_vn", "2")["schema"], "mt5_export_new")
+
     def test_rebate_routes_are_isolated_for_shared_trade_schemas(self):
         sources = {source["name"]: source for source in app.MYSQL_SOURCES}
         self.assertEqual(app.source_crm_routes(sources["AC MT4"]), [
@@ -223,6 +376,115 @@ class MoneyScalingTests(unittest.TestCase):
         self.assertIn("`crm_cn`.`mt_users_account`", sql)
         self.assertEqual(args, (10002, "4"))
 
+    def test_live3_cent_group_detects_usc_without_daily_currency(self):
+        meta = app.account_money_meta(
+            group=r"Live3\TX\Cent_STD\F00\B00",
+            source_name="AC CN MT5 live3",
+            currency_source="mt5_users_view.Group",
+        )
+
+        self.assertEqual(meta["currency"], "USC")
+        self.assertEqual(meta["displayCurrency"], "USD")
+        self.assertEqual(meta["moneyScale"], 0.01)
+        self.assertTrue(meta["isCentAccount"])
+        self.assertEqual(meta["currencySource"], "mt5_users_view.Group")
+        self.assertFalse(app.group_indicates_cent_account(r"Live3\TX\Standard\F00\B00"))
+        self.assertFalse(app.group_indicates_cent_account("Incentive_STD"))
+
+    def test_mt5_meta_uses_users_group_without_scanning_daily_view(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"AccountGroup": r"Live3\TX\Cent_STD\F00\B00"}
+        source = {"name": "AC CN MT5 live3", "schema": "sass_crm_ac_mt5_live3"}
+
+        meta = app.query_mysql_mt5_account_meta(cursor, source, "241003365")
+
+        self.assertEqual(meta["currency"], "USC")
+        self.assertEqual(meta["moneyScale"], 0.01)
+        self.assertEqual(meta["currencySource"], "mt5_users_view.Group")
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertIn("`mt5_users_view`", cursor.execute.call_args.args[0])
+        self.assertNotIn("`mt5_daily_view`", cursor.execute.call_args.args[0])
+
+    def test_mt5_standard_group_uses_source_default_currency_without_daily_view(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"AccountGroup": r"Live1\PXM\B\STD\F00D00"}
+        source = {"name": "AC CN MT5", "schema": "sass_crm_ac_mt5_live", "default_currency": "USD"}
+
+        meta = app.query_mysql_mt5_account_meta(cursor, source, "245856")
+
+        self.assertEqual(meta["currency"], "USD")
+        self.assertEqual(meta["moneyScale"], 1.0)
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertNotIn("`mt5_daily_view`", cursor.execute.call_args.args[0])
+
+    def test_account_lookup_exposes_cent_meta_for_new_live3_account(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {"mt_login": 241003365},
+            {
+                "RawRows": 2, "OrderCount": 1,
+                "FirstTime": "2026-07-20 01:53:17", "LastTime": "2026-07-20 02:04:20",
+                "Symbols": "XAUUSD.cs",
+            },
+            {"AccountGroup": r"Live3\TX\Cent_STD\F00\B00"},
+        ]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "AC CN MT5 live3", "server": "AC CN MT5 live3", "platform": "MT5",
+            "schema": "sass_crm_ac_mt5_live3", "table": "mt5_deals", "kind": "mt5_deals",
+            "account_route": {"schema": "sass_crm_ac", "mt_server_code": "3"},
+        }
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection):
+            payload = app.query_mysql_account_lookup_source(source, "241003365")
+
+        self.assertTrue(payload["accountMeta"]["isCentAccount"])
+        self.assertEqual(payload["accountMeta"]["currency"], "USC")
+        self.assertEqual(payload["accountMeta"]["moneyScale"], 0.01)
+
+    def test_mt4_trade_query_excludes_open_position_sentinel(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {"mt_login": 5013015},
+            {"CURRENCY": "USD", "AccountGroup": r"AC\STD"},
+        ]
+        cursor.fetchall.return_value = [
+            {
+                "TICKET": 1, "LOGIN": 5013015, "CMD": 0, "SYMBOL": "XAUUSD", "VOLUME": 50,
+                "OPEN_TIME": "2026-07-20 03:00:00", "CLOSE_TIME": "2026-07-20 03:10:00",
+                "OPEN_PRICE": 3300, "CLOSE_PRICE": 3301, "PROFIT": 50,
+                "COMMISSION": 0, "TAXES": 0, "SWAPS": 0,
+            },
+            {
+                "TICKET": 2, "LOGIN": 5013015, "CMD": 0, "SYMBOL": "XAUUSD", "VOLUME": 50,
+                "OPEN_TIME": "2026-07-20 05:00:00", "CLOSE_TIME": "1970-01-01 00:00:00",
+                "OPEN_PRICE": 3300, "CLOSE_PRICE": 0, "PROFIT": -100,
+                "COMMISSION": 0, "TAXES": 0, "SWAPS": 0,
+            },
+        ]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "AC MT4", "server": "AC CN MT4", "platform": "MT4",
+            "schema": "mt4_export_syc", "table": "mt4_trades", "kind": "mt4_trades",
+            "account_route": {"schema": "sass_crm_ac", "mt_server_code": "2"},
+        }
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection):
+            rows = app.query_mysql_mt4_source(source, "5013015")
+
+        self.assertEqual([row["ticket"] for row in rows], ["1"])
+        self.assertEqual(rows[0]["holding_seconds"], 600)
+        trade_sql = cursor.execute.call_args_list[1].args[0]
+        self.assertIn("CLOSE_TIME > OPEN_TIME", trade_sql)
+
     @staticmethod
     def deals():
         return [
@@ -255,6 +517,7 @@ class MoneyScalingTests(unittest.TestCase):
         self.assertEqual(row["account_currency"], "USC")
         self.assertTrue(row["is_cent_account"])
         self.assertEqual(row["reason"], "Expert")
+        self.assertEqual(row["open_comment"], "auto trade by sc")
         self.assertEqual(row["comment"], "auto trade by sc / close by script")
         self.assertEqual(row["expert_id"], "234000")
 
@@ -302,23 +565,23 @@ class AccountLookupPerformanceTests(unittest.TestCase):
             "volume": 0.1, "profit": 1, "commission": 0, "swap": 0, "taxes": 0, "holding_seconds": 60,
         }
         empty_costs = {"commission": 0, "swap": 0, "taxes": 0, "complete": True, "sources": [], "bySymbol": {}}
-        with patch.object(app, "query_db_trades", return_value=[trade]) as query_trades, \
-             patch.object(app, "query_mysql_trade_costs", return_value=empty_costs) as query_costs, \
-             patch.object(app, "build_riskdash_panels", return_value={"available": False}), \
-             patch.object(app, "TRADE_DB_SOURCE", "mysql"):
+        analysis = {
+            "rows": [trade], "costs": empty_costs, "metrics": app.trade_metrics([trade], empty_costs),
+            "usesMysql": True, "historyLimit": 50000,
+        }
+        with patch.object(app, "account_trade_analysis", return_value=analysis) as query_analysis:
             detail = app._account_database_detail_uncached("532573", {"platform": "MT5", "server": "AC GB MT5"})
         self.assertTrue(detail["exists"])
-        query_trades.assert_called_once_with("532573", limit=50000, platform="MT5", server="AC GB MT5")
-        query_costs.assert_called_once_with("532573", platform="MT5", server="AC GB MT5")
+        query_analysis.assert_called_once_with("532573", platform="MT5", server="AC GB MT5")
 
     def test_lookup_finance_returns_database_local_status_and_comprehensive_profit(self):
         source = {"name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals"}
         trade = {"data_source": "mysql", "platform": "MT5", "server": "Live", "profit": 10}
+        analysis = {"rows": [trade], "metrics": app.trade_metrics([trade])}
         ledger = {"建议动作": "P", "状态": "观察中"}
         finance = {"comprehensiveProfit": 37918.02, "displayCurrency": "USD"}
         with patch.object(app, "MYSQL_SOURCES", [source]), \
-             patch.object(app, "query_db_trades", return_value=[trade]), \
-             patch.object(app, "query_mysql_trade_costs", return_value=None), \
+             patch.object(app, "account_trade_analysis", return_value=analysis), \
              patch.object(app, "query_mt5_finance_panel", return_value=finance), \
              patch.object(app, "query_mt5_database_statuses", return_value={"37103": "P"}), \
              patch.object(app, "ledger_record_for_login", return_value=ledger):
@@ -334,10 +597,10 @@ class AccountLookupPerformanceTests(unittest.TestCase):
         cn_source = {"name": "AC MT4", "platform": "MT4", "server": "AC CN MT4", "aliases": ["AC MT4"], "kind": "mt4_trades"}
         gb_source = {"name": "AC GB MT4", "platform": "MT4", "server": "AC GB MT4", "kind": "mt4_trades"}
         trade = {"data_source": "mysql", "platform": "MT4", "server": "AC GB MT4", "profit": 10}
+        analysis = {"rows": [trade], "metrics": app.trade_metrics([trade])}
         finance = {"comprehensiveProfit": 243.38, "displayCurrency": "USD"}
         with patch.object(app, "MYSQL_SOURCES", [cn_source, gb_source]), \
-             patch.object(app, "query_db_trades", return_value=[trade]), \
-             patch.object(app, "query_mysql_trade_costs", return_value=None), \
+             patch.object(app, "account_trade_analysis", return_value=analysis), \
              patch.object(app, "query_mt4_finance_panel", return_value=finance) as finance_query, \
              patch.object(app, "query_mt4_database_statuses", return_value={"5010772": "Enabled"}), \
              patch.object(app, "ledger_record_for_login", return_value=None):
@@ -349,10 +612,10 @@ class AccountLookupPerformanceTests(unittest.TestCase):
         cn_source = {"name": "DBG MT5", "platform": "MT5", "server": "DBG CN MT5", "aliases": ["DBG MT5"], "kind": "mt5_deals"}
         gb_source = {"name": "DBG GB MT5", "platform": "MT5", "server": "DBG GB MT5", "kind": "mt5_deals"}
         trade = {"data_source": "mysql", "platform": "MT5", "server": "DBG GB MT5", "profit": 10}
+        analysis = {"rows": [trade], "metrics": app.trade_metrics([trade])}
         finance = {"comprehensiveProfit": 15.25, "displayCurrency": "USD"}
         with patch.object(app, "MYSQL_SOURCES", [cn_source, gb_source]), \
-             patch.object(app, "query_db_trades", return_value=[trade]), \
-             patch.object(app, "query_mysql_trade_costs", return_value=None), \
+             patch.object(app, "account_trade_analysis", return_value=analysis), \
              patch.object(app, "query_mt5_finance_panel", return_value=finance) as finance_query, \
              patch.object(app, "query_mt5_database_statuses", return_value={"3067746": "Enabled"}), \
              patch.object(app, "ledger_record_for_login", return_value=None):
@@ -429,6 +692,34 @@ class TradeMetricsTests(unittest.TestCase):
         self.assertTrue(metrics["costsIncludeOpenTradeFees"])
         self.assertEqual(metrics["bySource"][0]["profit"], 6)
         self.assertEqual(metrics["bySymbol"][0]["profit"], 6)
+
+    def test_unfiltered_mt4_detail_uses_full_history_and_reuses_metrics(self):
+        rows = [{
+            "platform": "MT4", "server": "DBG MT4 CN1", "symbol": "XAUUSD", "type": "buy",
+            "open_time": "2026-07-01 10:00:00", "close_time": "2026-07-01 10:01:00",
+            "volume": 0.1, "profit": 1, "commission": 0, "swap": 0, "taxes": 0,
+            "holding_seconds": 60, "data_source": "mysql",
+        }]
+        with patch.object(app, "account_cache_get", return_value=None), \
+             patch.object(app, "account_cache_set", side_effect=lambda _key, value: value), \
+             patch.object(app, "query_db_trades", return_value=rows) as query, \
+             patch.object(app, "query_mysql_trade_costs", return_value={}) as costs, \
+             patch.object(app, "trade_metrics", wraps=app.trade_metrics) as metrics:
+            analysis = app.account_trade_analysis("8208074", "MT4", "DBG MT4 CN1")
+
+        query.assert_called_once_with(
+            "8208074", limit=None, platform="MT4", server="DBG MT4 CN1"
+        )
+        costs.assert_called_once_with("8208074", platform="MT4", server="DBG MT4 CN1")
+        self.assertEqual(metrics.call_count, 1)
+
+        with patch.object(app, "account_trade_analysis", return_value=analysis), \
+             patch.object(app, "trade_metrics", wraps=app.trade_metrics) as metrics:
+            detail = app._account_database_detail_uncached(
+                "8208074", {"platform": "MT4", "server": "DBG MT4 CN1"}
+            )
+        self.assertEqual(metrics.call_count, 0)
+        self.assertIs(detail["metrics"], detail["allMetrics"])
 
 
 class VisualizationTests(unittest.TestCase):
@@ -623,7 +914,7 @@ class RiskPanelTests(unittest.TestCase):
         with patch.object(app, "MYSQL_SOURCES", [source]), \
              patch.object(app, "query_mt5_finance_panel", return_value=finance), \
              patch.object(app, "load_records", return_value=[record]), \
-             patch.object(app, "query_same_name_logins", return_value=["900001"]), \
+             patch.object(app, "query_same_name_accounts", return_value=[{"account": "900001", "source": source}]), \
              patch.object(app, "query_mt5_database_statuses", return_value={"900001": "M"}):
             panel = app.build_riskdash_panels("900001", [{"platform": "MT5", "server": "Live"}], {}, [])
         self.assertEqual(panel["sameName"][0]["databaseStatus"], "M")
@@ -642,7 +933,7 @@ class RiskPanelTests(unittest.TestCase):
         with patch.object(app, "MYSQL_SOURCES", [source]), \
              patch.object(app, "query_mt4_finance_panel", return_value=finance) as finance_query, \
              patch.object(app, "load_records", return_value=[]), \
-             patch.object(app, "query_same_name_logins", return_value=["900004"]), \
+             patch.object(app, "query_same_name_accounts", return_value=[{"account": "900004", "source": source}]), \
              patch.object(app, "query_mt4_database_statuses", return_value={"900004": "Enabled"}):
             panel = app.build_riskdash_panels("900004", rows, {}, rows)
 
@@ -652,6 +943,70 @@ class RiskPanelTests(unittest.TestCase):
         self.assertEqual(panel["sameName"][0]["databaseStatus"], "Enabled")
         self.assertEqual(panel["finance"]["balance"], 100)
         finance_query.assert_called_once_with(source, "900004", rows, {})
+
+    def test_same_name_query_keeps_accounts_on_other_crm_server_codes(self):
+        live1 = {
+            "server": "AC CN MT5", "platform": "MT5", "kind": "mt5_deals",
+            "crm_routes": [{"schema": "sass_crm_ac", "mt_server_code": "1"}],
+        }
+        live3 = {
+            "server": "AC CN MT5 live3", "platform": "MT5", "kind": "mt5_deals",
+            "crm_routes": [{"schema": "sass_crm_ac", "mt_server_code": "3"}],
+        }
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"user_id": 133018}
+        cursor.fetchall.return_value = [
+            {"mt_login": 245856, "mt_server_code": 1},
+            {"mt_login": 241003365, "mt_server_code": 3},
+        ]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+
+        with patch.object(app, "MYSQL_SOURCES", [live1, live3]), \
+             patch.object(app, "mysql_trade_connect", return_value=connection):
+            accounts = app.query_same_name_accounts(live3, "241003365")
+
+        self.assertEqual([item["account"] for item in accounts], ["245856", "241003365"])
+        self.assertIs(accounts[0]["source"], live1)
+        self.assertIs(accounts[1]["source"], live3)
+        self.assertNotIn("mt_server_code = %s", cursor.execute.call_args_list[1].args[0])
+        self.assertEqual(cursor.execute.call_args_list[1].args[1], (133018,))
+
+    def test_same_name_panel_queries_each_account_through_its_own_server(self):
+        live1 = {"server": "AC CN MT5", "platform": "MT5", "kind": "mt5_deals"}
+        live3 = {"server": "AC CN MT5 live3", "platform": "MT5", "kind": "mt5_deals"}
+        current_rows = [{"platform": "MT5", "server": "AC CN MT5 live3", "account": "241003365"}]
+
+        def finance_for_source(item_source, account, rows, metrics):
+            amount = 10 if item_source is live1 else 20
+            return {
+                "currency": "USD", "balance": amount, "equity": amount, "netDeposit": amount,
+                "holdingProfit": 0, "closedNetProfit": 0, "negativeBalanceClear": 0,
+                "compensation": 0, "reward": 0, "rebate": 0, "comprehensiveProfit": amount,
+                "highestHoldingVolume": 0,
+            }
+
+        with patch.object(app, "MYSQL_SOURCES", [live1, live3]), \
+             patch.object(app, "query_same_name_accounts", return_value=[
+                 {"account": "245856", "source": live1},
+                 {"account": "241003365", "source": live3},
+             ]), \
+             patch.object(app, "query_mt5_finance_panel", side_effect=finance_for_source), \
+             patch.object(app, "query_mysql_mt5_source", return_value=[]) as trade_query, \
+             patch.object(app, "query_mysql_trade_costs", return_value={}), \
+             patch.object(app, "query_mt5_database_statuses", side_effect=lambda _, accounts: {item: "Enabled" for item in accounts}), \
+             patch.object(app, "load_records", return_value=[]):
+            panel = app.build_riskdash_panels("241003365", current_rows, {}, current_rows)
+
+        self.assertEqual(
+            [(row["account"], row["server"]) for row in panel["sameName"]],
+            [("245856", "AC CN MT5"), ("241003365", "AC CN MT5 live3")],
+        )
+        self.assertEqual(panel["sameNameTotals"]["balance"], 30)
+        trade_query.assert_called_once_with(live1, "245856", limit=50000)
 
 
 class OrderListTests(unittest.TestCase):
@@ -666,10 +1021,19 @@ class OrderListTests(unittest.TestCase):
         self.assertTrue(app.is_ea_trade({"expert_id": "86666159"}))
         self.assertTrue(app.is_ea_trade({"comment": "EA scalper v2"}))
         self.assertFalse(app.is_ea_trade({"reason": "Client", "comment": "manual review"}))
+        self.assertFalse(app.is_ea_trade({"reason": "Expert", "comment": "@14@95002113@19"}))
+        self.assertFalse(app.is_ea_trade({"reason": "Expert", "comment": "1/521/58439466"}))
+        self.assertFalse(app.is_ea_trade({"reason": "Expert", "comment": "so: 49.8%/50.0%"}))
 
     def test_cpt_comment_marks_copy_trade(self):
         row = {"comment": "CPT-SS#348815929 / CPT-SS#348821201"}
         self.assertTrue(app.is_copy_trade(row))
+        self.assertEqual(app.copy_trade_order_ids(row), ["348815929"])
+        self.assertEqual(app.copy_trade_channels(row), ["CPT-SS"])
+        self.assertEqual(
+            app.copy_trade_order_ids({"open_comment": "CPT-SS#100", "comment": "CPT-SS#100 / CPT-SS#200"}),
+            ["100"],
+        )
         self.assertTrue(app.is_copy_trade({"comment": "[CPT-SS#348815929]"}))
         self.assertTrue(app.is_copy_trade({"platform": "MT4", "reason_code": 3}))
         self.assertTrue(app.is_copy_trade({"platform": "MT5", "reason_code": 9}))
@@ -682,36 +1046,179 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(metrics["copyOrderCount"], 1)
         self.assertTrue(app.public_trade_order(row)["isCopyTrade"])
 
+    def test_mt4_order_page_uses_database_pagination_and_exact_total(self):
+        source = {"platform": "MT4", "server": "DBG MT4 CN1", "kind": "mt4_trades"}
+        row = {
+            "ticket": "99", "platform": "MT4", "server": "DBG MT4 CN1", "symbol": "XAUUSD",
+            "type": "buy", "open_time": "2026-07-20 10:00:00", "close_time": "2026-07-20 10:01:00",
+            "holding_seconds": 60, "volume": 0.1, "profit": 2, "commission": 0,
+            "swap": 0, "taxes": 0,
+        }
+        with patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "query_mysql_mt4_orders_page_source", return_value=(59504, [row])) as page_query, \
+             patch.object(app, "query_db_trades") as legacy_query:
+            payload = app.account_orders_payload(
+                "8208074", page=1, page_size=100, platform="MT4", server="DBG MT4 CN1"
+            )
+
+        page_query.assert_called_once_with(source, "8208074", 1, 100)
+        legacy_query.assert_not_called()
+        self.assertEqual(payload["total"], 59504)
+        self.assertEqual(payload["orders"][0]["ticket"], "99")
+        self.assertFalse(payload["truncated"])
+
     def test_copy_origin_lookup_groups_initiating_accounts_by_cpt_order_id(self):
         copied_rows = [{"comment": "CPT-SS#348815929 / CPT-SS#348821201"}]
         source = {"name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals"}
         candidates = [
             {"account": "700001", "platform": "MT5", "server": "Live", "ticket": "348815929", "matchedOrderIds": ["348815929"], "time": "2026-07-01 10:00:00", "symbol": "XAUUSD", "comment": "source"},
-            {"account": "700001", "platform": "MT5", "server": "Live", "ticket": "348821201", "matchedOrderIds": ["348821201"], "time": "2026-07-01 10:05:00", "symbol": "XAUUSD", "comment": "source"},
         ]
         follower_rows = [
             {"account": "700002", "platform": "MT5", "server": "Live", "ticket": "5001", "matchedSourceOrderIds": ["348815929"], "openTime": "2026-07-01 10:00:01", "closeTime": "2026-07-01 10:01:01", "symbol": "XAUUSD", "volume": 0.2, "grossProfit": 12, "commission": -1, "swap": 0, "taxes": 0, "netProfit": 11, "currency": "USD", "displayCurrency": "USD"},
-            {"account": "700003", "platform": "MT5", "server": "Live", "ticket": "5002", "matchedSourceOrderIds": ["348815929", "348821201"], "openTime": "2026-07-01 10:00:02", "closeTime": "2026-07-01 10:01:02", "symbol": "XAUUSD", "volume": 0.3, "grossProfit": -4, "commission": -1, "swap": -0.5, "taxes": 0, "netProfit": -5.5, "currency": "USD", "displayCurrency": "USD"},
         ]
         with patch.object(app, "query_db_trades", return_value=copied_rows), \
              patch.object(app, "MYSQL_SOURCES", [source]), \
              patch.object(app, "query_copy_origin_source", return_value=candidates) as origin_query, \
-             patch.object(app, "query_copy_followers_source", return_value={"rows": follower_rows, "sourceOrdersScanned": 2, "sourceOrdersTruncated": False, "candidateRowsTruncated": False}):
+             patch.object(app, "query_copy_followers_source", return_value={"rows": follower_rows, "sourceOrdersScanned": 1, "sourceOrdersTruncated": False, "candidateRowsTruncated": False}) as follower_query:
             payload = app.account_copy_origins_payload("700002", {"platform": "MT5", "server": "Live"})
 
         self.assertTrue(payload["detected"])
         self.assertEqual(payload["primaryOrigin"]["account"], "700001")
-        self.assertEqual(payload["primaryOrigin"]["matchedOrders"], 2)
-        self.assertEqual(payload["primaryOrigin"]["sampleOrderIds"], ["348815929", "348821201"])
-        self.assertEqual(len(payload["primaryOrigin"]["sourceOrders"]), 2)
+        self.assertEqual(payload["primaryOrigin"]["matchedOrders"], 1)
+        self.assertEqual(payload["primaryOrigin"]["sampleOrderIds"], ["348815929"])
+        self.assertEqual(payload["primaryOrigin"]["copyChannels"], ["CPT-SS"])
+        self.assertEqual(len(payload["primaryOrigin"]["sourceOrders"]), 1)
         self.assertEqual(payload["primaryOrigin"]["orders"], 1)
         self.assertEqual(payload["primaryOrigin"]["copyOrderRatio"], 100)
-        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["accounts"], 2)
-        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["orders"], 2)
-        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["netProfit"], 5.5)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["accounts"], 1)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["orders"], 1)
+        self.assertEqual(payload["primaryOrigin"]["followerSummary"]["netProfit"], 11)
+        self.assertEqual(payload["primaryOrigin"]["followerOrders"], follower_rows)
         self.assertTrue(payload["primaryOrigin"]["followers"][0]["isCurrentAccount"])
-        self.assertEqual(payload["primaryOrigin"]["followers"][1]["matchedSourceOrders"], 2)
-        origin_query.assert_called_once_with(source, ["348815929", "348821201"])
+        origin_query.assert_called_once_with(source, ["348815929"])
+        follower_query.assert_called_once_with(
+            source,
+            payload["primaryOrigin"]["sourceOrders"],
+            copy_channels=["CPT-SS"],
+        )
+
+    def test_copy_origin_lookup_does_not_truncate_more_than_one_thousand_open_ids(self):
+        copied_rows = [{"comment": f"CPT-SS#{order_id}"} for order_id in range(1, 1202)]
+        source = {"name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals"}
+        with patch.object(app, "query_db_trades", return_value=copied_rows), \
+             patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "query_copy_origin_source", return_value=[]) as origin_query:
+            payload = app.account_copy_origins_payload("700099", {"platform": "MT5", "server": "Live"})
+
+        queried_ids = origin_query.call_args.args[1]
+        self.assertEqual(len(queried_ids), 1201)
+        self.assertEqual(queried_ids[-1], "1201")
+        self.assertEqual(payload["searchedOrders"], 1201)
+
+    def test_copy_origin_regression_assigns_all_641903_orders_to_two_sources(self):
+        copied_rows = [
+            {
+                "comment": f"CPT-SS#{order_id}", "type": "buy", "volume": 0.1,
+                "profit": 439.89 / 625, "commission": 0, "swap": 0, "taxes": 0,
+            }
+            for order_id in range(1, 626)
+        ] + [
+            {
+                "comment": f"CPT-SS#{order_id}", "type": "buy", "volume": 0.1,
+                "profit": 64.43 / 270, "commission": 0, "swap": 0, "taxes": 0,
+            }
+            for order_id in range(626, 896)
+        ]
+        candidates = [
+            {
+                "account": "640598" if order_id <= 625 else "632824",
+                "platform": "MT5", "server": "AC GB MT5", "ticket": str(order_id),
+                "matchedOrderIds": [str(order_id)], "time": "2026-07-01 10:00:00",
+                "symbol": "XAUUSD", "comment": "source",
+            }
+            for order_id in range(1, 896)
+        ]
+        source = {"name": "AC GB MT5", "platform": "MT5", "server": "AC GB MT5", "kind": "mt5_deals"}
+        empty_discovery = {
+            "rows": [], "sourceOrdersScanned": 0, "sourceOrdersTruncated": False,
+            "candidateRowsTruncated": False, "queryStrategy": "exact-comment",
+        }
+        with patch.object(app, "query_db_trades", return_value=copied_rows), \
+             patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "query_copy_origin_source", return_value=candidates), \
+             patch.object(app, "query_copy_followers_source", return_value=empty_discovery):
+            payload = app.account_copy_origins_payload(
+                "641903", {"platform": "MT5", "server": "AC GB MT5"}
+            )
+
+        origins = {row["account"]: row for row in payload["origins"]}
+        self.assertEqual(payload["copyOrders"], 895)
+        self.assertEqual(payload["mappedCopyOrders"], 895)
+        self.assertEqual(payload["unmappedCopyOrders"], 0)
+        self.assertEqual(origins["640598"]["orders"], 625)
+        self.assertEqual(origins["640598"]["netProfit"], 439.89)
+        self.assertEqual(origins["632824"]["orders"], 270)
+        self.assertEqual(origins["632824"]["netProfit"], 64.43)
+
+    def test_copy_origin_source_batches_large_id_sets(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [[], [], []]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals",
+            "schema": "live", "table": "mt5_deals",
+        }
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection):
+            rows = app.query_copy_origin_source(source, [str(value) for value in range(1, 1002)])
+
+        self.assertEqual(rows, [])
+        self.assertEqual(cursor.execute.call_count, 3)
+        self.assertEqual([len(call.args[1]) for call in cursor.execute.call_args_list], [500, 500, 1])
+
+    def test_copy_follower_query_scans_all_source_orders_with_exact_comments(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [{
+                "Deal": 1, "Login": 700002, "PositionID": 9001, "Time": "2026-07-01 10:00:01",
+                "Action": 0, "Entry": 0, "Symbol": "XAUUSD", "Comment": "CPT-SS#1",
+            }],
+            [{"Login": 700002, "AccountGroup": "Standard"}],
+            [{
+                "Login": 700002, "PositionID": 9001, "OpenTime": "2026-07-01 10:00:01",
+                "CloseTime": "2026-07-01 10:01:01", "Symbol": "XAUUSD", "OpenVolume": 10000,
+                "GrossProfit": 12, "CommissionFee": -1, "Swap": 0,
+            }],
+        ]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals",
+            "schema": "live", "table": "mt5_deals", "default_currency": "USD",
+        }
+        source_orders = [
+            {"orderId": str(value), "time": "2026-07-01 10:00:00"}
+            for value in range(1, 202)
+        ]
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection):
+            result = app.query_copy_followers_source(source, source_orders, copy_channels=["CPT-SS"])
+
+        self.assertEqual(result["sourceOrdersScanned"], 201)
+        self.assertFalse(result["sourceOrdersTruncated"])
+        self.assertFalse(result["candidateRowsTruncated"])
+        self.assertEqual(result["queryStrategy"], "exact-comment")
+        self.assertEqual(result["rows"][0]["netProfit"], 11)
+        self.assertEqual(result["rows"][0]["ticket"], "9001")
+        self.assertEqual(result["rows"][0]["orders"], 1)
+        self.assertIn("Comment in", cursor.execute.call_args_list[0].args[0])
 
     def test_copy_source_windows_are_hour_bounded_and_limited(self):
         orders = [
@@ -809,14 +1316,529 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(app.signal_in_tag("Signal #5009780 IN extra"), "Signal #5009780 IN")
         self.assertEqual(app.signal_in_identifier("manual account"), "")
 
-    def test_ea_comment_parser_keeps_exact_ea_name_and_rejects_generic_or_copy_comments(self):
+    def test_ea_comment_parser_keeps_ea_and_route_comments_but_rejects_system_comments(self):
         self.assertEqual(app.ea_comment_parts("ChanGold V33 / tp"), ["ChanGold V33"])
         self.assertEqual(app.ea_comment_parts("KLine_Breakout[tp]"), ["KLine_Breakout"])
         self.assertEqual(app.ea_comment_parts("AlphaBot / AlphaBot"), ["AlphaBot"])
+        self.assertEqual(app.ea_comment_parts("@8@44968558@7"), ["@8@44968558@7"])
+        self.assertEqual(app.ea_comment_parts("@8@44968558@7[tp]"), ["@8@44968558@7"])
+        identity = app.ea_comment_identity("@8@44968558@7", 7)
+        self.assertEqual(identity["comment"], "@8@44968558@7")
+        self.assertEqual(identity["signatureType"], "exact-comment")
+        self.assertEqual(identity["classification"], "possible_copy_route")
+        self.assertEqual(identity["normalizedTemplate"], "@8@{SOURCE_ID}@7")
+        self.assertFalse(identity["countedAsEa"])
         self.assertEqual(app.ea_comment_parts("EA"), [])
-        self.assertEqual(app.ea_comment_parts("CPT-SS#348815929"), [])
-        self.assertEqual(app.ea_comment_parts("Signal #5009780 IN"), [])
+        self.assertEqual(app.ea_comment_parts("CPT-SS#348815929"), ["CPT-SS#348815929"])
+        self.assertEqual(app.ea_comment_parts("Signal #5009780 IN"), ["Signal #5009780 IN"])
         self.assertEqual(app.ea_comment_parts("from #27060824"), [])
+        self.assertEqual(app.ea_comment_parts("[tp 4029.00]"), [])
+        self.assertEqual(app.ea_comment_parts("[sl 4031.50]"), [])
+        self.assertEqual(app.ea_comment_parts("[so 20%]"), [])
+
+    def test_ea_comment_classifier_covers_known_dynamic_and_route_families(self):
+        route_cases = {
+            "CPT-SS#353764633": "CPT-SS#{SOURCE_ID}",
+            "CPT #353764633": "CPT #{SOURCE_ID}",
+            "@14@95002113@19": "@14@{SOURCE_ID}@19",
+            "1/521/58439466": "1/521/{SOURCE_ID}",
+            "9200768-58436291": "9200768-{SOURCE_ID}",
+        }
+        for comment, template in route_cases.items():
+            with self.subTest(comment=comment):
+                result = app.classify_ea_comment(comment, ea_hint=True)
+                self.assertEqual(result["classification"], "possible_copy_route")
+                self.assertEqual(result["classificationLabel"], "可能是跟单路由")
+                self.assertEqual(result["normalizedTemplate"], template)
+                self.assertFalse(result["countedAsEa"])
+
+        dynamic_cases = {
+            "B1:743494061": "B1:{ORDER_REF}",
+            "EAName{743494061}": "EAName{{ORDER_REF}}",
+            "RST_RESTART_S_134567": "RST_RESTART_{SIDE}_{INSTANCE}",
+            "DCA_GOLD_134567": "DCA_GOLD_{INSTANCE}",
+            "VTRADE Alpha [CID=33]": "VTRADE Alpha [CID={CLIENT}]",
+            "BuyOrder#3": "BuyOrder#{LEVEL}",
+            "BR01": "BR{LEVEL}",
+            "SR02": "SR{LEVEL}",
+            "Grid_12": "Grid_{LEVEL}",
+        }
+        for comment, template in dynamic_cases.items():
+            with self.subTest(comment=comment):
+                result = app.classify_ea_comment(comment, ea_hint=True)
+                self.assertEqual(result["classification"], "dynamic_ea")
+                self.assertEqual(result["normalizedTemplate"], template)
+                self.assertTrue(result["countedAsEa"])
+
+    def test_ea_comment_classifier_excludes_platform_events_and_contact_only_comments(self):
+        for comment in (
+            "[sl 4031.50]", "[tp 4029.00]", "[so 20%]", "so: 49.8%/50.0%",
+            "from #27060824", "to #27060825", "deposit", "withdrawal", "credit",
+            "QQ: 123456789", "微信: 13800138000", "manual",
+        ):
+            with self.subTest(comment=comment):
+                self.assertEqual(
+                    app.classify_ea_comment(comment, ea_hint=True)["classification"],
+                    "system_excluded",
+                )
+
+    def test_ea_match_evidence_requires_expert_on_same_server_and_explains_every_match(self):
+        seed = {
+            **app.ea_comment_identity("GOLDFORGE", 777555),
+            "originPlatform": "MT5",
+            "originServer": "AC GB MT5",
+        }
+
+        same_server = app.ea_match_evidence(
+            seed, {"platform": "MT5", "server": "AC GB MT5"}, 777555,
+        )
+        self.assertEqual(
+            same_server["matchClue"],
+            "同服务器：Comment「GOLDFORGE」相同，ExpertID 777555 相同",
+        )
+        self.assertIsNone(app.ea_match_evidence(
+            seed, {"platform": "MT5", "server": "AC GB MT5"}, 777000,
+        ))
+
+        cross_server = app.ea_match_evidence(
+            seed, {"platform": "MT5", "server": "DBG CN MT5"}, 123456,
+        )
+        self.assertEqual(cross_server["matchClue"], "跨服务器：Comment「GOLDFORGE」相同")
+        self.assertEqual(cross_server["matchedExpertId"], 123456)
+
+        mt4_seed = {
+            **app.ea_comment_identity("GoldBot", 42),
+            "originPlatform": "MT4",
+            "originServer": "DBG MT4 CN1",
+        }
+        mt4_match = app.ea_match_evidence(
+            mt4_seed, {"platform": "MT4", "server": "DBG MT4 CN1"}, 42,
+        )
+        self.assertIn("MAGIC 42 相同", mt4_match["matchClue"])
+
+    def test_ea_dynamic_numeric_comment_query_uses_indexable_prefix_pattern(self):
+        exact, dynamic = app.ea_comment_query_plan([
+            "ChanGold V33", "@8@44968558@7", "@8@44968558@7",
+        ])
+
+        self.assertEqual(exact, [
+            "ChanGold V33", "ChanGold V33[tp]", "ChanGold V33[sl]", "ChanGold V33[so]",
+            "@8@44968558@7", "@8@44968558@7[tp]", "@8@44968558@7[sl]", "@8@44968558@7[so]",
+        ])
+        self.assertEqual(dynamic, ["@8@{SOURCE_ID}@7"])
+
+    def test_ea_expert_sequence_requires_complete_ids_and_conservative_overlap(self):
+        base = datetime(2026, 6, 30, 20, 0, 0)
+
+        def events(expert_ids, account, *, shift_seconds=0, action=0):
+            return [{
+                "account": account,
+                "positionId": f"{account}-{index}",
+                "expertId": expert_id,
+                "openTime": base + timedelta(seconds=index * 70 + shift_seconds),
+                "symbol": "XAUUSD",
+                "action": action,
+            } for index, expert_id in enumerate(expert_ids)]
+
+        seed_ids = [15783001, 15783009, 15783017, 15783025, 15783033, 15783041]
+        seed = events(seed_ids, "2014201")
+        exact_peer = events(seed_ids, "2014202", shift_seconds=1)
+        matched = app.ea_expert_sequence_match(seed, exact_peer)
+
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched["sharedCount"], 6)
+        self.assertEqual(matched["seedOverlap"], 1)
+        self.assertEqual(matched["candidateOverlap"], 1)
+
+        same_prefix_only = events([15799001, 15799009, 15799017, 15799025, 15799033, 15799041], "2014999")
+        self.assertIsNone(app.ea_expert_sequence_match(seed, same_prefix_only))
+        self.assertIsNone(app.ea_expert_sequence_match(seed, events(seed_ids[:4], "2014998")))
+        self.assertIsNone(app.ea_expert_sequence_match(seed, events(seed_ids, "2014997", action=1)))
+
+        diluted_peer = [
+            *exact_peer,
+            *events([15800001, 15800002], "2014202", shift_seconds=10),
+        ]
+        self.assertIsNone(app.ea_expert_sequence_match(seed, diluted_peer))
+
+    def test_ea_expert_sequence_rejects_one_time_batch_even_with_five_shared_ids(self):
+        opened = datetime(2026, 6, 30, 20, 0, 0)
+        seed = [{
+            "account": "1", "positionId": f"s-{index}", "expertId": 15783000 + index,
+            "openTime": opened, "symbol": "XAUUSD", "action": 0,
+        } for index in range(5)]
+        candidate = [{
+            **event, "account": "2", "positionId": f"c-{index}",
+        } for index, event in enumerate(seed)]
+
+        self.assertIsNone(app.ea_expert_sequence_match(seed, candidate))
+
+    def test_ea_exact_route_payload_is_kept_visible_and_excluded_from_ea_summary(self):
+        sources = [
+            {
+                "name": "AC CN MT5", "platform": "MT5", "server": "AC CN MT5", "kind": "mt5_deals",
+                "schema": "sass_crm_ac_mt5_live", "table": "mt5_deals", "host": "ac",
+            },
+            {
+                "name": "DBG MT5", "platform": "MT5", "server": "DBG CN MT5", "kind": "mt5_deals",
+                "schema": "mt5_export_new", "table": "mt5_deals", "host": "dbg",
+            },
+        ]
+        runtime = SimpleNamespace(
+            MYSQL_SOURCES=sources,
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+            is_ea_trade=lambda _row: True,
+            is_copy_trade=lambda _row: False,
+            source_allowed=lambda source, platform="", server="": not server or server in {source["name"], source["server"]},
+            query_db_trades=lambda *_args, **_kwargs: [{
+                "platform": "MT5", "server": "DBG CN MT5", "comment": "@8@48972818@7",
+                "expert_id": "7", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-06", "close_time": "2026-07-21",
+            }],
+            now_text=lambda: "2026-07-22 10:00:00",
+        )
+        service = app.EaCommentGroupService(runtime)
+
+        def fake_mt5(source, seeds, _row_limit):
+            accounts = ["201518", "221698", "207357", "201628", "33553"] if source["name"].startswith("AC") else [
+                "2013674", "2014359", "2014169", "2013651",
+            ]
+            records = [{
+                "database": "AC" if source["name"].startswith("AC") else "DBG",
+                "platform": "MT5", "server": source["server"], "source": source["name"],
+                "account": account, "comment": seeds[0]["comment"], "ticket": f"{index}",
+                "volume": 0.1, "grossProfit": 1, "commission": 0, "swap": 0, "taxes": 0,
+                "netProfit": 1, "currency": "USD", "openTime": "2026-07-01", "closeTime": "2026-07-02",
+            } for index, account in enumerate(accounts, 1)]
+            return records, False, []
+
+        with patch.object(service, "_query_mt5", side_effect=fake_mt5):
+            payload = service.payload("2013674", {"platform": "MT5", "server": "DBG CN MT5"})
+
+        self.assertEqual(len(payload["groups"]), 1)
+        group = payload["groups"][0]
+        self.assertEqual(group["comment"], "@8@48972818@7")
+        self.assertEqual(group["classificationLabel"], "可能是跟单路由")
+        self.assertFalse(group["countedAsEa"])
+        self.assertEqual(group["databases"], ["AC", "DBG"])
+        self.assertEqual(group["totals"]["accounts"], 9)
+        self.assertEqual(payload["eaSummary"]["groups"], 0)
+        self.assertEqual(payload["possibleCopyRouteSummary"]["groups"], 1)
+        self.assertEqual({row["account"] for row in group["members"]}, {
+            "2013674", "2014359", "2014169", "2013651", "201518", "221698", "207357", "201628", "33553",
+        })
+
+    def test_ea_payload_runs_dynamic_format_only_after_successful_empty_exact_lookup(self):
+        source = {
+            "name": "DBG CN MT5", "platform": "MT5", "server": "DBG CN MT5", "kind": "mt5_deals",
+            "schema": "mt5_export_new", "table": "mt5_deals", "host": "dbg",
+        }
+        runtime = SimpleNamespace(
+            MYSQL_SOURCES=[source],
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+            is_ea_trade=lambda _row: True,
+            is_copy_trade=lambda _row: False,
+            source_allowed=lambda *_args, **_kwargs: True,
+            query_db_trades=lambda *_args, **_kwargs: [{
+                "platform": "MT5", "server": "DBG CN MT5", "comment": "B1:743494061",
+                "expert_id": "77", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }],
+            now_text=lambda: "2026-07-24 10:00:00",
+        )
+        service = app.EaCommentGroupService(runtime)
+        stages = []
+
+        def fake_mt5(_source, seeds, _row_limit):
+            stages.append(seeds[0]["signatureType"])
+            if seeds[0]["signatureType"] == "exact-comment":
+                return [], False, []
+            records = [{
+                "database": "DBG", "platform": "MT5", "server": "DBG CN MT5", "source": "DBG CN MT5",
+                "account": account, "comment": seeds[0]["comment"], "signatureKey": seeds[0]["signatureKey"],
+                "ticket": ticket, "volume": 0.1, "grossProfit": 2, "commission": 0, "swap": 0,
+                "taxes": 0, "netProfit": 2, "currency": "USD", "openTime": "2026-07-01",
+                "closeTime": "2026-07-02", "matchedExpertId": 77, "matchClue": "动态模板匹配",
+            } for account, ticket in (("700001", "1"), ("700002", "2"))]
+            return records, False, []
+
+        with patch.object(service, "_query_mt5", side_effect=fake_mt5):
+            payload = service.payload("700001", {"platform": "MT5", "server": "DBG CN MT5"})
+
+        self.assertEqual(stages, ["exact-comment", "dynamic-template"])
+        self.assertEqual(payload["groups"][0]["comment"], "B1:{ORDER_REF}")
+        self.assertEqual(payload["groups"][0]["classification"], "dynamic_ea")
+        self.assertTrue(payload["groups"][0]["countedAsEa"])
+        self.assertEqual(payload["eaSummary"]["netProfit"], 4)
+
+    def test_ea_payload_does_not_fallback_after_exact_provider_error(self):
+        source = {
+            "name": "DBG CN MT5", "platform": "MT5", "server": "DBG CN MT5", "kind": "mt5_deals",
+            "schema": "mt5_export_new", "table": "mt5_deals", "host": "dbg",
+        }
+        runtime = SimpleNamespace(
+            MYSQL_SOURCES=[source],
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+            is_ea_trade=lambda _row: True,
+            is_copy_trade=lambda _row: False,
+            source_allowed=lambda *_args, **_kwargs: True,
+            query_db_trades=lambda *_args, **_kwargs: [{
+                "platform": "MT5", "server": "DBG CN MT5", "comment": "B1:743494061",
+                "expert_id": "77", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }],
+            now_text=lambda: "2026-07-24 10:00:00",
+        )
+        service = app.EaCommentGroupService(runtime)
+        with patch.object(service, "_query_mt5", side_effect=RuntimeError("provider timeout")) as query:
+            payload = service.payload("700001", {"platform": "MT5", "server": "DBG CN MT5"})
+
+        self.assertEqual(query.call_count, 1)
+        self.assertEqual(payload["groups"], [])
+        self.assertIn("provider timeout", payload["errors"][0])
+
+    def test_ea_unknown_dynamic_format_is_persisted_in_local_pattern_registry(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = SimpleNamespace(
+                EA_PATTERN_DB_PATH=Path(temp_dir) / "ea-patterns.sqlite",
+                normalize_text=lambda value: str(value or "").strip(),
+                numeric_value=lambda value: float(value or 0),
+                rounded=lambda value, digits=2: round(float(value or 0), digits),
+                mysql_datetime_text=lambda value: str(value or ""),
+                is_ea_trade=lambda _row: True,
+                is_copy_trade=lambda _row: False,
+                now_text=lambda: "2026-07-24 10:00:00",
+            )
+            service = app.EaCommentGroupService(runtime)
+            rows = [{
+                "comment": "NovelAlpha_93847561", "expert_id": "88", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }]
+            seeds = service._seed_comments(rows)
+            connection = app.sqlite3.connect(runtime.EA_PATTERN_DB_PATH)
+            try:
+                learned = connection.execute(
+                    "select normalized_template, classification, observations from learned_ea_comment_patterns"
+                ).fetchone()
+            finally:
+                connection.close()
+
+        self.assertEqual(seeds[0]["normalizedTemplate"], "NovelAlpha_{ID}")
+        self.assertEqual(learned, ("NovelAlpha_{ID}", "dynamic_ea", 1))
+
+    def test_ea_payload_runs_dynamic_matching_only_after_successful_empty_exact_lookup(self):
+        source = {
+            "name": "DBG CN MT5", "platform": "MT5", "server": "DBG CN MT5", "kind": "mt5_deals",
+            "schema": "mt5_export_new", "table": "mt5_deals", "host": "dbg",
+        }
+        runtime = SimpleNamespace(
+            MYSQL_SOURCES=[source],
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+            is_ea_trade=lambda _row: False,
+            is_copy_trade=lambda _row: False,
+            source_allowed=lambda _source, platform="", server="": True,
+            query_db_trades=lambda *_args, **_kwargs: [{
+                "platform": "MT5", "server": "DBG CN MT5", "comment": "1/521/58439466",
+                "expert_id": "58439466", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }],
+            now_text=lambda: "2026-07-24 10:00:00",
+        )
+        service = app.EaCommentGroupService(runtime)
+        stages = []
+
+        def fake_mt5(_source, seeds, _row_limit):
+            stages.append(seeds[0]["signatureType"])
+            if seeds[0]["signatureType"] == "exact-comment":
+                return [], False, []
+            records = [{
+                "database": "DBG", "platform": "MT5", "server": "DBG CN MT5", "source": "DBG CN MT5",
+                "account": account, "comment": seeds[0]["comment"], "signatureKey": seeds[0]["signatureKey"],
+                "ticket": ticket, "volume": 0.1, "grossProfit": 2, "commission": 0, "swap": 0,
+                "taxes": 0, "netProfit": 2, "currency": "USD", "openTime": "2026-07-01",
+                "closeTime": "2026-07-02", "matchClue": "动态模板匹配", "matchedExpertId": 0,
+            } for account, ticket in (("700001", "1"), ("700002", "2"))]
+            return records, False, []
+
+        with patch.object(service, "_query_mt5", side_effect=fake_mt5):
+            payload = service.payload("700001", {"platform": "MT5", "server": "DBG CN MT5"})
+
+        self.assertEqual(stages, ["exact-comment", "dynamic-template"])
+        self.assertEqual(payload["groups"][0]["comment"], "1/521/{SOURCE_ID}")
+        self.assertFalse(payload["groups"][0]["countedAsEa"])
+
+    def test_ea_payload_does_not_fallback_when_exact_provider_fails(self):
+        source = {
+            "name": "DBG CN MT5", "platform": "MT5", "server": "DBG CN MT5", "kind": "mt5_deals",
+            "schema": "mt5_export_new", "table": "mt5_deals", "host": "dbg",
+        }
+        runtime = SimpleNamespace(
+            MYSQL_SOURCES=[source],
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+            is_ea_trade=lambda _row: False,
+            is_copy_trade=lambda _row: False,
+            source_allowed=lambda _source, platform="", server="": True,
+            query_db_trades=lambda *_args, **_kwargs: [{
+                "platform": "MT5", "server": "DBG CN MT5", "comment": "@14@95002113@19",
+                "expert_id": "19", "volume": 0.1, "profit": 1,
+                "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }],
+            now_text=lambda: "2026-07-24 10:00:00",
+        )
+        service = app.EaCommentGroupService(runtime)
+        with patch.object(service, "_query_mt5", side_effect=RuntimeError("provider unavailable")) as query:
+            payload = service.payload("700001", {"platform": "MT5", "server": "DBG CN MT5"})
+
+        self.assertEqual(query.call_count, 1)
+        self.assertEqual(payload["groups"], [])
+        self.assertIn("provider unavailable", payload["errors"][0])
+
+    def test_ea_unknown_dynamic_format_is_learned_in_local_sqlite(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "ea_patterns.sqlite"
+            runtime = SimpleNamespace(
+                EA_PATTERN_DB_PATH=path,
+                normalize_text=lambda value: str(value or "").strip(),
+                numeric_value=lambda value: float(value or 0),
+                rounded=lambda value, digits=2: round(float(value or 0), digits),
+                mysql_datetime_text=lambda value: str(value or ""),
+                is_ea_trade=lambda _row: True,
+                is_copy_trade=lambda _row: False,
+                now_text=lambda: "2026-07-24 10:00:00",
+            )
+            service = app.EaCommentGroupService(runtime)
+            seeds = service._seed_comments([{
+                "comment": "NovaAlpha_987654321", "expert_id": "77", "volume": 0.1,
+                "profit": 1, "open_time": "2026-07-01", "close_time": "2026-07-02",
+            }])
+            connection = app.sqlite3.connect(path)
+            try:
+                learned = connection.execute(
+                    "select normalized_template, classification, observations from learned_ea_comment_patterns"
+                ).fetchone()
+            finally:
+                connection.close()
+
+        self.assertEqual(seeds[0]["normalizedTemplate"], "NovaAlpha_{ID}")
+        self.assertEqual(learned, ("NovaAlpha_{ID}", "dynamic_ea", 1))
+
+    def test_ea_dynamic_ac_discovery_uses_two_digit_index_shards(self):
+        runtime = SimpleNamespace()
+        service = app.EaCommentGroupService(runtime)
+        patterns = service._dynamic_discovery_patterns({"schema": "sass_crm_ac_mt5_live"}, "@8@")
+
+        self.assertEqual(len(patterns), 110)
+        self.assertIn("@8@00%", patterns)
+        self.assertIn("@8@99%", patterns)
+        self.assertIn("@8@7@%", patterns)
+
+    def test_ea_dynamic_sql_uses_mysql_safe_like_escape(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        runtime = SimpleNamespace(mysql_trade_connect=lambda _source: connection)
+        service = app.EaCommentGroupService(runtime)
+        seed = app.ea_dynamic_identity(app.ea_comment_identity("DCA_GOLD_134567", 77))
+        pattern = service._dynamic_discovery_patterns({"schema": "mt5_export_new"}, seed["stablePrefix"])
+
+        service._query_dynamic_pattern_batch(
+            {"schema": "mt5_export_new", "table": "mt5_deals"}, pattern, seed,
+        )
+
+        sql, parameters = cursor.execute.call_args.args
+        self.assertIn("escape '!'", sql)
+        self.assertEqual(parameters[0], "DCA!_GOLD!_%")
+        self.assertEqual(parameters[1], 77)
+
+    def test_ea_dynamic_numeric_prefix_adaptively_splits_truncated_shard(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [[{}] * 5001, *([[]] * 11)]
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        service = app.EaCommentGroupService(SimpleNamespace(mysql_trade_connect=lambda _source: connection))
+        seed = app.ea_dynamic_identity(app.ea_comment_identity("@8@65123456@7", 7))
+
+        rows, truncated = service._query_dynamic_pattern_batch(
+            {"schema": "sass_crm_ac_mt5_live", "table": "mt5_deals"}, ["@8@65%"], seed,
+        )
+
+        self.assertEqual(rows, [])
+        self.assertEqual(truncated, [])
+        self.assertEqual(cursor.execute.call_count, 12)
+        child_patterns = [call.args[1][0] for call in cursor.execute.call_args_list[1:]]
+        self.assertIn("@8@650%", child_patterns)
+        self.assertIn("@8@65@%", child_patterns)
+
+    def test_ea_dynamic_targets_include_dbg_mt5_live2(self):
+        sources = [
+            {"kind": "mt5_deals", "schema": "sass_crm_ac_mt5_live", "host": "ac", "table": "mt5_deals"},
+            {"kind": "mt5_deals", "schema": "mt5_export_new", "host": "dbg", "table": "mt5_deals"},
+            {"kind": "mt5_deals", "schema": "crm_vn_mt5_live2", "host": "dbg", "table": "mt5_deals"},
+        ]
+        service = app.EaCommentGroupService(SimpleNamespace(MYSQL_SOURCES=sources))
+
+        self.assertEqual(
+            {source["schema"] for source in service._dynamic_target_sources([])},
+            {"sass_crm_ac_mt5_live", "mt5_export_new", "crm_vn_mt5_live2"},
+        )
+
+    def test_ea_group_current_summary_uses_complete_reconstructed_member(self):
+        runtime = SimpleNamespace(
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+        )
+        service = app.EaCommentGroupService(runtime)
+        seed = {
+            "comment": "ExpertID 7 · @8@动态备注", "currentOrders": 1, "currentVolume": 0.1,
+            "currentNetProfit": 10, "firstTime": "2026-07-01", "lastTime": "2026-07-01",
+        }
+        records = [
+            {
+                "account": "2013674", "comment": "ExpertID 7 · @8@动态备注", "ticket": "1", "volume": 0.1,
+                "netProfit": 10, "openTime": "2026-07-01", "closeTime": "2026-07-01",
+            },
+            {
+                "account": "2013674", "comment": "ExpertID 7 · @8@动态备注", "ticket": "2", "volume": 0.2,
+                "netProfit": 20, "openTime": "2026-07-02", "closeTime": "2026-07-02",
+            },
+            {
+                "account": "2010861", "comment": "ExpertID 7 · @8@动态备注", "ticket": "3", "volume": 0.3,
+                "netProfit": -5, "openTime": "2026-07-01", "closeTime": "2026-07-01",
+            },
+        ]
+        source = {"kind": "mt5_deals", "platform": "MT5", "server": "DBG CN MT5"}
+
+        with patch.object(service, "_seed_comments", return_value=[seed]), \
+             patch.object(service, "_query_mt5", return_value=(records, False, [])):
+            group = service.query_source(source, [], "2013674")[0]
+
+        self.assertEqual(group["currentOrders"], 2)
+        self.assertEqual(group["currentVolume"], 0.3)
+        self.assertEqual(group["currentNetProfit"], 30)
 
     def test_ea_comment_totals_list_account_profit_and_costs_separately(self):
         totals = app.ea_comment_totals([
@@ -843,11 +1865,71 @@ class OrderListTests(unittest.TestCase):
     def test_account_detail_ui_exposes_ea_query_next_to_copy_query(self):
         copy_index = app.ACCOUNT_DETAIL_HTML.index('id="copyOriginBtn"')
         ea_index = app.ACCOUNT_DETAIL_HTML.index('id="eaCommentBtn"')
+        relationship_index = app.ACCOUNT_DETAIL_HTML.index('id="relationshipNetworkBtn"')
         toxic_index = app.ACCOUNT_DETAIL_HTML.index('id="toxicBtn"')
         self.assertLess(copy_index, ea_index)
-        self.assertLess(ea_index, toxic_index)
+        self.assertLess(ea_index, relationship_index)
+        self.assertLess(relationship_index, toxic_index)
+        self.assertIn('$("relationshipNetworkBtn").addEventListener(\'click\',openRelationshipNetwork)', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('$("resetRelationshipNetworkBtn").addEventListener(\'click\',resetRelationshipNetwork)', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("点击切换成员", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("network.expanded.has(entity.id)?network.expanded.delete(entity.id):network.expanded.add(entity.id)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('<canvas id="relationshipNetworkGraph"', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationCanvasEdgeLabel", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("edge.typeLabel||edge.label||'关系证据'", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationCanvasContextFor(viewport)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationshipGraph.getContext('2d',{alpha:false,desynchronized:true})", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationWorldViewport", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationEdgeIntersectsViewport", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationEdgeLabelMetric", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("RELATIONSHIP_GRAPH_CACHE_SCALE=3", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationSceneContext(network)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationBuildSceneCache(network)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("context.drawImage(scene", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationDrawDragOverlay", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("network.dragNodeId=hit.entity.id", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationshipGraph.dataset.frameMs", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationshipGraph.dataset.cacheBuildMs", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("window.__kdeskRelationshipPerf=stats", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationScheduleCanvas(network)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("relationHitTest(network,point)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("pending.delta+=event.deltaY", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("Math.exp(-Math.max(-360,Math.min(360,wheel.delta))*0.00075)", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("drag.moved&&Math.hypot(event.clientX-drag.x,event.clientY-drag.y)>=4", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("requestAnimationFrame", app.ACCOUNT_DETAIL_HTML)
+        self.assertNotIn("relationshipNetworkStage", app.ACCOUNT_DETAIL_HTML)
+        self.assertNotIn("relationScheduleComposite", app.ACCOUNT_DETAIL_HTML)
+        self.assertNotIn("relationApplyStageTransform", app.ACCOUNT_DETAIL_HTML)
+        self.assertNotIn("relationDrawBaseGraph", app.ACCOUNT_DETAIL_HTML)
         self.assertIn("/ea-comment-profit", app.ACCOUNT_DETAIL_HTML)
         self.assertIn("相同 Comment 的 EA 账户收益", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("匹配线索", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('id="exportCopyReportBtn"', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('id="exportEaReportBtn"', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("copy-report.xlsx", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn("ea-report.xlsx", app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('class="copy-group-block ea-group-block" open', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn('<summary class="copy-group-head">', app.ACCOUNT_DETAIL_HTML)
+        self.assertIn(".ea-group-block[open] > summary::before", app.ACCOUNT_DETAIL_HTML)
+
+    def test_account_detail_does_not_embed_copy_experiment(self):
+        html = app.ACCOUNT_DETAIL_HTML
+        self.assertNotIn('id="copyExperimentSection"', html)
+        self.assertNotIn("/api/copy-pool/dashboard?timeline_limit=30", html)
+        self.assertNotIn("copyExperimentStatusLabel", html)
+        self.assertNotIn("loadCopyExperiment", html)
+
+    def test_account_detail_caches_automation_and_relationship_results_until_explicit_refresh(self):
+        html = app.ACCOUNT_DETAIL_HTML
+        self.assertIn("dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()}", html)
+        self.assertIn("state.dialogCache.copy.get(cacheKey)", html)
+        self.assertIn("state.dialogCache.copy.set(cacheKey,request)", html)
+        self.assertIn("state.dialogCache.ea.get(cacheKey)", html)
+        self.assertIn("state.dialogCache.ea.set(cacheKey,request)", html)
+        self.assertIn("state.dialogCache.relationship.get(cacheKey)", html)
+        self.assertIn("state.dialogCache.relationship.set(cacheKey,request)", html)
+        self.assertIn("function clearAutomationDialogCache(){state.dialogCache.copy.clear();state.dialogCache.ea.clear();state.dialogCache.relationship.clear();state.relationshipNetwork=null;}", html)
+        self.assertIn("clearAutomationDialogCache();load(true)", html)
 
     def test_signal_group_totals_separates_trade_profit_and_rebate(self):
         rows = [
@@ -1189,6 +2271,33 @@ class ToxicDetectionTests(unittest.TestCase):
         ]
         selected = app.toxic_tick_winning_sample_results(results, {"winning-sample"})
         self.assertEqual([item["_candidateKey"] for item in selected], ["winning-sample"])
+
+    def test_overlapping_tick_windows_are_fetched_once_and_sliced_exactly(self):
+        first = {
+            "ticket": "1", "platform": "MT5", "server": "Live", "symbol": "XAUUSD",
+            "open_time": "2026-07-01 10:00:00",
+        }
+        second = {
+            "ticket": "2", "platform": "MT5", "server": "Live", "symbol": "XAUUSD",
+            "open_time": "2026-07-01 10:01:00",
+        }
+        first_ms = int(app.datetime(2026, 7, 1, 10, 0, tzinfo=app.timezone.utc).timestamp() * 1000)
+        second_ms = int(app.datetime(2026, 7, 1, 10, 1, tzinfo=app.timezone.utc).timestamp() * 1000)
+        ticks = [
+            {"time_msc": first_ms, "bid": 1.0, "ask": 1.1},
+            {"time_msc": second_ms, "bid": 1.2, "ask": 1.3},
+        ]
+        fake_mt5 = SimpleNamespace(COPY_TICKS_ALL=0, copy_ticks_range=MagicMock(return_value=ticks))
+        result = app.toxic_prefetch_tick_windows(fake_mt5, "XAUUSD", [first, second], 0)
+        self.assertEqual(fake_mt5.copy_ticks_range.call_count, 1)
+        self.assertEqual(
+            [item["time_msc"] for item in result[app.toxic_tick_candidate_key(first)]],
+            [first_ms, second_ms],
+        )
+        self.assertEqual(
+            [item["time_msc"] for item in result[app.toxic_tick_candidate_key(second)]],
+            [second_ms],
+        )
 
     def test_mt4_orders_use_explicitly_configured_mt5_terminal_ticks(self):
         opened = "2026-07-01 10:00:00"
@@ -1921,6 +3030,29 @@ class ToxicDetectionTests(unittest.TestCase):
 
     def test_cross_account_sync_math_dependency_is_available(self):
         self.assertEqual(app.math.ceil(2.1), 3)
+
+    def test_cross_account_sources_query_concurrently_and_retain_source_order(self):
+        barrier = app.threading.Barrier(2)
+        sources = [
+            {"name": "First", "server": "First"},
+            {"name": "Second", "server": "Second"},
+        ]
+
+        def load(source, *_args):
+            barrier.wait(timeout=2)
+            return [{"source": source["name"]}]
+
+        with patch.object(app, "toxic_sync_candidates_for_source", side_effect=load):
+            results = app.toxic_sync_candidates_across_sources(
+                sources,
+                "638650",
+                {"2026-07-01 10:00:00"},
+                {"XAUUSD"},
+                {"buy"},
+            )
+        self.assertEqual([item["server"] for item in results], ["First", "Second"])
+        self.assertEqual([item["candidates"][0]["source"] for item in results], ["First", "Second"])
+        self.assertTrue(all(not item["error"] for item in results))
 
     def test_sync_candidate_query_filters_symbol_and_direction_in_sql(self):
         cursor = MagicMock()

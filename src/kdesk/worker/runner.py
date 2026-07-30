@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -10,16 +11,87 @@ import threading
 import time
 from pathlib import Path
 
+from kdesk.application.bonus_arbitrage import BonusArbitrageService
+from kdesk.application.bonus_arbitrage_scan import BonusArbitrageScanService, BonusScanCancelled
+from kdesk.application.hedge_detection import CrossAccountHedgeService
+from kdesk.application.position_risk import PositionRiskService
+from kdesk.application.position_risk_scan import PositionRiskScanCancelled, PositionRiskScanService
+from kdesk.application.rebate_churning_scan import RebateChurningScanService, ScanCancelled
+from kdesk.infrastructure.bonus_arbitrage import LegacyBonusArbitrageRepository
+from kdesk.infrastructure.bonus_arbitrage_scan import LegacyBonusArbitrageScanRepository
 from kdesk.infrastructure.database import Database
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
+from kdesk.infrastructure.position_risk import LegacyPositionRiskRepository
+from kdesk.infrastructure.position_risk_scan import LegacyPositionRiskScanRepository
+from kdesk.infrastructure.rebate_churning import LegacyRebateRepository
 from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
+
+PUSH_FAILURE_STAGES = {
+    "aggregate": ("候选聚合", "该服务器未能进入本轮候选筛选"),
+    "load_rows": ("初筛订单读取", "该服务器的候选账号未能完成结构初筛"),
+    "screen": ("结构初筛", "该账号未能进入深检排序"),
+    "deep": ("深度检测", "该账号没有生成深检结果"),
+    "result": ("结果整理", "本次失败明细可能不完整"),
+}
+
+
+def normalize_push_failure(item: dict) -> dict:
+    stage = str(item.get("stage") or "result")
+    stage_label, impact = PUSH_FAILURE_STAGES.get(stage, ("检测过程", "该项没有生成检测结果"))
+    detail = str(item.get("error") or "").strip()
+    lower_detail = detail.lower()
+    attempts = max(int(item.get("attempts") or 1), 1)
+    if "账号全历史没有可检测订单" in detail:
+        reason = "当前服务器归属下没有可用于深检的已平仓订单"
+    elif "lost connection" in lower_detail or "timed out" in lower_detail or "查询超时" in detail:
+        reason = "数据库查询超时或连接中断"
+        if attempts > 1:
+            reason += "，重试后仍未恢复"
+    elif "access denied" in lower_detail:
+        reason = "数据库账号没有所需的只读权限"
+    elif detail:
+        reason = detail
+    else:
+        reason = "未记录具体异常原因"
+    return {
+        "stage": stage,
+        "stageLabel": stage_label,
+        "source": str(item.get("source") or ""),
+        "platform": str(item.get("platform") or ""),
+        "server": str(item.get("server") or ""),
+        "account": str(item.get("login") or item.get("account") or ""),
+        "reason": reason,
+        "detail": detail,
+        "impact": impact,
+        "attempts": attempts,
+    }
+
+
+def load_push_failures(path: Path, expected_total: int = 0) -> tuple[list[dict], dict[str, int]]:
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, list):
+                raise ValueError("失败明细不是列表")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raw = [{"stage": "result", "error": f"失败明细文件无法读取：{exc}"}]
+    elif expected_total > 0:
+        raw = [{"stage": "result", "error": "扫描报告记录了失败，但失败明细文件不存在"}]
+    else:
+        raw = []
+    failures = [normalize_push_failure(item) for item in raw if isinstance(item, dict)]
+    summary: dict[str, int] = {}
+    for item in failures:
+        label = item["stageLabel"]
+        summary[label] = summary.get(label, 0) + 1
+    return failures, summary
 
 
 class Worker:
     QUEUE_KINDS = {
         "interactive": ("kline_inspect", "kline_generate", "kline_from_database", "toxic_check"),
-        "discovery": ("push_discovery",),
+        "discovery": ("push_discovery", "rebate_churning_scan", "bonus_arbitrage_scan", "position_risk_scan"),
     }
 
     def __init__(self, settings: Settings, *, queue: str = "all"):
@@ -52,8 +124,26 @@ class Worker:
         output: list[str] = []
         started = time.monotonic()
         assert process.stdout is not None
+        output_queue: queue.Queue[str | None] = queue.Queue()
+
+        def read_output() -> None:
+            try:
+                for line in process.stdout:
+                    output_queue.put(line)
+            finally:
+                output_queue.put(None)
+
+        reader = threading.Thread(target=read_output, name=f"job-output-{job_id}", daemon=True)
+        reader.start()
+        output_finished = False
         while True:
-            line = process.stdout.readline()
+            try:
+                line = output_queue.get(timeout=0.25)
+            except queue.Empty:
+                line = ""
+            if line is None:
+                output_finished = True
+                line = ""
             if line:
                 output.append(line)
                 event_message = line.rstrip()
@@ -66,16 +156,19 @@ class Worker:
                     except (TypeError, ValueError, json.JSONDecodeError):
                         progress = None
                 self.database.update_job(job_id, progress=progress, event_message=event_message)
-            if process.poll() is not None:
-                output.extend(process.stdout.readlines())
+            if process.poll() is not None and output_finished:
                 break
             current = self.database.get_job(job_id)
             if current and current.get("cancel_requested"):
                 process.kill()
+                process.wait(timeout=5)
+                reader.join(timeout=1)
                 self.database.update_job(job_id, status="cancelled", event_message="运行中的任务已取消")
                 raise RuntimeError("任务已取消")
             if time.monotonic() - started > timeout:
                 process.kill()
+                process.wait(timeout=5)
+                reader.join(timeout=1)
                 raise TimeoutError(f"任务运行超过 {timeout} 秒")
         if process.returncode != 0:
             raise RuntimeError("".join(output)[-8000:] or f"process exited with {process.returncode}")
@@ -88,6 +181,13 @@ class Worker:
         if start < 0 or end < start:
             raise ValueError("生成器未返回 JSON")
         return json.loads(output[start : end + 1])
+
+    @staticmethod
+    def _parse_kline_result(output: str) -> dict:
+        for line in reversed(output.splitlines()):
+            if line.startswith("KLINE_RESULT "):
+                return json.loads(line[len("KLINE_RESULT ") :])
+        return {}
 
     def _kline_inspect(self, job: dict) -> dict:
         statement = Path(job["payload"]["statement"])
@@ -109,9 +209,20 @@ class Worker:
         if payload.get("end"):
             command.extend(["--end", payload["end"]])
         output = self._run_process(job["id"], command)
+        generation = self._parse_kline_result(output)
         matches = re.findall(r"[A-Za-z]:\\[^\r\n]+?_trade_kline\.html", output)
         html_path = matches[-1].strip() if matches else ""
-        return {"html_path": html_path, "html_url": f"/output/{Path(html_path).name}" if html_path else "", "output": output[-4000:]}
+        if not html_path or not generation.get("symbols"):
+            self.database.update_job(job["id"], result=generation)
+            details = generation.get("failures") or []
+            reason = details[0].get("reason") if details else generation.get("message")
+            raise RuntimeError(reason or "全部品种报价校验失败")
+        return {
+            "html_path": html_path,
+            "html_url": f"/output/{Path(html_path).name}" if html_path else "",
+            "output": output[-4000:],
+            **generation,
+        }
 
     def _kline_from_database(self, job: dict) -> dict:
         payload = job["payload"]
@@ -124,6 +235,7 @@ class Worker:
         )
         result = legacy.get_kline_job(job["id"])
         if result.get("status") != "done":
+            self.database.update_job(job["id"], result=result)
             raise RuntimeError(result.get("message") or "K线生成失败")
         return result
 
@@ -141,6 +253,97 @@ class Worker:
         result = legacy.get_toxic_job(job["id"])
         if result.get("status") != "done":
             raise RuntimeError(result.get("message") or "Toxic 检测失败")
+        selected = set(type_ids) if mode == "selected" else {str(item.get("id")) for item in getattr(legacy, "TOXIC_CHECK_TYPES", [])}
+        if "bonus_arbitrage" in selected:
+            self.database.update_job(job["id"], progress=94, event_message="正在复核历史赠金、提款与关联账户资金周期")
+            try:
+                bonus_result = BonusArbitrageService(LegacyBonusArbitrageRepository(self.legacy)).analyze(
+                    str(payload["account"]), filters, stage="initial" if mode == "screen" else "deep",
+                )
+            except Exception as exc:
+                bonus_result = {
+                    "type": "bonus_arbitrage", "label": "赠金套利", "score": 0.0,
+                    "level": "证据不可用", "stage": "initial" if mode == "screen" else "deep",
+                    "confidence": 0, "summary": "历史赠金资金周期读取失败",
+                    "metrics": [], "triggeredRules": [], "evidenceOrders": [], "evidence": {"cycles": []},
+                    "limitations": [str(exc)], "requiresTick": False, "analysis": [],
+                }
+            payload_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+            rows = payload_result.get("results") if isinstance(payload_result.get("results"), list) else []
+            rows = [row for row in rows if row.get("type") != "bonus_arbitrage"]
+            rows.append(bonus_result)
+            rows.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("label") or "")))
+            payload_result["results"] = rows
+            payload_result["bonusArbitrage"] = bonus_result.get("evidence") or {}
+            result["result"] = payload_result
+        position_types = sorted(selected & {"weekend_gap_trading", "open_betting"})
+        if position_types:
+            self.database.update_job(job["id"], progress=96, event_message="正在按历史权益、杠杆和持仓敞口复核特殊时点")
+            try:
+                position_analysis = PositionRiskService(LegacyPositionRiskRepository(self.legacy)).analyze(
+                    str(payload["account"]), filters,
+                    stage="initial" if mode == "screen" else "deep",
+                    type_ids=position_types,
+                )
+                position_results = position_analysis.get("results") or []
+            except Exception as exc:
+                position_analysis = {"events": []}
+                position_results = [
+                    {
+                        "type": type_id,
+                        "label": "周末跳空交易" if type_id == "weekend_gap_trading" else "赌开盘",
+                        "score": 0.0,
+                        "level": "证据不可用",
+                        "stage": "initial" if mode == "screen" else "deep",
+                        "confidence": 0,
+                        "summary": "历史权益、杠杆或持仓敞口读取失败",
+                        "metrics": [],
+                        "triggeredRules": [],
+                        "evidenceOrders": [],
+                        "limitations": [str(exc)],
+                        "requiresTick": False,
+                        "analysis": [],
+                        "evidence": {"events": []},
+                    }
+                    for type_id in position_types
+                ]
+            payload_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+            rows = payload_result.get("results") if isinstance(payload_result.get("results"), list) else []
+            rows = [row for row in rows if row.get("type") not in set(position_types)]
+            rows.extend(position_results)
+            rows.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("label") or "")))
+            payload_result["results"] = rows
+            payload_result["positionRisk"] = {
+                "events": position_analysis.get("events") or [],
+                "source": position_analysis.get("source") or {},
+            }
+            result["result"] = payload_result
+        if "internal_lock_arbitrage" in selected:
+            self.database.update_job(job["id"], progress=97, event_message="正在查询全平台反向同步开平仓订单")
+            try:
+                hedge_analysis = CrossAccountHedgeService(LegacyPositionRiskRepository(self.legacy)).analyze(
+                    str(payload["account"]), filters,
+                    stage="initial" if mode == "screen" else "deep",
+                )
+                hedge_result = hedge_analysis["result"]
+            except Exception as exc:
+                hedge_analysis = {"evidence": {}}
+                hedge_result = {
+                    "type": "internal_lock_arbitrage", "label": "平台内多账户对锁", "score": 0.0,
+                    "level": "证据不可用", "stage": "initial" if mode == "screen" else "deep",
+                    "confidence": 0, "summary": "跨账户反向同步开平仓查询失败",
+                    "metrics": [], "triggeredRules": [], "evidenceOrders": [],
+                    "limitations": [str(exc)], "requiresTick": False, "analysis": [],
+                    "evidence": {"hedgeQuery": {}},
+                }
+            payload_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+            rows = payload_result.get("results") if isinstance(payload_result.get("results"), list) else []
+            rows = [row for row in rows if row.get("type") != "internal_lock_arbitrage"]
+            rows.append(hedge_result)
+            rows.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("label") or "")))
+            payload_result["results"] = rows
+            payload_result["internalLock"] = hedge_analysis.get("evidence") or {}
+            result["result"] = payload_result
         return result
 
     def _run_legacy_monitored(self, job: dict, target, snapshot) -> None:
@@ -214,9 +417,16 @@ class Worker:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         deep_path = summary_path.parent / "deep_results.json"
         deep_results = json.loads(deep_path.read_text(encoding="utf-8")) if deep_path.is_file() else []
+        failures, failure_summary = load_push_failures(
+            summary_path.parent / "failures.json",
+            int(summary.get("failures") or 0),
+        )
         results = []
         for item in deep_results[:200]:
             suspected = item.get("suspectedPushIntervals") or {}
+            economic = item.get("economicEvidence") or {}
+            if economic and not economic.get("qualified"):
+                continue
             results.append({
                 "deepRank": int(item.get("deepRank") or 0),
                 "platform": str(item.get("platform") or ""),
@@ -243,6 +453,12 @@ class Worker:
                 "suspectedIntervalCosts": float(suspected.get("costs") or 0),
                 "suspectedIntervalBasis": str(suspected.get("basis") or "none"),
                 "suspectedIntervalConfirmed": bool(suspected.get("confirmed")),
+                "suspectedIntervalReturnPct": (
+                    float(economic["intervalReturnPct"])
+                    if economic.get("intervalReturnPct") is not None else None
+                ),
+                "economicQualified": bool(economic.get("qualified", True)),
+                "economicReason": str(economic.get("reason") or ""),
                 "initialScore": float(item.get("initialScore") or 0),
                 "deepScore": float(item.get("deepScore") or 0),
                 "level": str(item.get("deepLevel") or ""),
@@ -253,7 +469,83 @@ class Worker:
                 "routeReasons": list(item.get("routeReasons") or []),
                 "suspectedAccomplices": list(item.get("suspectedAccomplices") or []),
             })
-        return {"summary": summary, "results": results, "outputDir": str(summary_path.parent)}
+        return {
+            "summary": summary,
+            "results": results,
+            "failureTotal": len(failures),
+            "failureSummary": failure_summary,
+            "failures": failures,
+            "outputDir": str(summary_path.parent),
+        }
+
+    def _rebate_churning_scan(self, job: dict) -> dict:
+        service = RebateChurningScanService(LegacyRebateRepository(self.legacy))
+
+        def progress(percent: int, message: str) -> None:
+            self.database.update_job(job["id"], progress=percent, event_message=message)
+
+        def cancelled() -> bool:
+            current = self.database.get_job(job["id"])
+            if current and current.get("cancel_requested"):
+                self.database.update_job(job["id"], status="cancelled", event_message="任务已取消")
+                return True
+            return False
+
+        try:
+            return service.run(job["payload"], progress=progress, cancelled=cancelled)
+        except ScanCancelled:
+            raise RuntimeError("任务已取消") from None
+
+    def _bonus_arbitrage_scan(self, job: dict) -> dict:
+        service = BonusArbitrageScanService(LegacyBonusArbitrageScanRepository(self.legacy))
+
+        def progress(percent: int, message: str) -> None:
+            self.database.update_job(job["id"], progress=percent, event_message=message)
+
+        def cancelled() -> bool:
+            current = self.database.get_job(job["id"])
+            if current and current.get("cancel_requested"):
+                self.database.update_job(job["id"], status="cancelled", event_message="任务已取消")
+                return True
+            return False
+
+        handled = {
+            str(record.account)
+            for record in self.database.list_accounts()
+            if str(record.action).strip().upper() in {"T", "TA", "A", "A/TA"}
+        }
+        try:
+            return service.run(
+                job["payload"],
+                progress=progress,
+                cancelled=cancelled,
+                handled_logins=handled,
+            )
+        except BonusScanCancelled:
+            raise RuntimeError("任务已取消") from None
+
+    def _position_risk_scan(self, job: dict) -> dict:
+        service = PositionRiskScanService(LegacyPositionRiskScanRepository(self.legacy))
+
+        def progress(percent: int, message: str) -> None:
+            self.database.update_job(job["id"], progress=percent, event_message=message)
+
+        def cancelled() -> bool:
+            current = self.database.get_job(job["id"])
+            if current and current.get("cancel_requested"):
+                self.database.update_job(job["id"], status="cancelled", event_message="任务已取消")
+                return True
+            return False
+
+        handled = {
+            str(record.account)
+            for record in self.database.list_accounts()
+            if str(record.action).strip().upper() in {"T", "TA", "A", "A/TA"}
+        }
+        try:
+            return service.run(job["payload"], progress=progress, cancelled=cancelled, handled_logins=handled)
+        except PositionRiskScanCancelled:
+            raise RuntimeError("任务已取消") from None
 
     def process(self, job: dict) -> None:
         handlers = {
@@ -262,6 +554,9 @@ class Worker:
             "kline_from_database": self._kline_from_database,
             "toxic_check": self._toxic_check,
             "push_discovery": self._push_discovery,
+            "rebate_churning_scan": self._rebate_churning_scan,
+            "bonus_arbitrage_scan": self._bonus_arbitrage_scan,
+            "position_risk_scan": self._position_risk_scan,
         }
         handler = handlers.get(job["kind"])
         if handler is None:

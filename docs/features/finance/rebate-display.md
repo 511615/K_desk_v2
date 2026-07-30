@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/app.py", "legacy/apps/problem_accou
 tests: ["legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-17
+last_verified_date: 2026-07-23
 ---
 
 # Rebate aggregation and display
@@ -31,10 +31,12 @@ Existing `rebate` fields remain numeric display-currency values.
 
 Read `rebate_task_detail` only from the CRM route matching the logical server. Shared trading
 schemas do not justify summing unrelated CRM routes.
+DBG MT5 Live2 rebates therefore use `crm_vn` code 5 only; DBG GB MT5 continues to use code 2.
 
 ## Business rules and units
 
-Aggregate hierarchy rows before joining. USC rebate values use confirmed display scaling.
+Aggregate hierarchy rows before joining. CRM `rebate_task_detail.rebate_amount` is summed unchanged;
+`usd_or_usc` is retained as source metadata and never scales the CRM rebate amount.
 
 ## Loading, empty and failure behavior
 

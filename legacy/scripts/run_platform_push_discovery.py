@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,6 +31,31 @@ MT4_COLUMNS = """
     TICKET, LOGIN, CMD, SYMBOL, VOLUME, OPEN_TIME, OPEN_PRICE, CLOSE_TIME,
     CLOSE_PRICE, COMMISSION, TAXES, SWAPS, PROFIT, SL, TP, REASON, MAGIC, COMMENT
 """
+MT5_CANDIDATE_SHARD = timedelta(hours=12)
+MT4_CANDIDATE_SHARD = timedelta(days=1)
+MIN_CANDIDATE_SHARD = timedelta(minutes=30)
+AGGREGATE_READ_TIMEOUT = 45
+PROFILE_BATCH_SIZE = 10
+MIN_PROFILE_BATCH_SIZE = 5
+PROFILE_READ_TIMEOUT = 45
+PROFILE_SEMAPHORES: dict[str, threading.Semaphore] = {}
+PROFILE_SEMAPHORES_LOCK = threading.Lock()
+CANDIDATE_ROW_BATCH_SIZE = 50
+MIN_CANDIDATE_ROW_BATCH_SIZE = 5
+TIME_FIRST_LOGIN_BATCH_SIZE = 2000
+MT5_TIME_INDEX_BY_SCHEMA = {
+    "mt5_export_new": "INDEX_TIME",
+    "crm_vn_mt5_live2": "INDEX_TIME",
+}
+MT5_POSITION_INDEX_BY_SCHEMA = {
+    "mt5_export_new": "INDEX_POSITIONID",
+    "crm_vn_mt5_live2": "INDEX_POSITIONID",
+}
+SCREEN_PROCESS_BATCH_SIZE = 125
+MAX_SCREEN_PROCESSES = 2
+MIN_SUSPECTED_INTERVAL_NET = 50.0
+MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET = 100.0
+MIN_SUSPECTED_INTERVAL_RETURN_PCT = 10.0
 
 
 @dataclass(frozen=True)
@@ -124,6 +151,23 @@ def _batches(values: list[int], size: int = 200):
         yield values[offset:offset + size]
 
 
+def _profile_semaphore(source: dict) -> threading.Semaphore:
+    key = app.normalize_text(source.get("host")) or app.normalize_text(source.get("name")) or "default"
+    with PROFILE_SEMAPHORES_LOCK:
+        return PROFILE_SEMAPHORES.setdefault(key, threading.Semaphore(1))
+
+
+def _candidate_time_shards(source: dict, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    width = MT5_CANDIDATE_SHARD if source.get("kind") == "mt5_deals" else MT4_CANDIDATE_SHARD
+    shards: list[tuple[datetime, datetime]] = []
+    cursor = start
+    while cursor < end:
+        shard_end = min(cursor + width, end)
+        shards.append((cursor, shard_end))
+        cursor = shard_end
+    return shards
+
+
 def _source_routed_logins(source: dict, cur, logins: list[int]) -> set[int]:
     """Keep only accounts assigned to this CRM/server route.
 
@@ -161,73 +205,58 @@ def _candidate_profiles(
     logins: list[int],
     filters: CandidateFilters,
     as_of: datetime,
+    progress: Callable[[int, int], None] | None = None,
+    batch_size: int = PROFILE_BATCH_SIZE,
 ) -> dict[int, dict]:
     profiles: dict[int, dict] = {login: {} for login in logins}
     needs_money = filters.require_total_profit or filters.limit_deposit
     needs_lifetime = needs_money or filters.limit_active_ratio
+    effective_batch_size = batch_size if needs_lifetime else 500
+    batches = list(_batches(logins, effective_batch_size))
 
-    for batch in _batches(logins):
+    for batch_index, batch in enumerate(batches, start=1):
         placeholders = ",".join(["%s"] * len(batch))
         if source.get("kind") == "mt5_deals":
             cur.execute(
-                f"select Login, Registration, Status, `Group` as AccountGroup "
+                f"select Login, Registration, Status, `Group` as AccountGroup, Balance "
                 f"from `{source['schema']}`.`mt5_users_view` where Login in ({placeholders})",
                 batch,
             )
         else:
             cur.execute(
                 f"select LOGIN as Login, REGDATE as Registration, STATUS as Status, "
-                f"CURRENCY as Currency, `GROUP` as AccountGroup "
+                f"CURRENCY as Currency, `GROUP` as AccountGroup, BALANCE as Balance "
                 f"from `{source['schema']}`.`mt4_users_view` where LOGIN in ({placeholders})",
                 batch,
             )
         for row in cur.fetchall():
             profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
 
-        if source.get("kind") == "mt5_deals" and needs_money:
+        if not needs_lifetime:
+            if progress:
+                progress(batch_index, len(batches))
+            continue
+        if needs_money and source.get("kind") == "mt5_deals":
             cur.execute(
                 f"""
-                select daily.Login, daily.Currency, daily.`Group` as AccountGroup
-                from `{source['schema']}`.`mt5_daily_view` daily
-                inner join (
-                    select Login, max(Datetime) as LatestDatetime
-                    from `{source['schema']}`.`mt5_daily_view`
-                    where Login in ({placeholders})
-                    group by Login
-                ) latest on latest.Login = daily.Login and latest.LatestDatetime = daily.Datetime
+                select Login,
+                       sum(coalesce(Profit,0)+coalesce(Commission,0)+coalesce(Storage,0)+coalesce(Fee,0))
+                           as LedgerNetRaw,
+                       sum(case when Action=2 and Profit>0 and upper(coalesce(Comment,'')) like 'DEP-%%'
+                           then Profit else 0 end) as DepositRaw
+                from `{source['schema']}`.`{source['table']}`
+                where Login in ({placeholders}) and Action >= 2
+                group by Login
                 """,
                 batch,
             )
             for row in cur.fetchall():
                 profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
-
-        if not needs_lifetime:
-            continue
-        if source.get("kind") == "mt5_deals":
+        elif needs_money:
             cur.execute(
                 f"""
-                select Login,
-                       sum(case when Action in (0,1)
-                           then coalesce(Profit,0)+coalesce(Commission,0)+coalesce(Storage,0)+coalesce(Fee,0)
-                           else 0 end) as TotalNetRaw,
-                       sum(case when Action=2 and Profit>0 and upper(coalesce(Comment,'')) like 'DEP-%%'
-                           then Profit else 0 end) as DepositRaw,
-                       count(distinct case when Action in (0,1) and Entry=0 and PositionID<>0
-                           then date(Time) end) as ActiveDays
-                from `{source['schema']}`.`{source['table']}`
-                where Login in ({placeholders}) and Action in (0,1,2)
-                group by Login
-                """,
-                batch,
-            )
-        else:
-            cur.execute(
-                f"""
-                select LOGIN as Login,
-                       sum(case when CMD in (0,1) and CLOSE_TIME>'1971-01-01'
-                           then coalesce(PROFIT,0)+coalesce(COMMISSION,0)+coalesce(SWAPS,0)+coalesce(TAXES,0)
-                           else 0 end) as TotalNetRaw,
-                       sum(case when CMD=6 and PROFIT>0
+                select LOGIN as Login, sum(coalesce(PROFIT,0)) as LedgerNetRaw,
+                       sum(case when PROFIT>0
                                 and upper(coalesce(COMMENT,'')) not like '%%RST-%%'
                                 and upper(coalesce(COMMENT,'')) not like '%%NEGATIVE BALANCE%%'
                                 and upper(coalesce(COMMENT,'')) not like '%%ZERO BALANCE%%'
@@ -237,16 +266,42 @@ def _candidate_profiles(
                                 and upper(coalesce(COMMENT,'')) not like 'TFM-%%'
                                 and upper(coalesce(COMMENT,'')) not like 'TFH-%%'
                                 and upper(coalesce(COMMENT,'')) not like '%%INTERNAL TRANSFER%%'
-                           then PROFIT else 0 end) as DepositRaw,
-                       count(distinct case when CMD in (0,1) then date(OPEN_TIME) end) as ActiveDays
+                           then PROFIT else 0 end) as DepositRaw
                 from `{source['schema']}`.`{source['table']}`
-                where LOGIN in ({placeholders}) and CMD in (0,1,6)
+                where LOGIN in ({placeholders}) and CMD=6
                 group by LOGIN
                 """,
                 batch,
             )
-        for row in cur.fetchall():
-            profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
+            for row in cur.fetchall():
+                profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
+
+        if filters.limit_active_ratio and source.get("kind") == "mt5_deals":
+            cur.execute(
+                f"""
+                select Login, count(distinct date(Time)) as ActiveDays
+                from `{source['schema']}`.`{source['table']}`
+                where Login in ({placeholders}) and Action in (0,1) and Entry=0 and PositionID<>0
+                group by Login
+                """,
+                batch,
+            )
+            for row in cur.fetchall():
+                profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
+        elif filters.limit_active_ratio:
+            cur.execute(
+                f"""
+                select LOGIN as Login, count(distinct date(OPEN_TIME)) as ActiveDays
+                from `{source['schema']}`.`{source['table']}`
+                where LOGIN in ({placeholders}) and CMD in (0,1)
+                group by LOGIN
+                """,
+                batch,
+            )
+            for row in cur.fetchall():
+                profiles.setdefault(app.mysql_int(row.get("Login")), {}).update(row)
+        if progress:
+            progress(batch_index, len(batches))
 
     for profile in profiles.values():
         money_meta = app.account_money_meta(
@@ -256,6 +311,10 @@ def _candidate_profiles(
         registration = app.parse_trade_time(profile.get("Registration"))
         registration_days = max((as_of.date() - registration.date()).days + 1, 1) if registration else 0
         active_days = app.mysql_int(profile.get("ActiveDays"))
+        if needs_money and "Balance" in profile:
+            profile["TotalNetRaw"] = (
+                app.numeric_value(profile.get("Balance")) - app.numeric_value(profile.get("LedgerNetRaw"))
+            )
         profile.update({
             "Currency": money_meta.get("displayCurrency") or money_meta.get("currency") or "",
             "MoneyScale": scale,
@@ -270,19 +329,68 @@ def _candidate_profiles(
     return profiles
 
 
-def candidate_filter_reasons(candidate: dict, filters: CandidateFilters) -> list[str]:
+def _load_candidate_profiles(
+    source: dict,
+    logins: list[int],
+    filters: CandidateFilters,
+    as_of: datetime,
+    status: Callable[[str], None] | None = None,
+) -> dict[int, dict]:
+    batch_size = PROFILE_BATCH_SIZE
+    while True:
+        display_batch_size = (
+            batch_size
+            if filters.require_total_profit or filters.limit_deposit or filters.limit_active_ratio
+            else 500
+        )
+        query_source = {
+            **source,
+            "read_timeout": min(
+                max(app.mysql_int(source.get("read_timeout"), PROFILE_READ_TIMEOUT), 1),
+                PROFILE_READ_TIMEOUT,
+            ),
+        }
+        try:
+            with app.mysql_trade_connect(query_source) as conn:
+                with conn.cursor() as cur:
+                    return _candidate_profiles(
+                        source,
+                        cur,
+                        logins,
+                        filters,
+                        as_of,
+                        progress=(
+                            (lambda index, total, size=display_batch_size: status(
+                                f"{source['name']}资料读取 {index}/{total} 批（每批{size}账号）"
+                            )) if status else None
+                        ),
+                        batch_size=batch_size,
+                    )
+        except Exception as exc:
+            if not transient_mysql_failure(exc) or batch_size <= MIN_PROFILE_BATCH_SIZE:
+                raise
+            batch_size = max(batch_size // 2, MIN_PROFILE_BATCH_SIZE)
+            if status:
+                status(f"{source['name']}历史收益批次超时，缩小为每批{batch_size}账号重试")
+
+
+def candidate_filter_reasons(
+    candidate: dict,
+    filters: CandidateFilters,
+    include_lifetime: bool = True,
+) -> list[str]:
     reasons: list[str] = []
-    if filters.require_total_profit and (
+    if include_lifetime and filters.require_total_profit and (
         not candidate.get("lifetimeDataAvailable") or app.numeric_value(candidate.get("totalNet")) <= 0
     ):
         reasons.append("历史交易净收益未大于0")
-    if filters.limit_deposit and (
+    if include_lifetime and filters.limit_deposit and (
         not candidate.get("lifetimeDataAvailable")
         or app.numeric_value(candidate.get("depositTotal")) > filters.max_deposit
     ):
         reasons.append("累计入金超过上限或不可用")
     active_ratio = candidate.get("activeRatio")
-    if filters.limit_active_ratio and (
+    if include_lifetime and filters.limit_active_ratio and (
         active_ratio is None or app.numeric_value(active_ratio) > filters.max_active_ratio
     ):
         reasons.append("活跃天数占比超过上限或不可用")
@@ -291,25 +399,31 @@ def candidate_filter_reasons(candidate: dict, filters: CandidateFilters) -> list
     return reasons
 
 
-def source_candidates(
-    source: dict,
-    start: datetime,
-    end: datetime,
-    filters: CandidateFilters,
-) -> list[dict]:
-    having = ["ClosedOrders >= 1"]
-    parameters: list[object] = [start, end]
-    if filters.limit_orders:
-        having.append("ClosedOrders <= %s")
-        parameters.append(filters.max_orders)
-    if filters.require_max_lot:
-        having.append("MaxLot > %s")
-        parameters.append(filters.min_max_lot)
-    if filters.require_period_profit:
-        having.append("PeriodNetRaw > 0")
-    having_sql = " and ".join(having)
+def push_lifetime_economic_reasons(candidate: dict) -> list[str]:
+    if not candidate.get("lifetimeDataAvailable"):
+        return ["全历史净收益不可用"]
+    if app.numeric_value(candidate.get("totalNet")) <= 0:
+        return ["全历史交易净收益未形成正向经济结果"]
+    return []
+
+
+def _candidate_profile_payload(profile: dict) -> dict:
+    return {
+        "currency": profile.get("Currency", ""),
+        "databaseStatus": app.normalize_text(profile.get("Status")),
+        "registration": profile.get("RegistrationText", ""),
+        "registrationDays": app.mysql_int(profile.get("RegistrationDays")),
+        "activeDays": app.mysql_int(profile.get("ActiveDays")),
+        "activeRatio": profile.get("ActiveRatio"),
+        "totalNet": app.rounded(profile.get("TotalNet")),
+        "depositTotal": app.rounded(profile.get("DepositTotal")),
+        "lifetimeDataAvailable": bool(profile.get("LifetimeDataAvailable")),
+    }
+
+
+def _candidate_interval_sql(source: dict) -> str:
     if source.get("kind") == "mt5_deals":
-        sql = f"""
+        return f"""
             select Login,
                    count(distinct case when Entry in (1, 2, 3) and PositionID <> 0 then PositionID end) as ClosedOrders,
                    max(case when coalesce(VolumeExt, 0) > 0 then VolumeExt / 100000000.0 else Volume / 10000.0 end) as MaxLot,
@@ -317,27 +431,183 @@ def source_candidates(
             from `{source['schema']}`.`{source['table']}`
             where Action in (0, 1) and Time >= %s and Time < %s
             group by Login
-            having {having_sql}
         """
-    else:
-        sql = f"""
-            select LOGIN as Login, count(*) as ClosedOrders, max(VOLUME / 100.0) as MaxLot,
-                   sum(coalesce(PROFIT, 0) + coalesce(COMMISSION, 0) + coalesce(SWAPS, 0) + coalesce(TAXES, 0)) as PeriodNetRaw
+    return f"""
+        select LOGIN as Login, count(*) as ClosedOrders, max(VOLUME / 100.0) as MaxLot,
+               sum(coalesce(PROFIT, 0) + coalesce(COMMISSION, 0) + coalesce(SWAPS, 0) + coalesce(TAXES, 0)) as PeriodNetRaw
+        from `{source['schema']}`.`{source['table']}`
+        where CMD in (0, 1) and CLOSE_TIME >= %s and CLOSE_TIME < %s
+        group by LOGIN
+        having ClosedOrders >= 1
+    """
+
+
+def _query_candidate_interval(
+    source: dict,
+    start: datetime,
+    end: datetime,
+    status: Callable[[str], None] | None = None,
+) -> list[dict]:
+    query_source = {
+        **source,
+        "read_timeout": min(
+            max(app.mysql_int(source.get("read_timeout"), AGGREGATE_READ_TIMEOUT), 1),
+            AGGREGATE_READ_TIMEOUT,
+        ),
+    }
+    try:
+        with app.mysql_trade_connect(query_source) as conn:
+            with conn.cursor() as cur:
+                cur.execute(_candidate_interval_sql(source), [start, end])
+                return list(cur.fetchall())
+    except Exception as exc:
+        if not transient_mysql_failure(exc) or end - start <= MIN_CANDIDATE_SHARD:
+            raise
+        midpoint = start + (end - start) / 2
+        if status:
+            status(
+                f"{source['name']} {start:%m-%d %H:%M}~{end:%m-%d %H:%M}超时，"
+                f"拆为{(midpoint - start).total_seconds() / 3600:g}小时重试"
+            )
+        return [
+            *_query_candidate_interval(source, start, midpoint, status),
+            *_query_candidate_interval(source, midpoint, end, status),
+        ]
+
+
+def _merge_candidate_rows(rows: list[dict]) -> list[dict]:
+    merged: dict[int, dict] = {}
+    for row in rows:
+        login = app.mysql_int(row.get("Login"))
+        if login <= 0:
+            continue
+        target = merged.setdefault(login, {
+            "Login": login,
+            "ClosedOrders": 0,
+            "MaxShardClosedOrders": 0,
+            "MaxLot": 0.0,
+            "PeriodNetRaw": 0.0,
+        })
+        shard_orders = app.mysql_int(row.get("ClosedOrders"))
+        target["ClosedOrders"] += shard_orders
+        target["MaxShardClosedOrders"] = max(target["MaxShardClosedOrders"], shard_orders)
+        target["MaxLot"] = max(app.numeric_value(target.get("MaxLot")), app.numeric_value(row.get("MaxLot")))
+        target["PeriodNetRaw"] += app.numeric_value(row.get("PeriodNetRaw"))
+    return list(merged.values())
+
+
+def _window_candidate_rows(
+    source: dict,
+    start: datetime,
+    end: datetime,
+    shard_complete: Callable[[int, int], None] | None = None,
+    status: Callable[[str], None] | None = None,
+) -> list[dict]:
+    shards = _candidate_time_shards(source, start, end)
+    rows: list[dict] = []
+    for index, (shard_start, shard_end) in enumerate(shards, start=1):
+        rows.extend(_query_candidate_interval(source, shard_start, shard_end, status))
+        if shard_complete:
+            shard_complete(index, len(shards))
+    return _merge_candidate_rows(rows)
+
+
+def _exact_mt5_closed_orders(
+    source: dict,
+    cur,
+    logins: list[int],
+    start: datetime,
+    end: datetime,
+) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for batch in _batches(logins, 100):
+        placeholders = ",".join(["%s"] * len(batch))
+        cur.execute(
+            f"""
+            select Login, count(distinct PositionID) as ClosedOrders
             from `{source['schema']}`.`{source['table']}`
-            where CMD in (0, 1) and CLOSE_TIME >= %s and CLOSE_TIME < %s
-            group by LOGIN
-            having {having_sql}
-        """
+            where Login in ({placeholders}) and Action in (0,1) and Entry in (1,2,3)
+              and Time >= %s and Time < %s and PositionID <> 0
+            group by Login
+            """,
+            [*batch, start, end],
+        )
+        counts.update({
+            app.mysql_int(row.get("Login")): app.mysql_int(row.get("ClosedOrders"))
+            for row in cur.fetchall()
+            if app.mysql_int(row.get("Login")) > 0
+        })
+    return counts
+
+
+def _passes_merged_window_filters(row: dict, source: dict, filters: CandidateFilters) -> bool:
+    if app.mysql_int(row.get("ClosedOrders")) < 1:
+        return False
+    if filters.require_period_profit and app.numeric_value(row.get("PeriodNetRaw")) <= 0:
+        return False
+    if filters.require_max_lot and app.numeric_value(row.get("MaxLot")) <= filters.min_max_lot:
+        return False
+    if not filters.limit_orders:
+        return True
+    if source.get("kind") != "mt5_deals":
+        return app.mysql_int(row.get("ClosedOrders")) <= filters.max_orders
+    return app.mysql_int(row.get("MaxShardClosedOrders")) <= filters.max_orders
+
+
+def source_candidates(
+    source: dict,
+    start: datetime,
+    end: datetime,
+    filters: CandidateFilters,
+    shard_complete: Callable[[int, int], None] | None = None,
+    status: Callable[[str], None] | None = None,
+) -> list[dict]:
     started = time.perf_counter()
-    with app.mysql_trade_connect(source) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, parameters)
-            rows = cur.fetchall()
-            logins = [app.mysql_int(row.get("Login")) for row in rows if app.mysql_int(row.get("Login")) > 0]
-            routed_logins = _source_routed_logins(source, cur, logins)
-            rows = [row for row in rows if app.mysql_int(row.get("Login")) in routed_logins]
-            logins = sorted(routed_logins)
-            profiles = _candidate_profiles(source, cur, logins, filters, end)
+    rows = [
+        row for row in _window_candidate_rows(source, start, end, shard_complete, status)
+        if _passes_merged_window_filters(row, source, filters)
+    ]
+    if status:
+        status(f"{source['name']}窗口聚合完成，等待历史收益查询槽位")
+    with _profile_semaphore(source):
+        with app.mysql_trade_connect(source) as conn:
+            with conn.cursor() as cur:
+                logins = [app.mysql_int(row.get("Login")) for row in rows if app.mysql_int(row.get("Login")) > 0]
+                routed_logins = _source_routed_logins(source, cur, logins)
+                rows = [row for row in rows if app.mysql_int(row.get("Login")) in routed_logins]
+                if source.get("kind") == "mt5_deals" and filters.limit_orders:
+                    ambiguous = [
+                        app.mysql_int(row.get("Login"))
+                        for row in rows
+                        if app.mysql_int(row.get("ClosedOrders")) > filters.max_orders
+                    ]
+                    if ambiguous:
+                        if status:
+                            status(f"{source['name']}精确复核{len(ambiguous)}个跨分片单数")
+                        exact_counts = _exact_mt5_closed_orders(source, cur, ambiguous, start, end)
+                        for row in rows:
+                            login = app.mysql_int(row.get("Login"))
+                            if login in exact_counts:
+                                row["ClosedOrders"] = exact_counts[login]
+                        rows = [row for row in rows if app.mysql_int(row.get("ClosedOrders")) <= filters.max_orders]
+                retained_logins = {app.mysql_int(row.get("Login")) for row in rows}
+                logins = sorted(routed_logins & retained_logins)
+        if status:
+            status(f"{source['name']}读取{len(logins)}个窗口候选账户资料")
+        metadata_filters = CandidateFilters(
+            require_period_profit=filters.require_period_profit,
+            limit_orders=filters.limit_orders,
+            max_orders=filters.max_orders,
+            require_max_lot=filters.require_max_lot,
+            min_max_lot=filters.min_max_lot,
+            require_total_profit=False,
+            limit_deposit=False,
+            max_deposit=filters.max_deposit,
+            limit_active_ratio=False,
+            max_active_ratio=filters.max_active_ratio,
+            exclude_handled=filters.exclude_handled,
+        )
+        profiles = _load_candidate_profiles(source, logins, metadata_filters, end, status)
     return [{
         "source": source["name"],
         "platform": source["platform"],
@@ -350,15 +620,7 @@ def source_candidates(
             app.numeric_value(row.get("PeriodNetRaw"))
             * (app.numeric_value(profiles.get(app.mysql_int(row.get("Login")), {}).get("MoneyScale")) or 1.0)
         ),
-        "currency": profiles.get(app.mysql_int(row.get("Login")), {}).get("Currency", ""),
-        "databaseStatus": app.normalize_text(profiles.get(app.mysql_int(row.get("Login")), {}).get("Status")),
-        "registration": profiles.get(app.mysql_int(row.get("Login")), {}).get("RegistrationText", ""),
-        "registrationDays": app.mysql_int(profiles.get(app.mysql_int(row.get("Login")), {}).get("RegistrationDays")),
-        "activeDays": app.mysql_int(profiles.get(app.mysql_int(row.get("Login")), {}).get("ActiveDays")),
-        "activeRatio": profiles.get(app.mysql_int(row.get("Login")), {}).get("ActiveRatio"),
-        "totalNet": app.rounded(profiles.get(app.mysql_int(row.get("Login")), {}).get("TotalNet")),
-        "depositTotal": app.rounded(profiles.get(app.mysql_int(row.get("Login")), {}).get("DepositTotal")),
-        "lifetimeDataAvailable": bool(profiles.get(app.mysql_int(row.get("Login")), {}).get("LifetimeDataAvailable")),
+        **_candidate_profile_payload(profiles.get(app.mysql_int(row.get("Login")), {})),
         "aggregateSeconds": round(time.perf_counter() - started, 3),
     } for row in rows if app.mysql_int(row.get("Login")) > 0]
 
@@ -395,35 +657,121 @@ def mt4_row(source: dict, raw: dict) -> dict:
     }
 
 
-def load_mt4_candidate_rows(source: dict, candidates: list[dict], start: datetime, end: datetime) -> dict[str, list[dict]]:
+def _merge_grouped_rows(target: dict[str, list[dict]], source: dict[str, list[dict]]) -> None:
+    for login, rows in source.items():
+        target[login].extend(rows)
+
+
+def _mt5_time_index(source: dict) -> str:
+    return MT5_TIME_INDEX_BY_SCHEMA.get(source.get("schema"), "idx_mt5_deals_Time")
+
+
+def _mt5_position_index(source: dict) -> str:
+    return MT5_POSITION_INDEX_BY_SCHEMA.get(source.get("schema"), "idx_mt5_deals_PositionID")
+
+
+def _qualified_mt5_deal_columns(alias: str = "deals") -> str:
+    return ", ".join(
+        f"{alias}.{column.strip()}"
+        for column in mt5_runner.DEAL_COLUMNS.split(",")
+        if column.strip()
+    )
+
+
+def _load_mt4_candidate_batch(
+    source: dict,
+    logins: list[int],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[dict]]:
     grouped: dict[str, list[dict]] = defaultdict(list)
-    logins = [int(item["login"]) for item in candidates]
-    with app.mysql_trade_connect(source) as conn:
-        with conn.cursor() as cur:
-            for offset in range(0, len(logins), 250):
-                batch = logins[offset:offset + 250]
-                placeholders = ",".join(["%s"] * len(batch))
+    query_source = {**source, "read_timeout": AGGREGATE_READ_TIMEOUT}
+    try:
+        with app.mysql_trade_connect(query_source) as conn:
+            with conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(logins))
                 cur.execute(
                     f"select {MT4_COLUMNS} from `{source['schema']}`.`{source['table']}` where LOGIN in ({placeholders}) and CMD in (0,1) and CLOSE_TIME >= %s and CLOSE_TIME < %s order by LOGIN, OPEN_TIME, TICKET",
-                    [*batch, start, end],
+                    [*logins, start, end],
                 )
                 for raw in cur.fetchall():
                     row = mt4_row(source, raw)
                     grouped[row["account"]].append(row)
+    except Exception as exc:
+        if not transient_mysql_failure(exc) or len(logins) <= MIN_CANDIDATE_ROW_BATCH_SIZE:
+            raise
+        midpoint = len(logins) // 2
+        _merge_grouped_rows(grouped, _load_mt4_candidate_batch(source, logins[:midpoint], start, end))
+        _merge_grouped_rows(grouped, _load_mt4_candidate_batch(source, logins[midpoint:], start, end))
     return grouped
 
 
-def load_mt5_candidate_rows(source: dict, candidates: list[dict], start: datetime, end: datetime) -> dict[str, list[dict]]:
-    candidate_logins = [int(item["login"]) for item in candidates]
+def _load_mt4_candidate_time_shard(
+    source: dict,
+    logins: list[int],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[dict]]:
+    """Read one close-time shard once, then retain the exact candidate accounts."""
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    query_source = {**source, "read_timeout": AGGREGATE_READ_TIMEOUT}
+    placeholders = ",".join(["%s"] * len(logins))
+    try:
+        with app.mysql_trade_connect(query_source) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"select {MT4_COLUMNS} from `{source['schema']}`.`{source['table']}` "
+                    f"force index (INDEX_CLOSETIME) where CLOSE_TIME >= %s and CLOSE_TIME < %s "
+                    f"and LOGIN in ({placeholders}) and CMD in (0,1) order by LOGIN, OPEN_TIME, TICKET",
+                    [start, end, *logins],
+                )
+                for raw in cur.fetchall():
+                    row = mt4_row(source, raw)
+                    grouped[row["account"]].append(row)
+        return grouped
+    except Exception as exc:
+        if transient_mysql_failure(exc) and end - start > MIN_CANDIDATE_SHARD:
+            midpoint = start + (end - start) / 2
+            _merge_grouped_rows(grouped, _load_mt4_candidate_time_shard(source, logins, start, midpoint))
+            _merge_grouped_rows(grouped, _load_mt4_candidate_time_shard(source, logins, midpoint, end))
+            return grouped
+        for batch in _batches(logins, CANDIDATE_ROW_BATCH_SIZE):
+            _merge_grouped_rows(grouped, _load_mt4_candidate_batch(source, batch, start, end))
+        return grouped
+
+
+def load_mt4_candidate_rows(source: dict, candidates: list[dict], start: datetime, end: datetime) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    logins = [int(item["login"]) for item in candidates]
+    for shard_start, shard_end in _candidate_time_shards(source, start, end):
+        for batch in _batches(logins, TIME_FIRST_LOGIN_BATCH_SIZE):
+            _merge_grouped_rows(
+                grouped,
+                _load_mt4_candidate_time_shard(source, batch, shard_start, shard_end),
+            )
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (
+            app.parse_trade_time(row.get("open_time_msc") or row.get("open_time")) or datetime.min,
+            app.mysql_int(row.get("ticket")),
+        ))
+    return grouped
+
+
+def _load_mt5_candidate_batch(
+    source: dict,
+    candidate_logins: list[int],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[dict]]:
     deals_by_login: dict[str, list[dict]] = defaultdict(list)
-    with app.mysql_trade_connect(source) as conn:
-        with conn.cursor() as cur:
-            for offset in range(0, len(candidate_logins), 100):
-                batch = candidate_logins[offset:offset + 100]
-                placeholders = ",".join(["%s"] * len(batch))
+    query_source = {**source, "read_timeout": AGGREGATE_READ_TIMEOUT}
+    try:
+        with app.mysql_trade_connect(query_source) as conn:
+            with conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(candidate_logins))
                 cur.execute(
                     f"select Login, PositionID from `{source['schema']}`.`{source['table']}` where Login in ({placeholders}) and Action in (0,1) and Entry in (1,2,3) and Time >= %s and Time < %s and PositionID <> 0 group by Login, PositionID",
-                    [*batch, start, end],
+                    [*candidate_logins, start, end],
                 )
                 close_pairs = {
                     (app.mysql_int(row.get("Login")), app.mysql_int(row.get("PositionID")))
@@ -442,6 +790,97 @@ def load_mt5_candidate_rows(source: dict, candidates: list[dict], start: datetim
                         pair = (app.mysql_int(deal.get("Login")), app.mysql_int(deal.get("PositionID")))
                         if pair in close_pairs:
                             deals_by_login[str(pair[0])].append(deal)
+    except Exception as exc:
+        if not transient_mysql_failure(exc) or len(candidate_logins) <= MIN_CANDIDATE_ROW_BATCH_SIZE:
+            raise
+        midpoint = len(candidate_logins) // 2
+        _merge_grouped_rows(
+            deals_by_login,
+            _load_mt5_candidate_batch(source, candidate_logins[:midpoint], start, end),
+        )
+        _merge_grouped_rows(
+            deals_by_login,
+            _load_mt5_candidate_batch(source, candidate_logins[midpoint:], start, end),
+        )
+    return deals_by_login
+
+
+def _load_mt5_candidate_time_shard(
+    source: dict,
+    candidate_logins: list[int],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[dict]]:
+    """Select closed positions from a bounded time index and fetch their complete deals."""
+    deals_by_login: dict[str, list[dict]] = defaultdict(list)
+    query_source = {**source, "read_timeout": AGGREGATE_READ_TIMEOUT}
+    placeholders = ",".join(["%s"] * len(candidate_logins))
+    sql = f"""
+        select {_qualified_mt5_deal_columns()}
+        from (
+            select Login, PositionID
+            from `{source['schema']}`.`{source['table']}` force index ({_mt5_time_index(source)})
+            where Time >= %s and Time < %s and Login in ({placeholders})
+              and Action in (0,1) and Entry in (1,2,3) and PositionID <> 0
+            group by Login, PositionID
+        ) closed
+        join `{source['schema']}`.`{source['table']}` deals force index ({_mt5_position_index(source)})
+          on deals.Login = closed.Login and deals.PositionID = closed.PositionID
+        where deals.Action in (0,1) and deals.Entry in (0,1,2,3)
+        order by deals.Login, deals.PositionID, deals.Time, deals.Deal
+    """
+    try:
+        with app.mysql_trade_connect(query_source) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, [start, end, *candidate_logins])
+                for deal in cur.fetchall():
+                    login = str(app.mysql_int(deal.get("Login")))
+                    if login != "0":
+                        deals_by_login[login].append(deal)
+        return deals_by_login
+    except Exception as exc:
+        if transient_mysql_failure(exc) and end - start > MIN_CANDIDATE_SHARD:
+            midpoint = start + (end - start) / 2
+            _merge_grouped_rows(
+                deals_by_login,
+                _load_mt5_candidate_time_shard(source, candidate_logins, start, midpoint),
+            )
+            _merge_grouped_rows(
+                deals_by_login,
+                _load_mt5_candidate_time_shard(source, candidate_logins, midpoint, end),
+            )
+            return deals_by_login
+        for batch in _batches(candidate_logins, CANDIDATE_ROW_BATCH_SIZE):
+            _merge_grouped_rows(
+                deals_by_login,
+                _load_mt5_candidate_batch(source, batch, start, end),
+            )
+        return deals_by_login
+
+
+def load_mt5_candidate_rows(source: dict, candidates: list[dict], start: datetime, end: datetime) -> dict[str, list[dict]]:
+    candidate_logins = [int(item["login"]) for item in candidates]
+    deals_by_login: dict[str, list[dict]] = defaultdict(list)
+    for shard_start, shard_end in _candidate_time_shards(source, start, end):
+        for batch in _batches(candidate_logins, TIME_FIRST_LOGIN_BATCH_SIZE):
+            _merge_grouped_rows(
+                deals_by_login,
+                _load_mt5_candidate_time_shard(source, batch, shard_start, shard_end),
+            )
+    for login, deals in deals_by_login.items():
+        unique_deals = {
+            app.mysql_int(deal.get("Deal")): deal
+            for deal in deals
+            if app.mysql_int(deal.get("Deal")) > 0
+        }
+        deals_by_login[login] = sorted(
+            unique_deals.values(),
+            key=lambda deal: (
+                app.mysql_int(deal.get("PositionID")),
+                app.mysql_datetime_text(deal.get("TimeMsc") or deal.get("Time")),
+                app.mysql_int(deal.get("Deal")),
+            ),
+        )
     return {
         login: mt5_runner.corrected_mt5_positions(
             deals,
@@ -459,6 +898,16 @@ def load_candidate_rows(source: dict, candidates: list[dict], start: datetime, e
     if source.get("kind") == "mt5_deals":
         return load_mt5_candidate_rows(source, candidates, start, end)
     return load_mt4_candidate_rows(source, candidates, start, end)
+
+
+def load_candidate_rows_timed(
+    source: dict,
+    candidates: list[dict],
+    start: datetime,
+    end: datetime,
+) -> tuple[dict[str, list[dict]], float]:
+    started = time.perf_counter()
+    return load_candidate_rows(source, candidates, start, end), time.perf_counter() - started
 
 
 def screen_candidate(candidate: dict, rows: list[dict], small_order_priority: int) -> dict:
@@ -516,6 +965,82 @@ def screen_candidate(candidate: dict, rows: list[dict], small_order_priority: in
         "routeReasons": reasons,
         "routePriority": app.rounded(priority, 2),
     }
+
+
+def screen_candidate_batch(
+    items: list[tuple[int, dict, list[dict]]],
+    small_order_priority: int,
+) -> list[tuple[int, dict | None, str]]:
+    results = []
+    for index, candidate, rows in items:
+        try:
+            results.append((index, screen_candidate(candidate, rows, small_order_priority), ""))
+        except Exception as exc:
+            results.append((index, None, str(exc)))
+    return results
+
+
+def screen_candidates(
+    candidates: list[dict],
+    rows_by_source: dict[str, dict[str, list[dict]]],
+    small_order_priority: int,
+    workers: int,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    items = [
+        (
+            index,
+            candidate,
+            rows_by_source.get(candidate["source"], {}).get(candidate["login"], []),
+        )
+        for index, candidate in enumerate(candidates)
+    ]
+
+    def sequential() -> tuple[list[dict], list[dict]]:
+        output: list[dict | None] = [None] * len(items)
+        errors = []
+        for completed, (index, result, error) in enumerate(
+            screen_candidate_batch(items, small_order_priority),
+            start=1,
+        ):
+            output[index] = result
+            if error:
+                errors.append({**candidates[index], "error": error})
+            if progress and (completed % 250 == 0 or completed == len(items)):
+                progress(completed, len(items))
+        return [result for result in output if result is not None], errors
+
+    process_count = min(MAX_SCREEN_PROCESSES, max(workers, 1))
+    if process_count <= 1 or len(items) < SCREEN_PROCESS_BATCH_SIZE * 2:
+        return sequential()
+
+    batches = [
+        items[offset:offset + SCREEN_PROCESS_BATCH_SIZE]
+        for offset in range(0, len(items), SCREEN_PROCESS_BATCH_SIZE)
+    ]
+    output: list[dict | None] = [None] * len(items)
+    errors = []
+    completed = 0
+    try:
+        with ProcessPoolExecutor(max_workers=process_count) as executor:
+            futures = [
+                executor.submit(screen_candidate_batch, batch, small_order_priority)
+                for batch in batches
+            ]
+            for future in as_completed(futures):
+                batch_results = future.result()
+                completed += len(batch_results)
+                for index, result, error in batch_results:
+                    output[index] = result
+                    if error:
+                        errors.append({**candidates[index], "error": error})
+                if progress:
+                    progress(completed, len(items))
+        return [result for result in output if result is not None], errors
+    except Exception:
+        if progress:
+            progress(0, len(items))
+        return sequential()
 
 
 def load_deep_rows(source: dict, login: str) -> list[dict]:
@@ -591,6 +1116,61 @@ def suspected_push_interval_profit(rows: list[dict], mixed_episodes: dict | None
     }
 
 
+def push_economic_evidence(candidate: dict, suspected_intervals: dict) -> dict:
+    total_net = app.numeric_value(candidate.get("totalNet"))
+    deposit_total = max(app.numeric_value(candidate.get("depositTotal")), 0.0)
+    interval_net = app.numeric_value(suspected_intervals.get("netProfit"))
+    interval_return_pct = interval_net / deposit_total * 100 if deposit_total > 0 else None
+    absolute_qualified = interval_net >= MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET
+    relative_qualified = bool(
+        deposit_total > 0
+        and interval_net >= MIN_SUSPECTED_INTERVAL_NET
+        and interval_return_pct is not None
+        and interval_return_pct >= MIN_SUSPECTED_INTERVAL_RETURN_PCT
+    )
+
+    if not candidate.get("lifetimeDataAvailable"):
+        reason = "全历史净收益不可用，无法确认高风险高回报"
+    elif total_net <= 0:
+        reason = "全历史交易净收益不为正"
+    elif not suspected_intervals.get("available") or interval_net <= 0:
+        reason = "疑似推盘区间没有形成正净收益"
+    elif not (absolute_qualified or relative_qualified):
+        if interval_return_pct is None:
+            reason = (
+                f"疑似区间净收益仅{app.rounded(interval_net)}，且入金基数不可用；"
+                f"未达到{app.rounded(MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET)}的绝对收益门槛"
+            )
+        else:
+            reason = (
+                f"疑似区间净收益{app.rounded(interval_net)}、约占入金{app.rounded(interval_return_pct, 1)}%；"
+                f"未达到{app.rounded(MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET)}，也未同时达到"
+                f"{app.rounded(MIN_SUSPECTED_INTERVAL_NET)}和{app.rounded(MIN_SUSPECTED_INTERVAL_RETURN_PCT, 1)}%"
+            )
+    else:
+        reason = "疑似区间已形成与资金规模相符的正向经济结果"
+
+    return {
+        "qualified": bool(
+            candidate.get("lifetimeDataAvailable")
+            and total_net > 0
+            and suspected_intervals.get("available")
+            and interval_net > 0
+            and (absolute_qualified or relative_qualified)
+        ),
+        "reason": reason,
+        "totalNet": app.rounded(total_net),
+        "depositTotal": app.rounded(deposit_total),
+        "intervalNet": app.rounded(interval_net),
+        "intervalReturnPct": app.rounded(interval_return_pct, 1) if interval_return_pct is not None else None,
+        "absoluteQualified": absolute_qualified,
+        "relativeQualified": relative_qualified,
+        "minimumIntervalNet": MIN_SUSPECTED_INTERVAL_NET,
+        "minimumAbsoluteIntervalNet": MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET,
+        "minimumIntervalReturnPct": MIN_SUSPECTED_INTERVAL_RETURN_PCT,
+    }
+
+
 def deep_candidate(candidate: dict, source: dict) -> dict:
     started = time.perf_counter()
     rows = load_deep_rows(source, candidate["login"])
@@ -630,6 +1210,7 @@ def deep_candidate(candidate: dict, source: dict) -> dict:
     )[0]
     chain = result.get("evidenceChain") or {}
     suspected_intervals = suspected_push_interval_profit(core_rows, result.get("mixedEpisodes"))
+    economic_evidence = push_economic_evidence(candidate, suspected_intervals)
     return {
         **candidate,
         "deepScope": "all_history",
@@ -645,6 +1226,7 @@ def deep_candidate(candidate: dict, source: dict) -> dict:
         "limitations": result.get("limitations", []),
         "scoreBasis": chain.get("scoreBasis") or {},
         "suspectedPushIntervals": suspected_intervals,
+        "economicEvidence": economic_evidence,
         "tickAvailable": bool(tick.get("available")),
         "tickAnalyzedOrders": app.mysql_int(tick.get("analyzedOrders")),
         "coordinatedMatchedRatio": app.numeric_value(sync.get("coordinatedMatchedRatio")),
@@ -695,42 +1277,69 @@ def main() -> int:
     emit("aggregate", f"正在汇总{len(sources)}个服务器近{args.days}天活跃账户", 5)
 
     candidates: list[dict] = []
-    aggregate_retries: list[tuple[dict, Exception]] = []
+    aggregate_total_shards = sum(len(_candidate_time_shards(source, start, end)) for source in sources)
+    aggregate_completed_shards = 0
+    aggregate_completed_sources = 0
+    aggregate_progress = 5
+    aggregate_lock = threading.Lock()
+
+    def callbacks(source_name: str):
+        def shard_complete(index: int, total: int) -> None:
+            nonlocal aggregate_completed_shards, aggregate_progress
+            with aggregate_lock:
+                aggregate_completed_shards += 1
+                aggregate_progress = 5 + round(
+                    aggregate_completed_shards / max(aggregate_total_shards, 1) * 10
+                )
+                emit(
+                    "aggregate",
+                    f"候选聚合：{source_name} 分片 {index}/{total}（全平台 {aggregate_completed_shards}/{aggregate_total_shards}）",
+                    aggregate_progress,
+                )
+
+        def status(message: str) -> None:
+            with aggregate_lock:
+                emit("aggregate", message, aggregate_progress)
+
+        return shard_complete, status
+
     with ThreadPoolExecutor(max_workers=min(args.workers, len(sources))) as executor:
-        futures = {executor.submit(source_candidates, source, start, end, filters): source for source in sources}
-        for index, future in enumerate(as_completed(futures), start=1):
+        futures = {}
+        for source in sources:
+            shard_complete, status = callbacks(source["name"])
+            futures[executor.submit(
+                source_candidates,
+                source,
+                start,
+                end,
+                filters,
+                shard_complete,
+                status,
+            )] = source
+        for future in as_completed(futures):
             source = futures[future]
             try:
                 candidates.extend(future.result())
             except Exception as exc:
-                if transient_mysql_failure(exc):
-                    aggregate_retries.append((source, exc))
-                else:
-                    failures.append({"stage": "aggregate", "source": source["name"], "error": str(exc)})
-            emit("aggregate", f"收益候选聚合 {index}/{len(sources)} 个服务器", 5 + round(index / len(sources) * 12))
-    for retry_index, (source, initial_exc) in enumerate(aggregate_retries, start=1):
-        emit(
-            "aggregate",
-            f"聚合查询超时，低并发重试 {retry_index}/{len(aggregate_retries)}：{source['name']}",
-            17,
-        )
-        retry_source = {**source, "read_timeout": max(app.mysql_int(source.get("read_timeout"), 90), 240)}
-        try:
-            candidates.extend(source_candidates(retry_source, start, end, filters))
-        except Exception as exc:
-            failures.append({
-                "stage": "aggregate",
-                "source": source["name"],
-                "attempts": 2,
-                "initialError": str(initial_exc),
-                "error": str(exc),
-            })
+                failures.append({"stage": "aggregate", "source": source["name"], "error": str(exc)})
+            with aggregate_lock:
+                aggregate_completed_sources += 1
+                aggregate_progress = max(
+                    aggregate_progress,
+                    15 + round(aggregate_completed_sources / max(len(sources), 1) * 10),
+                )
+                emit(
+                    "aggregate",
+                    f"服务器聚合完成 {aggregate_completed_sources}/{len(sources)}：{source['name']}",
+                    aggregate_progress,
+                )
+    emit("aggregate", f"候选聚合完成，正在应用账户限制（{len(candidates)}个窗口候选）", 25)
     before_exclusion = len(candidates)
     excluded_candidates: list[dict] = []
     excluded_by_reason: dict[str, int] = defaultdict(int)
     retained: list[dict] = []
     for candidate in candidates:
-        reasons = candidate_filter_reasons(candidate, filters)
+        reasons = candidate_filter_reasons(candidate, filters, include_lifetime=False)
         if filters.exclude_handled and candidate["login"] in known_excluded:
             reasons.append("本地台账已处置")
         if reasons:
@@ -746,8 +1355,8 @@ def main() -> int:
     reason_text = "，".join(f"{reason} {count}个" for reason, count in excluded_by_reason.items()) or "未启用额外限制"
     emit(
         "screen",
-        f"窗口候选{before_exclusion}个，限制后保留{len(candidates)}个（{reason_text}），开始结构初筛",
-        20,
+        f"窗口候选{before_exclusion}个，基础限制后保留{len(candidates)}个（{reason_text}），开始结构初筛",
+        27,
         candidates=len(candidates),
         excluded=before_exclusion - len(candidates),
         excludedByReason=dict(excluded_by_reason),
@@ -759,37 +1368,136 @@ def main() -> int:
     rows_by_source: dict[str, dict[str, list[dict]]] = {}
     with ThreadPoolExecutor(max_workers=min(args.workers, len(by_source))) as executor:
         futures = {
-            executor.submit(load_candidate_rows, source_map[source_name], source_candidates_rows, start, end): source_name
+            executor.submit(
+                load_candidate_rows_timed,
+                source_map[source_name],
+                source_candidates_rows,
+                start,
+                end,
+            ): source_name
             for source_name, source_candidates_rows in by_source.items()
         }
         for index, future in enumerate(as_completed(futures), start=1):
             source_name = futures[future]
             try:
-                rows_by_source[source_name] = future.result()
+                rows_by_source[source_name], elapsed = future.result()
+                loaded_orders = sum(len(rows) for rows in rows_by_source[source_name].values())
+                message = (
+                    f"订单读取完成 {index}/{len(by_source)}：{source_name} "
+                    f"{len(rows_by_source[source_name])}账号/{loaded_orders}单/{elapsed:.1f}s"
+                )
             except Exception as exc:
                 rows_by_source[source_name] = {}
                 failures.append({"stage": "load_rows", "source": source_name, "error": str(exc)})
-            emit("screen", f"批量订单读取 {index}/{len(by_source)} 个服务器", 20 + round(index / len(by_source) * 25))
+                message = f"订单读取失败 {index}/{len(by_source)}：{source_name}"
+            emit("screen", message, 27 + round(index / len(by_source) * 23))
 
-    screened = []
-    for index, candidate in enumerate(candidates, start=1):
-        rows = rows_by_source.get(candidate["source"], {}).get(candidate["login"], [])
-        try:
-            screened.append(screen_candidate(candidate, rows, args.small_order_priority))
-        except Exception as exc:
-            failures.append({"stage": "screen", **candidate, "error": str(exc)})
-        if index % 250 == 0 or index == len(candidates):
-            emit("screen", f"结构初筛 {index}/{len(candidates)}", 45 + round(index / max(len(candidates), 1) * 15))
+    def screen_progress(completed: int, total: int) -> None:
+        if completed == 0:
+            emit("screen", "结构初筛并行不可用，已回退串行计算", 50)
+            return
+        emit(
+            "screen",
+            f"结构初筛 {completed}/{total}",
+            50 + round(completed / max(total, 1) * 10),
+        )
+
+    screened, screen_failures = screen_candidates(
+        candidates,
+        rows_by_source,
+        args.small_order_priority,
+        args.workers,
+        screen_progress,
+    )
+    failures.extend({"stage": "screen", **failure} for failure in screen_failures)
     screened.sort(key=lambda row: (-app.numeric_value(row.get("routePriority")), row["server"], app.mysql_int(row["login"])))
     for rank, row in enumerate(screened, start=1):
         row["screenRank"] = rank
     eligible = [row for row in screened if row.get("deepEligible")]
+    structural_eligible = len(eligible)
+    lifetime_profiled = 0
+    unprofiled_structural = 0
+    needs_lifetime_filters = True
+    if needs_lifetime_filters and eligible:
+        structural_candidates = eligible
+        lifetime_retained: list[dict] = []
+        profile_chunk_size = max(25, min(args.deep_limit * 2, 200))
+        profile_lock = threading.Lock()
+
+        def profile_status(message: str) -> None:
+            with profile_lock:
+                emit("profile", message, 60 + round(lifetime_profiled / len(structural_candidates) * 2))
+
+        for offset in range(0, len(structural_candidates), profile_chunk_size):
+            chunk = structural_candidates[offset:offset + profile_chunk_size]
+            emit(
+                "profile",
+                f"按结构排名应用历史限制 {offset + 1}-{offset + len(chunk)}/{len(structural_candidates)}",
+                60 + round(lifetime_profiled / len(structural_candidates) * 2),
+            )
+            chunk_by_source: dict[str, list[dict]] = defaultdict(list)
+            for candidate in chunk:
+                chunk_by_source[candidate["source"]].append(candidate)
+            profiles_by_source: dict[str, dict[int, dict]] = {}
+            profile_filters = CandidateFilters(
+                require_period_profit=filters.require_period_profit,
+                limit_orders=filters.limit_orders,
+                max_orders=filters.max_orders,
+                require_max_lot=filters.require_max_lot,
+                min_max_lot=filters.min_max_lot,
+                require_total_profit=True,
+                limit_deposit=True,
+                max_deposit=filters.max_deposit,
+                limit_active_ratio=filters.limit_active_ratio,
+                max_active_ratio=filters.max_active_ratio,
+                exclude_handled=filters.exclude_handled,
+            )
+            with ThreadPoolExecutor(max_workers=min(args.workers, len(chunk_by_source))) as executor:
+                futures = {
+                    executor.submit(
+                        _load_candidate_profiles,
+                        source_map[source_name],
+                        [app.mysql_int(row["login"]) for row in source_candidates_rows],
+                        profile_filters,
+                        end,
+                        profile_status,
+                    ): source_name
+                    for source_name, source_candidates_rows in chunk_by_source.items()
+                }
+                for future in as_completed(futures):
+                    source_name = futures[future]
+                    try:
+                        profiles_by_source[source_name] = future.result()
+                    except Exception as exc:
+                        profiles_by_source[source_name] = {}
+                        failures.append({"stage": "profile", "source": source_name, "error": str(exc)})
+
+            for candidate in chunk:
+                profile = profiles_by_source.get(candidate["source"], {}).get(app.mysql_int(candidate["login"]), {})
+                candidate.update(_candidate_profile_payload(profile))
+                reasons = candidate_filter_reasons(candidate, filters)
+                if not filters.require_total_profit:
+                    reasons.extend(push_lifetime_economic_reasons(candidate))
+                if reasons:
+                    excluded_candidates.append({**candidate, "filterReasons": reasons})
+                    for reason in set(reasons):
+                        excluded_by_reason[reason] += 1
+                else:
+                    lifetime_retained.append(candidate)
+            lifetime_profiled += len(chunk)
+            if len(lifetime_retained) >= args.deep_limit:
+                break
+        eligible = lifetime_retained
+        unprofiled_structural = max(structural_eligible - lifetime_profiled, 0)
+
     selected = eligible[: args.deep_limit]
+    write_json(output_dir / "excluded_candidates.json", excluded_candidates)
     write_json(output_dir / "screened.json", screened)
     write_json(output_dir / "deep_candidates.json", selected)
     emit(
         "deep",
-        f"初筛完成：{len(eligible)}个进入深检队列，本轮深检前{len(selected)}个",
+        f"结构命中{structural_eligible}个，按排名画像{lifetime_profiled or structural_eligible}个，"
+        f"历史限制后{len(eligible)}个，本轮深检前{len(selected)}个",
         62,
         screened=len(screened),
         eligible=len(eligible),
@@ -797,13 +1505,24 @@ def main() -> int:
     )
 
     app.toxic_cached_tick_mapping = lambda login, report_symbol: None
+    deep_checked_results: list[dict] = []
     deep_results: list[dict] = []
+    economic_rejections: list[dict] = []
     for index, candidate in enumerate(selected, start=1):
         try:
             result = deep_candidate(candidate, source_map[candidate["source"]])
-            deep_results.append(result)
-            write_json(output_dir / "deep_results_checkpoint.json", deep_results)
-            message = f"深检 {index}/{len(selected)}：{result['server']}/{result['login']} {result['initialScore']}→{result['deepScore']}"
+            deep_checked_results.append(result)
+            if result.get("economicEvidence", {}).get("qualified"):
+                deep_results.append(result)
+                economic_status = "经济证据通过"
+            else:
+                economic_rejections.append(result)
+                economic_status = "经济证据不足，未列入结果"
+            write_json(output_dir / "deep_results_checkpoint.json", deep_checked_results)
+            message = (
+                f"深检 {index}/{len(selected)}：{result['server']}/{result['login']} "
+                f"{result['initialScore']}→{result['deepScore']}，{economic_status}"
+            )
         except Exception as exc:
             failures.append({"stage": "deep", **candidate, "error": str(exc)})
             message = f"深检 {index}/{len(selected)} 失败：{candidate['server']}/{candidate['login']}"
@@ -812,6 +1531,7 @@ def main() -> int:
     for rank, row in enumerate(deep_results, start=1):
         row["deepRank"] = rank
     write_json(output_dir / "deep_results.json", deep_results)
+    write_json(output_dir / "economic_rejections.json", economic_rejections)
     write_json(output_dir / "failures.json", failures)
     summary = {
         "runId": run_id,
@@ -830,10 +1550,21 @@ def main() -> int:
         "excludedKnownAccounts": before_exclusion - len(candidates),
         "excludedByReason": dict(excluded_by_reason),
         "screenedAccounts": len(screened),
+        "structuralEligible": structural_eligible,
+        "lifetimeProfiled": lifetime_profiled,
+        "unprofiledStructural": unprofiled_structural,
         "deepEligible": len(eligible),
         "deepSelected": len(selected),
-        "deepCompleted": len(deep_results),
-        "deepPending": max(len(eligible) - len(selected), 0),
+        "deepCompleted": len(deep_checked_results),
+        "economicQualified": len(deep_results),
+        "economicallyRejected": len(economic_rejections),
+        "economicRules": {
+            "requirePositiveLifetimeNet": True,
+            "minimumIntervalNet": MIN_SUSPECTED_INTERVAL_NET,
+            "minimumAbsoluteIntervalNet": MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET,
+            "minimumIntervalReturnPct": MIN_SUSPECTED_INTERVAL_RETURN_PCT,
+        },
+        "deepPending": unprofiled_structural + max(len(eligible) - len(selected), 0),
         "score60Plus": sum(app.numeric_value(row.get("deepScore")) >= 60 for row in deep_results),
         "score75Plus": sum(app.numeric_value(row.get("deepScore")) >= 75 for row in deep_results),
         "failures": len(failures),

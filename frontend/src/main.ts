@@ -3,12 +3,14 @@ import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 import WorkbenchPage from './pages/WorkbenchPage.vue'
+import CopyPoolPage from './pages/CopyPoolPage.vue'
 import './styles.css'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: WorkbenchPage },
+    { path: '/copy-pool', component: CopyPoolPage },
     {
       path: '/account/:login',
       component: WorkbenchPage,

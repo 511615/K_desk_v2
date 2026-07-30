@@ -7,8 +7,26 @@ import re
 from pathlib import Path
 
 import pandas as pd
-
 from fused_trade_kline_features import enhance_trade_kline_html
+
+
+def quote_gaps(bars: pd.DataFrame) -> list[dict]:
+    times = pd.to_datetime(bars["time"]).sort_values().reset_index(drop=True)
+    gaps = []
+    for index in range(len(times) - 1):
+        minutes = (times.iloc[index + 1] - times.iloc[index]).total_seconds() / 60
+        if minutes <= 5:
+            continue
+        gaps.append(
+            {
+                "afterIndex": index,
+                "before": times.iloc[index].strftime("%Y-%m-%d %H:%M:%S"),
+                "after": times.iloc[index + 1].strftime("%Y-%m-%d %H:%M:%S"),
+                "minutes": round(minutes, 3),
+                "closed": minutes > 60,
+            }
+        )
+    return gaps
 
 
 PROJECT_ROOT = Path(os.environ.get("K_DESK_ROOT", Path(__file__).resolve().parents[2]))
@@ -49,25 +67,27 @@ def aggregate_bars_by_position(bars: pd.DataFrame, target_rows: int) -> pd.DataF
         return bars.iloc[0:0].copy()
     if len(bars) <= target_rows:
         return bars.copy()
-    step = max(1, int(len(bars) / target_rows) + 1)
-    tmp = bars.reset_index(drop=True).copy()
-    tmp["_bucket"] = tmp.index // step
-    agg = (
-        tmp.groupby("_bucket", sort=True)
-        .agg(
-            time=("time", "first"),
-            open=("open", "first"),
-            high=("high", "max"),
-            low=("low", "min"),
-            close=("close", "last"),
-            tick_volume=("tick_volume", "sum"),
+    ordered = bars.sort_values("time").reset_index(drop=True).copy()
+    ordered["_segment"] = (pd.to_datetime(ordered["time"]).diff().dt.total_seconds().fillna(0) > 5 * 60).cumsum()
+    parts = []
+    for _, segment in ordered.groupby("_segment", sort=True):
+        budget = max(1, round(target_rows * len(segment) / len(ordered)))
+        step = max(1, int(len(segment) / budget) + 1)
+        tmp = segment.reset_index(drop=True).copy()
+        tmp["_bucket"] = tmp.index // step
+        parts.append(
+            tmp.groupby("_bucket", sort=True)
+            .agg(
+                time=("time", "first"),
+                open=("open", "first"),
+                high=("high", "max"),
+                low=("low", "min"),
+                close=("close", "last"),
+                tick_volume=("tick_volume", "sum"),
+            )
+            .reset_index(drop=True)
         )
-        .reset_index(drop=True)
-    )
-    if len(agg) > target_rows:
-        stride = max(1, int(len(agg) / target_rows) + 1)
-        agg = agg.iloc[::stride].copy()
-    return agg
+    return pd.concat(parts, ignore_index=True).sort_values("time").reset_index(drop=True)
 
 
 def bars_for_html(bars: pd.DataFrame, trades_for_symbol: pd.DataFrame) -> pd.DataFrame:
@@ -167,76 +187,16 @@ def find_statement_for_stem(out_dir: Path, account: str) -> Path | None:
 
 
 def apply_display_price_alignment(report_symbol: str, bars: pd.DataFrame, trades_for_symbol: pd.DataFrame, mapping: dict) -> pd.DataFrame:
-    if bars.empty or trades_for_symbol.empty:
-        mapping["display_price_shift"] = 0.0
-        mapping["display_price_shift_applied"] = False
-        return bars
-    b = bars.copy()
-    b["time"] = pd.to_datetime(b["time"])
-    by_minute = {t: row for t, row in b.set_index("time").iterrows()}
-    sample = trades_for_symbol.sort_values("Open Time")
-    if len(sample) > 80:
-        idx = sorted({round(i * (len(sample) - 1) / 79) for i in range(80)})
-        sample = sample.iloc[idx]
-    deltas = []
-    for _, tr in sample.iterrows():
-        for time_col, price_col in [("Open Time", "Open Price"), ("Close Time", "Close Price")]:
-            row = by_minute.get(pd.to_datetime(tr[time_col]).floor("min").to_pydatetime())
-            if row is None:
-                continue
-            price = float(tr[price_col])
-            low, high = float(row["low"]), float(row["high"])
-            if price > high:
-                deltas.append(price - high)
-            elif price < low:
-                deltas.append(price - low)
-            else:
-                deltas.append(0.0)
-    if not deltas:
-        mapping["display_price_shift"] = 0.0
-        mapping["display_price_shift_applied"] = False
-        return bars
-    intervals = []
-    for _, tr in sample.iterrows():
-        for time_col, price_col in [("Open Time", "Open Price"), ("Close Time", "Close Price")]:
-            row = by_minute.get(pd.to_datetime(tr[time_col]).floor("min").to_pydatetime())
-            if row is None:
-                continue
-            price = float(tr[price_col])
-            intervals.append((price - float(row["high"]), price - float(row["low"])))
-    candidates = set(deltas)
-    for lo_shift, hi_shift in intervals:
-        candidates.add(lo_shift)
-        candidates.add(hi_shift)
-        candidates.add((lo_shift + hi_shift) / 2)
-    best = None
-    for candidate in candidates:
-        distances = []
-        inside_count = 0
-        for lo_shift, hi_shift in intervals:
-            if lo_shift <= candidate <= hi_shift:
-                inside_count += 1
-                distances.append(0.0)
-            else:
-                distances.append(min(abs(candidate - lo_shift), abs(candidate - hi_shift)))
-        series = pd.Series(distances)
-        score = (inside_count, -float(series.median()), -float(series.mean()), -abs(candidate))
-        if best is None or score > best[0]:
-            best = (score, candidate, inside_count)
-    shift = float(best[1]) if best else float(pd.Series(deltas).median())
-    nonzero_ratio = sum(abs(v) > 1e-12 for v in deltas) / len(deltas)
-    threshold = 0.2 if "XAU" in str(report_symbol).upper() else 0.0003
+    shift = float(mapping.get("configured_price_correction") or 0.0)
     mapping["display_price_shift"] = shift
-    mapping["display_price_shift_applied"] = abs(shift) >= threshold and nonzero_ratio >= 0.35
-    mapping["display_price_shift_nonzero_ratio"] = nonzero_ratio
-    mapping["display_price_shift_inside_count"] = int(best[2]) if best else 0
-    mapping["display_price_shift_sample_count"] = len(intervals)
-    if not mapping["display_price_shift_applied"]:
+    mapping["display_price_shift_applied"] = bool(shift)
+    mapping["display_price_shift_source"] = "quote-source configuration" if shift else "none"
+    if not shift:
         return bars
     out = bars.copy()
     for col in ["open", "high", "low", "close"]:
         out[col] = out[col].astype(float) + shift
-    print(f"{report_symbol}: applied display price shift {shift:.8f} to align K-line display with report prices")
+    print(f"{report_symbol}: applied configured price correction {shift:.8f}")
     return out
 
 
@@ -247,17 +207,28 @@ def build_html(account: str, stem: str, trades: pd.DataFrame, bars_by_symbol: di
             chart_trades[col] = chart_trades[col].dt.strftime("%Y-%m-%d %H:%M:%S")
 
     bars_json = {}
+    gaps_json = {}
     for sym, bars in bars_by_symbol.items():
         symbol_trades = trades[trades["Item"] == sym] if "Item" in trades.columns else trades.iloc[0:0]
         b = bars_for_html(bars, symbol_trades)
+        gaps_json[sym] = quote_gaps(b)
+        gap_after = {item["afterIndex"] for item in gaps_json[sym]}
+        segment = 0
+        segments = []
+        for index in range(len(b)):
+            segments.append(segment)
+            if index in gap_after:
+                segment += 1
+        b["segment"] = segments
         b["time"] = pd.to_datetime(b["time"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-        bars_json[sym] = b[["time", "open", "high", "low", "close", "tick_volume"]].to_dict(orient="records")
+        bars_json[sym] = b[["time", "open", "high", "low", "close", "tick_volume", "segment"]].to_dict(orient="records")
 
     payload = {
         "account": account,
         "stem": stem,
         "accountMeta": account_meta_from_trades(chart_trades),
         "barsBySymbol": bars_json,
+        "gapsBySymbol": gaps_json,
         "trades": chart_trades.where(pd.notna(chart_trades), None).to_dict(orient="records"),
         "mappingBySymbol": mapping_by_symbol,
     }
@@ -271,7 +242,7 @@ def build_html(account: str, stem: str, trades: pd.DataFrame, bars_by_symbol: di
 <style>
 body {{ margin:0; font-family: Arial, "Microsoft YaHei", sans-serif; background:#f5f6f8; color:#1f2937; }}
 header {{ padding:14px 20px; background:#111827; color:#fff; }}
-h1 {{ margin:0 0 8px; font-size:20px; }}
+h1 {{ margin:0 0 8px; font-size:20px; overflow-wrap:anywhere; }}
 .meta {{ display:flex; flex-wrap:wrap; gap:10px 22px; font-size:13px; color:#d1d5db; }}
 .toolbar {{ display:flex; align-items:center; gap:8px; padding:12px 18px 6px; flex-wrap:wrap; }}
 select, button, input {{ border:1px solid #cbd5e1; background:#fff; color:#111827; padding:7px 10px; border-radius:4px; }}
@@ -308,6 +279,10 @@ th, td {{ border:1px solid #e5e7eb; padding:5px 7px; text-align:right; white-spa
 th {{ background:#eef2f7; position:sticky; top:0; z-index:1; }}
 td.left, th.left {{ text-align:left; }}
 @media (max-width: 900px) {{ .summary {{ grid-template-columns:repeat(1,minmax(150px,1fr)); }} .status {{ margin-left:0; width:100%; }} }}
+.gapToggle {{ display:inline-flex; margin-left:4px; overflow:hidden; border:1px solid #cbd5e1; border-radius:4px; background:#fff; }}
+.gapToggle button {{ border:0; border-radius:0; background:transparent; color:#64748b; }}
+.gapToggle button.active {{ background:#111827; color:#fff; }}
+@media (max-width:600px) {{ .wrap {{ padding:0 8px 18px; }} .toolbar,.filters {{ padding-left:8px; padding-right:8px; }} #chart {{ height:620px; }} }}
 </style>
 </head>
 <body>
@@ -320,7 +295,10 @@ td.left, th.left {{ text-align:left; }}
 <button id="zoomIn">放大</button>
 <button id="zoomOut">缩小</button>
 <button id="reset">重置</button>
-<button id="fitTrades">只看交易区间</button>
+<button class="fitTradesButton" id="fitTrades">只看交易区间</button>
+<div class="gapToggle" aria-label="停盘时间轴">
+<button id="hideGaps" class="active" type="button">隐藏停盘</button><button id="showGaps" type="button">显示停盘</button>
+</div>
 <label>显示订单 <input id="displayLimit" type="number" min="1" step="50" value="300" style="width:86px;"> 笔</label>
 <span class="status" id="status"></span>
 </div>
@@ -386,34 +364,127 @@ const filterProfitMinInput = document.getElementById('filterProfitMin');
 const filterProfitMaxInput = document.getElementById('filterProfitMax');
 const filterHoldMinInput = document.getElementById('filterHoldMin');
 const filterHoldMaxInput = document.getElementById('filterHoldMax');
+const hideGapsButton = document.getElementById('hideGaps');
+const showGapsButton = document.getElementById('showGaps');
 let symbol = Object.keys(DATA.barsBySymbol)[0];
 let bars = [], trades = [], viewStart = 0, viewEnd = 1, drag = null, crosshair = null;
+let barMinutes = [], firstBarMinute = 0;
+let gaps = [], showRealGaps = false, noQuoteWindow = '';
 let panelMode = 'profit';
 let filteredTradesCache = null, filteredTradesCacheKey = '', lastTableKey = '';
 let pendingDraw = null;
 
-function findIndex(time) {{
+function minuteValue(time) {{ return new Date(String(time).replace(' ', 'T')).getTime() / 60000; }}
+function locateTime(time) {{
   const key = String(time).slice(0,16);
   let lo = 0, hi = bars.length - 1;
   while (lo <= hi) {{
     const mid = (lo + hi) >> 1, bt = bars[mid].time.slice(0,16);
-    if (bt === key) return mid;
+    if (bt === key) return {{index:mid, insertion:mid, missing:false, minute:minuteValue(time)}};
     if (bt < key) lo = mid + 1; else hi = mid - 1;
   }}
-  return Math.max(0, Math.min(bars.length - 1, lo));
+  return {{index:-1, insertion:lo, missing:true, minute:minuteValue(time)}};
+}}
+function axisMax() {{ return bars.length ? barPosition(bars.length - 1) : 1; }}
+function barPosition(index) {{
+  if (!showRealGaps) return index;
+  return barMinutes[index] - firstBarMinute;
+}}
+function lowerBoundPosition(target) {{
+  let lo = 0, hi = bars.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (barPosition(mid) < target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function upperBoundPosition(target) {{
+  let lo = 0, hi = bars.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (barPosition(mid) <= target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function lowerBoundMinute(target) {{
+  let lo = 0, hi = barMinutes.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (barMinutes[mid] < target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function upperBoundMinute(target) {{
+  let lo = 0, hi = barMinutes.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (barMinutes[mid] <= target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function visibleIndexRange() {{
+  if (!bars.length) return [0, -1];
+  const start = Math.max(0, Math.min(bars.length - 1, lowerBoundPosition(viewStart)));
+  const end = Math.max(start, Math.min(bars.length - 1, upperBoundPosition(viewEnd) - 1));
+  return [start, end];
+}}
+function nearestBarIndex(position) {{
+  if (!bars.length) return -1;
+  const right = lowerBoundPosition(position);
+  if (right <= 0) return 0;
+  if (right >= bars.length) return bars.length - 1;
+  return Math.abs(barPosition(right) - position) < Math.abs(barPosition(right - 1) - position) ? right : right - 1;
+}}
+function lowerBoundGapPosition(target) {{
+  let lo = 0, hi = gaps.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (Number(gaps[mid].afterIndex) + 0.5 < target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function upperBoundGapPosition(target) {{
+  let lo = 0, hi = gaps.length;
+  while (lo < hi) {{ const mid = (lo + hi) >> 1; if (Number(gaps[mid].afterIndex) + 0.5 <= target) lo = mid + 1; else hi = mid; }}
+  return lo;
+}}
+function visibleGapMarkers(xScale, plotLeft, plotWidth) {{
+  if (showRealGaps || !gaps.length) return [];
+  const start = lowerBoundGapPosition(viewStart), end = upperBoundGapPosition(viewEnd);
+  const visibleCount = Math.max(0, end - start);
+  if (!visibleCount) return [];
+  const bucketWidth = visibleCount > plotWidth / 6 ? 6 : 1;
+  const markers = [];
+  let group = null, groupKey = -1;
+  for (let index = start; index < end; index++) {{
+    const gap = gaps[index], position = Number(gap.afterIndex) + 0.5;
+    const key = Math.floor((xScale(position) - plotLeft) / bucketWidth);
+    if (key !== groupKey) {{
+      if (group) markers.push(group);
+      groupKey = key;
+      group = {{...gap, positionSum: position, groupedCount: 1, closedCount: gap.closed ? 1 : 0}};
+      continue;
+    }}
+    group.positionSum += position;
+    group.groupedCount += 1;
+    group.closedCount += gap.closed ? 1 : 0;
+    if ((gap.closed && !group.closed) || (Boolean(gap.closed) === Boolean(group.closed) && Number(gap.minutes) > Number(group.minutes))) {{
+      group.closed = gap.closed;
+      group.minutes = gap.minutes;
+    }}
+  }}
+  if (group) markers.push(group);
+  return markers.map(marker => ({{...marker, position: marker.positionSum / marker.groupedCount}}));
+}}
+function tradePosition(location) {{
+  if (showRealGaps) return location.minute - firstBarMinute;
+  if (!location.missing) return location.index;
+  return Math.max(-0.5, Math.min(bars.length - 0.5, location.insertion - 0.5));
 }}
 function setSymbol(sym) {{
   symbol = sym;
   bars = DATA.barsBySymbol[symbol] || [];
-  trades = DATA.trades.filter(t => t.Item === symbol).map(t => ({{...t, openIdx: findIndex(t["Open Time"]), closeIdx: findIndex(t["Close Time"])}}));
+  barMinutes = bars.map(bar => minuteValue(bar.time));
+  firstBarMinute = barMinutes[0] || 0;
+  gaps = (DATA.gapsBySymbol || {{}})[symbol] || [];
+  trades = DATA.trades.filter(t => t.Item === symbol).map(t => {{
+    const openLocation = locateTime(t["Open Time"]), closeLocation = locateTime(t["Close Time"]);
+    return {{...t, openLocation, closeLocation, openIdx:openLocation.index, closeIdx:closeLocation.index}};
+  }});
   invalidateTradeCache();
-  viewStart = 0; viewEnd = Math.max(1, bars.length - 1);
+  viewStart = 0; viewEnd = Math.max(1, axisMax());
   const m = DATA.mappingBySymbol[symbol] || {{}};
   const am = DATA.accountMeta || {{}};
   const currencyText = am.isCentAccount
     ? `币种：${{am.currency}} 美分账户，金额已按 ${{am.displayCurrency || 'USD'}} 口径显示`
     : (am.currency ? `币种：${{am.currency}}` : '');
-  metaEl.innerHTML = `<span>账户：${{DATA.account}}</span>${{currencyText ? `<span>${{currencyText}}</span>` : ''}}<span>品种：${{symbol}} -> ${{m.mt5_symbol || ''}}</span><span>时间判断：${{m.time_mode || ''}}</span><span>查询偏移：${{m.hour_delta ?? ''}}小时</span><span>M1包络中位价差：${{m.median_distance_to_m1_range == null ? '' : Number(m.median_distance_to_m1_range).toFixed(5)}}</span><span>订单数：${{trades.length}}</span>`;
+  const correction = Number(m.configured_price_correction || 0);
+  metaEl.innerHTML = `<span>账户：${{DATA.account}}</span>${{currencyText ? `<span>${{currencyText}}</span>` : ''}}<span>品种：${{symbol}} -> ${{m.mt5_symbol || ''}}</span><span>报价源：${{m.provider || 'legacy'}} / ${{m.provider_server || '-'}}</span><span>时间判断：${{m.time_mode || ''}}</span><span>查询偏移：${{m.hour_delta ?? ''}}小时</span><span>置信度：${{m.confidence == null ? '-' : (Number(m.confidence) * 100).toFixed(1) + '%'}}</span>${{correction ? `<span>配置价格修正：${{correction}}</span>` : ''}}<span>停盘段：${{gaps.filter(g=>g.closed).length}}</span><span>订单数：${{trades.length}}</span>`;
   fitTrades();
 }}
 function displayLimit() {{ return Math.max(1, Number(displayLimitInput.value) || 300); }}
@@ -422,18 +493,32 @@ function parseTimeInput(value) {{
   if (!text) return null;
   return (text.length === 16 ? text + ':00' : text).replace('T', ' ');
 }}
-function setInputsFromView() {{
+function setInputsFromView(startIndex=null, endIndex=null) {{
   if (!bars.length) return;
-  const s = Math.max(0, Math.floor(viewStart)), e = Math.min(bars.length - 1, Math.floor(viewEnd));
+  const range = startIndex == null || endIndex == null ? visibleIndexRange() : [startIndex, endIndex];
+  const s = range[0], e = range[1];
+  if (e < s) return;
   windowStartInput.value = bars[s].time.slice(0, 16);
   windowEndInput.value = bars[e].time.slice(0, 16);
 }}
 function applyWindow() {{
   const start = parseTimeInput(windowStartInput.value), end = parseTimeInput(windowEndInput.value);
   if (!start || !end || !bars.length) return;
-  const startIdx = findIndex(start), endIdx = findIndex(end);
-  viewStart = Math.max(0, Math.min(startIdx, endIdx));
-  viewEnd = Math.min(bars.length - 1, Math.max(startIdx, endIdx));
+  const lowTime = Math.min(minuteValue(start), minuteValue(end)), highTime = Math.max(minuteValue(start), minuteValue(end));
+  const firstQuoted = lowerBoundMinute(lowTime), afterQuoted = upperBoundMinute(highTime);
+  if (firstQuoted >= afterQuoted) {{
+    noQuoteWindow = `${{start.slice(0,16)}} 至 ${{end.slice(0,16)}} · 该区间无报价`;
+    document.getElementById('windowLabel').textContent = noQuoteWindow;
+    statusEl.textContent = noQuoteWindow;
+    return;
+  }}
+  noQuoteWindow = '';
+  if (showRealGaps) {{
+    viewStart = Math.max(0, lowTime - firstBarMinute);
+    viewEnd = Math.min(axisMax(), highTime - firstBarMinute);
+  }} else {{
+    viewStart = firstQuoted; viewEnd = afterQuoted - 1;
+  }}
   clampView();
   draw(false);
 }}
@@ -472,33 +557,37 @@ function clampView() {{
   }}
   const span = viewEnd - viewStart;
   if (viewStart < 0) {{ viewStart = 0; viewEnd = span; }}
-  if (viewEnd > bars.length - 1) {{ viewEnd = bars.length - 1; viewStart = viewEnd - span; }}
-  viewStart = Math.max(0, viewStart); viewEnd = Math.min(bars.length - 1, viewEnd);
+  if (viewEnd > axisMax()) {{ viewEnd = axisMax(); viewStart = viewEnd - span; }}
+  viewStart = Math.max(0, viewStart); viewEnd = Math.min(axisMax(), viewEnd);
 }}
 function zoom(factor, anchorRatio=0.5) {{
   const span = viewEnd - viewStart, anchor = viewStart + span * anchorRatio;
-  const newSpan = Math.max(8, Math.min(bars.length - 1, span * factor));
+  const newSpan = Math.max(8, Math.min(axisMax(), span * factor));
   viewStart = anchor - newSpan * anchorRatio;
   viewEnd = anchor + newSpan * (1 - anchorRatio);
   clampView(); scheduleDraw();
 }}
-function reset() {{ viewStart = 0; viewEnd = Math.max(1, bars.length - 1); scheduleDraw(); }}
+function reset() {{ viewStart = 0; viewEnd = Math.max(1, axisMax()); noQuoteWindow=''; scheduleDraw(); }}
 function fitTrades() {{
   const all = filteredTrades();
   const focusLimit = Math.min(displayLimit(), 60);
   const focus = all.length > focusLimit ? all.slice(-focusLimit) : all;
-  const idxs = focus.flatMap(t => [t.openIdx, t.closeIdx]).filter(Number.isFinite);
+  const idxs = focus.flatMap(t => [tradePosition(t.openLocation), tradePosition(t.closeLocation)]).filter(Number.isFinite);
   if (!idxs.length) return draw();
   viewStart = Math.max(0, Math.min(...idxs) - 20);
-  viewEnd = Math.min(bars.length - 1, Math.max(...idxs) + 20);
+  viewEnd = Math.min(axisMax(), Math.max(...idxs) + 20);
   scheduleDraw();
 }}
 function visibleBars() {{
-  const s = Math.max(0, Math.floor(viewStart)), e = Math.min(bars.length - 1, Math.ceil(viewEnd));
-  return bars.slice(s, e + 1).map((b, i) => [b, s + i]);
+  const [start, end] = visibleIndexRange(), visible = [];
+  for (let index = start; index <= end; index++) visible.push([bars[index], index, barPosition(index)]);
+  return visible;
 }}
 function visibleTrades() {{
-  return filteredTrades().filter(t => (t.openIdx >= viewStart && t.openIdx <= viewEnd) || (t.closeIdx >= viewStart && t.closeIdx <= viewEnd));
+  return filteredTrades().filter(t => {{
+    const open = tradePosition(t.openLocation), close = tradePosition(t.closeLocation);
+    return (open >= viewStart && open <= viewEnd) || (close >= viewStart && close <= viewEnd);
+  }});
 }}
 function numberFilter(input) {{
   const text = String(input.value || '').trim();
@@ -560,71 +649,93 @@ function draw(syncInputs=true, updateDom=true) {{
   const allFiltered = filteredTrades();
   const vb = visibleBars(), vt = visibleTrades(), shown = vt.slice(0, displayLimit());
   if (!vb.length) return;
-  const prices = [];
-  vb.forEach(([b]) => prices.push(Number(b.low), Number(b.high)));
-  shown.forEach(t => prices.push(Number(t["Open Plot Price"] ?? t["Open Price"]), Number(t["Close Plot Price"] ?? t["Close Price"])));
-  let lo = Math.min(...prices), hi = Math.max(...prices);
+  const x = position => pad.l + (position - viewStart) / (viewEnd - viewStart) * plotW;
+  const candleX = position => x(position);
+  const maxDrawBars = Math.max(1, Math.floor(plotW * 1.5));
+  let candleBars = [];
+  if (vb.length > maxDrawBars) {{
+    let group = null, groupKey = '';
+    vb.forEach(([b, _index, position]) => {{
+      const key = `${{b.segment || 0}}:${{Math.floor(candleX(position))}}`;
+      if (key !== groupKey) {{
+        if (group) candleBars.push([group, group.positionSum / group.count]);
+        groupKey = key;
+        group = {{positionSum: position, count: 1, open: Number(b.open), close: Number(b.close), high: Number(b.high), low: Number(b.low)}};
+        return;
+      }}
+      group.positionSum += position; group.count += 1;
+      group.high = Math.max(group.high, Number(b.high));
+      group.low = Math.min(group.low, Number(b.low));
+      group.close = Number(b.close);
+    }});
+    if (group) candleBars.push([group, group.positionSum / group.count]);
+  }} else {{
+    candleBars = vb.map(([bar, _index, position]) => [bar, position]);
+  }}
+  let lo = Infinity, hi = -Infinity;
+  candleBars.forEach(([b]) => {{ lo = Math.min(lo, Number(b.low)); hi = Math.max(hi, Number(b.high)); }});
+  shown.forEach(t => {{
+    lo = Math.min(lo, Number(t["Open Plot Price"] ?? t["Open Price"]), Number(t["Close Plot Price"] ?? t["Close Price"]));
+    hi = Math.max(hi, Number(t["Open Plot Price"] ?? t["Open Price"]), Number(t["Close Plot Price"] ?? t["Close Price"]));
+  }});
   const d = digits(), margin = Math.max(d === 2 ? 0.5 : 0.0002, (hi - lo) * 0.08);
   lo -= margin; hi += margin;
   const y = p => pad.t + (hi - p) / (hi - lo) * plotH;
-  const x = idx => pad.l + (idx - viewStart) / (viewEnd - viewStart) * plotW;
-  const candleX = idx => x(idx);
   const priceFromY = yy => hi - ((yy - pad.t) / plotH) * (hi - lo);
   const indexFromX = xx => viewStart + ((xx - pad.l) / plotW) * (viewEnd - viewStart);
-  ctx.fillStyle = '#fff'; ctx.fillRect(pad.l, pad.t, plotW, plotH);
+  ctx.fillStyle = 'rgb(255,255,255)'; ctx.fillRect(pad.l, pad.t, plotW, plotH);
   ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1; ctx.font = '12px Arial'; ctx.fillStyle = '#4b5563';
   for (let k = 0; k <= 7; k++) {{
     const yy = pad.t + plotH * k / 7;
     ctx.beginPath(); ctx.moveTo(pad.l, yy); ctx.lineTo(pad.l + plotW, yy); ctx.stroke();
     ctx.fillText((hi - (hi - lo) * k / 7).toFixed(d), 8, yy + 4);
   }}
-  const span = viewEnd - viewStart, labelStep = Math.max(1, Math.ceil(span / 9));
-  for (let i = Math.ceil(viewStart); i <= Math.floor(viewEnd); i += labelStep) ctx.fillText(bars[i].time.slice(5,16), x(i) - 28, H - 38);
-  const maxDrawBars = Math.max(1, Math.floor(plotW * 1.5));
-  let candleBars = vb;
-  if (vb.length > maxDrawBars) {{
-    const buckets = new Map();
-    vb.forEach(([b, idx]) => {{
-      const key = Math.floor(candleX(idx));
-      let g = buckets.get(key);
-      if (!g) {{
-        g = {{idxSum: 0, count: 0, open: Number(b.open), close: Number(b.close), high: Number(b.high), low: Number(b.low)}};
-        buckets.set(key, g);
-      }}
-      g.idxSum += idx; g.count += 1;
-      g.high = Math.max(g.high, Number(b.high));
-      g.low = Math.min(g.low, Number(b.low));
-      g.close = Number(b.close);
-    }});
-    candleBars = Array.from(buckets.values()).map(g => [{{open: g.open, high: g.high, low: g.low, close: g.close}}, g.idxSum / g.count]);
-  }}
-  const candleW = vb.length > maxDrawBars ? 1.2 : Math.max(2, Math.min(13, Math.abs(x(viewStart + 1) - x(viewStart)) * 0.62));
-  candleBars.forEach(([b, idx]) => {{
-    const xx = candleX(idx), up = Number(b.close) >= Number(b.open);
+  const labelStep = Math.max(1, Math.ceil(vb.length / 9));
+  for (let i = 0; i < vb.length; i += labelStep) ctx.fillText(vb[i][0].time.slice(5,16), x(vb[i][2]) - 28, H - 38);
+  const candleW = vb.length > maxDrawBars ? 1.2 : Math.max(2, Math.min(13, plotW / Math.max(vb.length, 1) * 0.62));
+  candleBars.forEach(([b, position]) => {{
+    const xx = candleX(position), up = Number(b.close) >= Number(b.open);
     ctx.strokeStyle = up ? '#16a34a' : '#dc2626'; ctx.fillStyle = ctx.strokeStyle;
     ctx.beginPath(); ctx.moveTo(xx, y(Number(b.high))); ctx.lineTo(xx, y(Number(b.low))); ctx.stroke();
     const top = y(Math.max(Number(b.open), Number(b.close))), bot = y(Math.min(Number(b.open), Number(b.close)));
     ctx.fillRect(xx - candleW / 2, top, candleW, Math.max(1, bot - top));
   }});
+  let lastGapLabelX = -Infinity;
+  visibleGapMarkers(x, pad.l, plotW).forEach(g => {{
+    const xx = x(g.position);
+    ctx.save(); ctx.strokeStyle = g.closed ? '#ffc779' : '#6f8aa2'; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(xx,pad.t); ctx.lineTo(xx,pad.t+plotH); ctx.stroke(); ctx.setLineDash([]);
+    if (xx - lastGapLabelX < 112) {{ ctx.restore(); return; }}
+    const label = g.groupedCount > 1
+      ? `${{g.closedCount ? '停盘/断点' : '断点'}} ${{g.groupedCount}}段`
+      : (g.closed ? `停盘 ${{formatDuration(g.minutes * 60)}}` : `断点 ${{Math.round(g.minutes)}}分`);
+    ctx.fillStyle = '#fff7ed'; ctx.fillRect(Math.max(pad.l,xx-52),pad.t+5,104,18); ctx.fillStyle='#92400e'; ctx.fillText(label,Math.max(pad.l+4,xx-47),pad.t+18); ctx.restore();
+    lastGapLabelX = xx;
+  }});
   shown.forEach(t => {{
-    const xo = x(t.openIdx), xc = x(t.closeIdx), yo = y(Number(t["Open Plot Price"] ?? t["Open Price"])), yc = y(Number(t["Close Plot Price"] ?? t["Close Price"]));
+    const openPosition=tradePosition(t.openLocation), closePosition=tradePosition(t.closeLocation);
+    const xo = x(openPosition), xc = x(closePosition), yo = y(Number(t["Open Plot Price"] ?? t["Open Price"])), yc = y(Number(t["Close Plot Price"] ?? t["Close Price"]));
     ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 1.6; ctx.setLineDash([5,4]);
     ctx.beginPath(); ctx.moveTo(xo, yo); ctx.lineTo(xc, yc); ctx.stroke(); ctx.setLineDash([]);
-    if (t.openIdx >= viewStart && t.openIdx <= viewEnd) {{
-      ctx.fillStyle = t.Type === 'buy' ? '#16a34a' : '#dc2626';
-      ctx.beginPath(); ctx.arc(xo, yo, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    if (openPosition >= viewStart && openPosition <= viewEnd) {{
+      const isBuy = t.Type === 'buy';
+      ctx.beginPath();
+      if (isBuy) {{ ctx.moveTo(xo, yo - 7); ctx.lineTo(xo - 6, yo + 5); ctx.lineTo(xo + 6, yo + 5); }}
+      else {{ ctx.moveTo(xo, yo + 7); ctx.lineTo(xo - 6, yo - 5); ctx.lineTo(xo + 6, yo - 5); }}
+      ctx.closePath();
+      if (t.openLocation.missing) {{ ctx.strokeStyle='#d97706'; ctx.lineWidth=2; ctx.stroke(); }}
+      else {{ ctx.fillStyle='#111827'; ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke(); }}
     }}
-    if (t.closeIdx >= viewStart && t.closeIdx <= viewEnd) {{
-      ctx.fillStyle = '#2563eb'; ctx.fillRect(xc - 4, yc - 4, 8, 8);
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.strokeRect(xc - 4, yc - 4, 8, 8);
+    if (closePosition >= viewStart && closePosition <= viewEnd) {{
+      if (t.closeLocation.missing) {{ ctx.strokeStyle='#ffc779'; ctx.lineWidth=2; ctx.strokeRect(xc-5,yc-5,10,10); }}
+      else {{ ctx.fillStyle = '#2563eb'; ctx.fillRect(xc - 4, yc - 4, 8, 8); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.strokeRect(xc - 4, yc - 4, 8, 8); }}
     }}
   }});
   ctx.strokeStyle = '#9ca3af'; ctx.strokeRect(pad.l, pad.t, plotW, plotH);
-  drawBottomPanel(shown, pad, plotW, profitTop, profitH, x);
+  drawKdeskBottomPanel(shown, pad, plotW, profitTop, profitH, x);
   const crosshairBottom = profitTop + profitH;
   if (crosshair && crosshair.x >= pad.l && crosshair.x <= pad.l + plotW && crosshair.y >= pad.t && crosshair.y <= crosshairBottom) {{
-    const idx = Math.max(0, Math.min(bars.length - 1, Math.round(indexFromX(crosshair.x)))), cx = x(idx), cy = crosshair.y, price = priceFromY(cy);
+    const targetPosition=indexFromX(crosshair.x), idx=nearestBarIndex(targetPosition), cx = x(barPosition(idx)), cy = crosshair.y, price = priceFromY(cy);
     const xLabel = Math.max(pad.l, Math.min(cx - 58, pad.l + plotW - 116)), yLabel = Math.max(pad.t, Math.min(cy - 10, pad.t + plotH - 20));
     ctx.save(); ctx.strokeStyle = '#111827'; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(cx, pad.t); ctx.lineTo(cx, crosshairBottom); ctx.stroke();
@@ -639,10 +750,11 @@ function draw(syncInputs=true, updateDom=true) {{
     ctx.fillStyle = '#111827'; ctx.fillRect(xLabel, crosshairBottom + 8, 116, 20);
     ctx.fillStyle = '#fff'; ctx.fillText(bars[idx].time.slice(5,16), xLabel + 8, crosshairBottom + 22); ctx.restore();
   }}
-  const s = Math.max(0, Math.floor(viewStart)), e = Math.min(bars.length - 1, Math.floor(viewEnd));
+  const s = vb[0][1], e = vb[vb.length - 1][1];
   if (updateDom) {{
-    statusEl.textContent = `${{bars[s].time}} - ${{bars[e].time}} | 可见K线 ${{e - s + 1}} / ${{bars.length}} | 过滤后 ${{allFiltered.length}} | 可见交易 ${{vt.length}} | 实际显示 ${{shown.length}}`;
-    if (syncInputs) setInputsFromView();
+    const missingEndpoints=shown.reduce((sum,t)=>sum+Number(t.openLocation.missing)+Number(t.closeLocation.missing),0);
+    statusEl.textContent = `${{bars[s].time}} - ${{bars[e].time}} | 可见K线 ${{vb.length}} / ${{bars.length}} | 过滤后 ${{allFiltered.length}} | 可见交易 ${{vt.length}} | 实际显示 ${{shown.length}}${{missingEndpoints?` | 无报价成交点 ${{missingEndpoints}}`:''}}`;
+    if (syncInputs) setInputsFromView(s, e);
     const tableKey = symbol + '|' + shown.map(t => t.Ticket).join(',');
     if (tableKey !== lastTableKey) {{
       lastTableKey = tableKey;
@@ -670,7 +782,7 @@ function updateTable(rows) {{
     return `<td class="${{["Ticket","Type","Open Time","Close Time","Hold Time","Comment"].includes(c) ? 'left' : ''}}">${{v ?? ''}}</td>`;
   }}).join('') + '</tr>').join('') + '</tbody>';
 }}
-function drawBottomPanel(rows, pad, plotW, top, height, xScale) {{
+function drawKdeskBottomPanel(rows, pad, plotW, top, height, xScale) {{
   ctx.save();
   ctx.fillStyle = 'rgba(248,250,252,0.96)';
   ctx.fillRect(pad.l, top, plotW, height);
@@ -695,7 +807,7 @@ function drawBottomPanel(rows, pad, plotW, top, height, xScale) {{
     rows.forEach(t => {{
       const v = Math.max(0, Number(t.Volume) || 0);
       const h = v / maxVol * (height - 42);
-      const cx = xScale(t.openIdx);
+      const cx = xScale(tradePosition(t.openLocation));
       if (cx < pad.l - bw || cx > pad.l + plotW + bw) return;
       ctx.fillStyle = 'rgba(59,130,246,0.86)';
       ctx.fillRect(cx - bw / 2, baseY - h, bw, Math.max(1, h));
@@ -720,7 +832,7 @@ function drawBottomPanel(rows, pad, plotW, top, height, xScale) {{
   rows.forEach(t => {{
     const p = Number(t.Profit) || 0;
     const h = Math.abs(p) / maxAbs * (height / 2 - 14);
-    const cx = xScale(t.openIdx);
+    const cx = xScale(tradePosition(t.openLocation));
     if (cx < pad.l - bw || cx > pad.l + plotW + bw) return;
     const y = p >= 0 ? zeroY - h : zeroY;
     ctx.fillStyle = p >= 0 ? 'rgba(239,68,68,0.86)' : 'rgba(34,197,94,0.86)';
@@ -755,7 +867,7 @@ function drawProfitPanel(rows, pad, plotW, top, height, xScale) {{
   rows.forEach(t => {{
     const p = Number(t.Profit) || 0;
     const h = Math.abs(p) / maxAbs * (height / 2 - 10);
-    const cx = xScale(t.openIdx);
+    const cx = xScale(tradePosition(t.openLocation));
     if (cx < pad.l - bw || cx > pad.l + plotW + bw) return;
     const y = p >= 0 ? zeroY - h : zeroY;
     ctx.fillStyle = p >= 0 ? 'rgba(239,68,68,0.86)' : 'rgba(34,197,94,0.86)';
@@ -806,7 +918,15 @@ canvas.addEventListener('dblclick', reset);
 document.getElementById('zoomIn').addEventListener('click', () => zoom(0.65));
 document.getElementById('zoomOut').addEventListener('click', () => zoom(1.55));
 document.getElementById('reset').addEventListener('click', reset);
-document.getElementById('fitTrades').addEventListener('click', fitTrades);
+document.querySelector('#fitTrades').addEventListener('click', fitTrades);
+function setGapMode(expanded) {{
+  showRealGaps = expanded;
+  hideGapsButton.classList.toggle('active', !expanded);
+  showGapsButton.classList.toggle('active', expanded);
+  reset();
+}}
+hideGapsButton.addEventListener('click', () => setGapMode(false));
+showGapsButton.addEventListener('click', () => setGapMode(true));
 document.getElementById('applyWindow').addEventListener('click', applyWindow);
 windowStartInput.addEventListener('keydown', applyWindowOnEnter);
 windowEndInput.addEventListener('keydown', applyWindowOnEnter);
@@ -821,6 +941,27 @@ document.getElementById('panelVolume').addEventListener('click', () => {{
   document.getElementById('panelVolume').classList.add('active');
   document.getElementById('panelProfit').classList.remove('active');
   scheduleDraw(false);
+}});
+const positionPanelButton = document.getElementById('panelPosition');
+if (positionPanelButton) positionPanelButton.addEventListener('click', () => {{
+  panelMode = 'position';
+  positionPanelButton.classList.add('active');
+  document.getElementById('panelProfit').classList.remove('active');
+  document.getElementById('panelVolume').classList.remove('active');
+  scheduleDraw(false);
+}});
+const barStackButton = document.getElementById('barStackToggle');
+if (barStackButton) barStackButton.addEventListener('click', () => {{
+  barStackMode = barStackMode === 'stack' ? 'single' : 'stack';
+  barStackButton.textContent = barStackMode === 'stack' ? 'Profit柱：叠加' : 'Profit柱：单独';
+  scheduleDraw(false);
+}});
+canvas.addEventListener('click', ev => {{
+  if (typeof updatePositionSnapshot !== 'function' || drag) return;
+  const rect=canvas.getBoundingClientRect(), ratio=Math.max(0,Math.min(1,(ev.clientX-rect.left-72)/Math.max(1,rect.width-96)));
+  const position=viewStart+ratio*(viewEnd-viewStart);
+  const ms=showRealGaps ? firstBarMinute*60000+position*60000 : barMinutes[Math.max(0,Math.min(bars.length-1,Math.round(position)))]*60000;
+  updatePositionSnapshot(ms);
 }});
 displayLimitInput.addEventListener('input', () => {{ lastTableKey = ''; scheduleDraw(false); }});
 [
@@ -871,6 +1012,8 @@ def main() -> None:
     mapping_by_symbol = json.loads(mapping_path.read_text(encoding="utf-8"))
     bars_by_symbol = {}
     for report_symbol, mapping in mapping_by_symbol.items():
+        if not isinstance(mapping, dict) or mapping.get("validation_status") == "rejected" or not mapping.get("mt5_symbol"):
+            continue
         symbol_trades = trades[trades["Item"] == report_symbol] if "Item" in trades.columns else trades.iloc[0:0]
         bars = load_bars_for_symbol(trades_path.parent, stem, report_symbol, mapping)
         bars_by_symbol[report_symbol] = apply_display_price_alignment(report_symbol, bars, symbol_trades, mapping)

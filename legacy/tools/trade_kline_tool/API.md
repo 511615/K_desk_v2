@@ -20,6 +20,7 @@ Environment variables:
 | `K_DESK_ROOT` | Project root inferred from file path | Project root. |
 | `TRADE_KLINE_OUT_DIR` | `outputs\kline` | Default output directory, overridden by `--out-dir`. |
 | `TRADE_KLINE_TERMINAL` | AC Capital Market MT5 terminal path | Default MT5 terminal, overridden by `--terminal`. |
+| `KDESK_KLINE_QUOTE_SOURCES` | unset | Optional credential-free provider/route JSON. |
 | `TRADE_KLINE_PYDEPS` | `pydeps` | Optional local Python dependency directory. |
 
 Python example:
@@ -100,6 +101,9 @@ Allowed:
 - Read statement files.
 - Read MT5 symbol information and M1 quote data through the Python API.
 - Generate or overwrite local analysis outputs under `outputs\kline`.
+- New mapping entries add provider/server/confidence/validation/cache fields. The generator also
+  writes `{stem}_kline_result.json` and prints `KLINE_RESULT` with additive `partial`, `symbols`,
+  `failures` and `quoteSources` fields. Existing mapping keys and output names remain valid.
 
 Forbidden:
 

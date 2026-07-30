@@ -72,6 +72,20 @@ def test_job_idempotency_only_deduplicates_active_runs(tmp_path: Path) -> None:
     assert rerun["id"] != first["id"]
 
 
+def test_active_job_prefers_running_over_queued(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    running = database.create_job("push_discovery", {"days": 3})
+    database.claim_next_job(kinds=("push_discovery",))
+    database.create_job("push_discovery", {"days": 7})
+
+    active = database.get_active_job("push_discovery")
+
+    assert active is not None
+    assert active["id"] == running["id"]
+    assert active["status"] == "running"
+
+
 def test_job_queues_claim_only_their_assigned_kinds(tmp_path: Path) -> None:
     database = Database(tmp_path / "jobs.sqlite")
     database.create_schema()

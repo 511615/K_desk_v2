@@ -359,6 +359,15 @@ class Database:
             ]
             return payload
 
+    def get_active_job(self, kind: str) -> dict | None:
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(JobRunRow)
+                .where(JobRunRow.kind == kind, JobRunRow.status.in_(["queued", "running"]))
+                .order_by(JobRunRow.started_at.desc(), JobRunRow.created_at.desc())
+            )
+            return self._job_dict(row) if row else None
+
     def claim_next_job(self, *, kinds: tuple[str, ...] | None = None) -> dict | None:
         if kinds is not None and not kinds:
             return None

@@ -1,0 +1,21 @@
+{
+  "providers": [
+    {
+      "id": "current-terminal",
+      "terminal": "C:\\Program Files\\AC Capital Market MT5 Terminal\\terminal64.exe",
+      "servers": ["ACCMGlobal-Demo"],
+      "platforms": ["MT5"],
+      "aliases": {"UT100": ["NAS100Roll"]},
+      "allowedHourOffsets": [-4, -3, -2, -1, 0, 1, 2, 3, 4],
+      "priceCorrections": {}
+    }
+  ],
+  "routes": [
+    {
+      "platform": "MT5",
+      "server": "ACCMGlobal-Demo",
+      "preferred": ["current-terminal"],
+      "fallback": []
+    }
+  ]
+}

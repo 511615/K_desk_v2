@@ -5,18 +5,30 @@ import logging
 import mimetypes
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
+from kdesk.application.bonus_arbitrage_scan import normalize_bonus_scan_options
+from kdesk.application.copy_pool_monitor import CopyPoolMonitorService
 from kdesk.application.ledger_service import LedgerService
+from kdesk.application.position_risk_scan import normalize_position_scan_options
+from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.build_info import build_metadata
+from kdesk.domain.rebate_churning import normalize_scan_options
+from kdesk.infrastructure.automation_reports import (
+    XLSX_MEDIA_TYPE,
+    build_copy_profit_report,
+    build_ea_profit_report,
+)
+from kdesk.infrastructure.copy_pool_monitor import CopyPoolFileSnapshotRepository
 from kdesk.infrastructure.database import Database
 from kdesk.infrastructure.excel_io import export_audit_json
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
@@ -24,6 +36,17 @@ from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
 
 logger = logging.getLogger("kdesk.account")
+
+
+def _xlsx_response(content: bytes, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _safe_login(login: str) -> str:
@@ -111,6 +134,12 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     compat_workbook = config.legacy_compat_dir / "problematic_accounts.xlsx"
     ledger = LedgerService(database, compatibility_workbook=compat_workbook)
     legacy = LegacyBridge(config)
+    relationship_network = AccountRelationshipNetworkService(legacy.call)
+    copy_pool = CopyPoolMonitorService(
+        CopyPoolFileSnapshotRepository(
+            config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
+        )
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -126,6 +155,8 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.database = database
     app.state.ledger = ledger
     app.state.legacy = legacy
+    app.state.relationship_network = relationship_network
+    app.state.copy_pool = copy_pool
 
     assets = config.frontend_dist / "assets"
     if assets.exists():
@@ -153,13 +184,38 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/", response_class=HTMLResponse)
+    @app.get("/copy-pool", response_class=HTMLResponse)
     async def home(request: Request):
         if request.query_params.get("legacy") == "1" or config.ui_mode == "legacy":
             return HTMLResponse(await run_in_threadpool(legacy.workbench_page))
         index = _frontend_file(config)
         if index:
-            return FileResponse(index)
+            return FileResponse(index, headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            })
         return HTMLResponse(_fallback_page("K_desk v2", "<h1>K_desk v2</h1><p>前端尚未构建。兼容工作台：<a href='/?legacy=1'>打开</a></p>"))
+
+    @app.get("/api/copy-pool/dashboard")
+    async def copy_pool_dashboard(
+        timeline_limit: int = Query(720, ge=30, le=5000),
+        event_limit: int = Query(100, ge=10, le=1000),
+        order_limit: int = Query(100, ge=10, le=1000),
+    ):
+        return await run_in_threadpool(
+            copy_pool.dashboard,
+            timeline_limit=timeline_limit,
+            event_limit=event_limit,
+            order_limit=order_limit,
+        )
+
+    @app.get("/copy-pool/accounts/{alias}")
+    async def copy_pool_account(alias: str):
+        target = await run_in_threadpool(copy_pool.account_target, alias)
+        if not target:
+            raise HTTPException(status_code=404, detail="客户池账户映射不存在")
+        return RedirectResponse(target, status_code=307)
 
     @app.get("/account/{login}", response_class=HTMLResponse)
     async def account_page(login: str):
@@ -257,6 +313,14 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def automation(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_automation_payload", _safe_login(login), legacy_filters(request.query_params))
 
+    @app.get("/api/accounts/by-login/{login}/relationship-network")
+    async def relationship_network_payload(login: str, request: Request):
+        return await run_in_threadpool(
+            relationship_network.build,
+            _safe_login(login),
+            legacy_filters(request.query_params),
+        )
+
     @app.get("/api/accounts/by-login/{login}/copy-origins")
     async def copy_origins(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_copy_origins_payload", _safe_login(login), legacy_filters(request.query_params))
@@ -269,13 +333,71 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def ea_comment_profit(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_ea_comment_profit_payload", _safe_login(login), legacy_filters(request.query_params))
 
+    @app.get("/api/accounts/by-login/{login}/copy-report.xlsx")
+    async def copy_profit_report(login: str, request: Request):
+        login = _safe_login(login)
+        filters = legacy_filters(request.query_params)
+        try:
+            copy_payload = await run_in_threadpool(
+                legacy.call,
+                "account_copy_origins_payload",
+                login,
+                filters,
+            )
+        except Exception as exc:
+            logger.warning("Copy report query failed for account %s: %s", login, exc)
+            raise HTTPException(status_code=503, detail="跟单收益数据查询失败，无法生成报表") from exc
+        exported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        content = await run_in_threadpool(
+            build_copy_profit_report,
+            copy_payload,
+            None,
+            filters,
+            exported_at=exported_at,
+        )
+        filename = f"copy_profit_{login}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return _xlsx_response(content, filename)
+
+    @app.get("/api/accounts/by-login/{login}/ea-report.xlsx")
+    async def ea_profit_report(login: str, request: Request):
+        login = _safe_login(login)
+        filters = legacy_filters(request.query_params)
+        try:
+            payload = await run_in_threadpool(
+                legacy.call,
+                "account_ea_comment_profit_payload",
+                login,
+                filters,
+            )
+        except Exception as exc:
+            logger.warning("EA report query failed for account %s: %s", login, exc)
+            raise HTTPException(status_code=503, detail="EA 收益数据查询失败，无法生成报表") from exc
+        exported_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        content = await run_in_threadpool(
+            build_ea_profit_report,
+            payload,
+            filters,
+            exported_at=exported_at,
+        )
+        filename = f"ea_profit_{login}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return _xlsx_response(content, filename)
+
     @app.get("/api/accounts/by-login/{login}/login-ips")
     async def login_ips(login: str):
         return await run_in_threadpool(legacy.call, "account_login_ips_payload", _safe_login(login))
 
     @app.get("/api/accounts/by-login/{login}/orders")
-    async def orders(login: str, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=500)):
-        return await run_in_threadpool(legacy.call, "account_orders_payload", _safe_login(login), page, page_size)
+    async def orders(login: str, request: Request, page: int = Query(1, ge=1), page_size: int = Query(100, ge=1, le=500)):
+        filters = legacy_filters(request.query_params)
+        return await run_in_threadpool(
+            legacy.call,
+            "account_orders_payload",
+            _safe_login(login),
+            page,
+            page_size,
+            filters.get("platform", ""),
+            filters.get("server", ""),
+        )
 
     @app.get("/api/account-lookup")
     async def account_lookup(account: str):
@@ -335,6 +457,74 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             if candidates:
                 payload["candidates"] = candidates
             return JSONResponse(payload, status_code=409 if candidates else 400)
+
+    @app.post("/api/rebate-churning/scans")
+    def start_rebate_churning_scan(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            clean_payload = normalize_scan_options(payload, now=datetime.now())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        key = "rebate-churning-scan:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
+        job = database.create_job("rebate_churning_scan", clean_payload, idempotency_key=key, max_attempts=1)
+        return {"ok": True, "job": job}
+
+    @app.get("/api/rebate-churning/scans/{job_id}")
+    def get_rebate_churning_scan(job_id: str) -> dict:
+        job = database.get_job(job_id)
+        if not job or job.get("kind") != "rebate_churning_scan":
+            raise HTTPException(status_code=404, detail="刷返佣扫描任务不存在")
+        return {"ok": True, **job}
+
+    @app.get("/api/rebate-churning/ibs/{environment}/{ib_id}")
+    async def rebate_churning_ib_detail(environment: str, ib_id: int, start: str = "", end: str = ""):
+        if environment not in {"gb", "cn", "dbg_cn", "dbg_vn"}:
+            raise HTTPException(status_code=400, detail="环境无效")
+        try:
+            return await run_in_threadpool(legacy.call, "rebate_churning_ib_payload", environment, ib_id, start, end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/bonus-arbitrage/scans")
+    def start_bonus_arbitrage_scan(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            clean_payload = normalize_bonus_scan_options(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        key = "bonus-arbitrage-scan:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
+        job = database.create_job("bonus_arbitrage_scan", clean_payload, idempotency_key=key, max_attempts=1)
+        return {"ok": True, "job": job}
+
+    @app.get("/api/bonus-arbitrage/scans/active")
+    def get_active_bonus_arbitrage_scan() -> dict:
+        return {"ok": True, "job": database.get_active_job("bonus_arbitrage_scan")}
+
+    @app.get("/api/bonus-arbitrage/scans/{job_id}")
+    def get_bonus_arbitrage_scan(job_id: str) -> dict:
+        job = database.get_job(job_id)
+        if not job or job.get("kind") != "bonus_arbitrage_scan":
+            raise HTTPException(status_code=404, detail="赠金套利扫描任务不存在")
+        return {"ok": True, **job}
+
+    @app.post("/api/position-risk/scans")
+    def start_position_risk_scan(payload: dict = Body(default_factory=dict)) -> dict:
+        try:
+            clean_payload = normalize_position_scan_options(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        key = "position-risk-scan:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
+        job = database.create_job("position_risk_scan", clean_payload, idempotency_key=key, max_attempts=1)
+        return {"ok": True, "job": job}
+
+    @app.get("/api/position-risk/scans/active")
+    def get_active_position_risk_scan() -> dict:
+        return {"ok": True, "job": database.get_active_job("position_risk_scan")}
+
+    @app.get("/api/position-risk/scans/{job_id}")
+    def get_position_risk_scan(job_id: str) -> dict:
+        job = database.get_job(job_id)
+        if not job or job.get("kind") != "position_risk_scan":
+            raise HTTPException(status_code=404, detail="重仓时点扫描任务不存在")
+        return {"ok": True, **job}
 
     @app.get("/api/hierarchy-products")
     async def hierarchy_products():
@@ -413,6 +603,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         key = "push-discovery:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
         job = database.create_job("push_discovery", clean_payload, idempotency_key=key, max_attempts=1)
         return {"ok": True, "job": job}
+
+    @app.get("/api/push-discovery/active")
+    def get_active_push_discovery() -> dict:
+        return {"ok": True, "job": database.get_active_job("push_discovery")}
 
     @app.get("/api/kline/jobs/{job_id}")
     @app.get("/api/toxic/jobs/{job_id}")

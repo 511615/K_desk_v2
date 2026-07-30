@@ -9,7 +9,6 @@ from typing import Callable, Iterable
 MAX_USERS = 2500
 MAX_ACCOUNTS = 5000
 MAX_RANGE_DAYS = 366
-LIVE_SERVER_CODES = {"1", "2"}
 CENT_PATTERN = re.compile(r"(?i)(?:cent|usc)")
 PRODUCT_PATTERN = re.compile(r"[0-9A-Za-z._#-]{1,40}")
 PROMOTION_PRODUCT = "@PROMOTION"
@@ -126,23 +125,66 @@ def _full_name(row: dict) -> str:
     )
 
 
+def _source_routes(source: dict) -> list[dict]:
+    routes = []
+    raw_routes = source.get("crm_routes")
+    if isinstance(raw_routes, list):
+        routes.extend(route for route in raw_routes if isinstance(route, dict))
+    account_route = source.get("account_route")
+    if isinstance(account_route, dict):
+        routes.append(account_route)
+    routes.append({
+        "schema": source.get("crm_schema"),
+        "mt_server_code": source.get("mt_server_code"),
+    })
+
+    result = []
+    seen = set()
+    for route in routes:
+        schema = _text(route.get("schema") or route.get("crm_schema"))
+        server_code = _text(route.get("mt_server_code") or route.get("server_code"))
+        key = (schema, server_code)
+        if not schema or not server_code or key in seen:
+            continue
+        seen.add(key)
+        result.append({"schema": schema, "mt_server_code": server_code})
+    return result
+
+
+def _server_codes_for_schema(sources: list[dict], schema: str) -> list[str]:
+    return sorted({
+        route["mt_server_code"]
+        for source in sources
+        for route in _source_routes(source)
+        if route["schema"] == schema
+    })
+
+
 def _crm_sources(sources: list[dict]) -> list[dict]:
     seen = set()
     result = []
     for source in sources:
-        schema = _text(source.get("crm_schema"))
-        key = (_text(source.get("host")), schema)
-        if not schema or key in seen:
-            continue
-        seen.add(key)
-        result.append(source)
+        for route in _source_routes(source):
+            schema = route["schema"]
+            key = (_text(source.get("host")), schema)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append({**source, "crm_schema": schema})
     return result
 
 
 def _target_mode(raw_target: str) -> tuple[str, str, str]:
-    environment_match = re.fullmatch(r"(?i)(gb|cn)\s*:\s*(\d+)", raw_target)
+    environment_match = re.fullmatch(r"(?i)(gb|cn|ac-gb|ac-cn|dbg-cn|dbg-vn)\s*:\s*(\d+)", raw_target)
     if environment_match:
-        schema = "int_sass_crm_ac" if environment_match.group(1).lower() == "gb" else "sass_crm_ac"
+        schema = {
+            "gb": "int_sass_crm_ac",
+            "cn": "sass_crm_ac",
+            "ac-gb": "int_sass_crm_ac",
+            "ac-cn": "sass_crm_ac",
+            "dbg-cn": "crm_cn",
+            "dbg-vn": "crm_vn",
+        }[environment_match.group(1).lower()]
         return "user", environment_match.group(2), schema
     if ":" in raw_target:
         prefix, value = raw_target.split(":", 1)
@@ -193,18 +235,22 @@ def resolve_subject(target: str, sources: list[dict], connect: Callable) -> dict
         schema = _text(source.get("crm_schema"))
         if schema_filter and schema != schema_filter:
             continue
+        server_codes = _server_codes_for_schema(sources, schema)
+        if not server_codes:
+            continue
         with connect(source) as conn:
             with conn.cursor() as cur:
                 account_rows = []
                 if mode in {"account", "numeric"}:
+                    placeholders = ",".join(["%s"] * len(server_codes))
                     cur.execute(
                         f"""
                         select {fields}, a.mt_login as matched_account
                         from `{schema}`.`mt_users_account` a
                         join `{schema}`.`sys_user_view` u on u.id = a.user_id
-                        where a.mt_login = %s and a.mt_server_code in ('1', '2')
+                        where a.mt_login = %s and a.mt_server_code in ({placeholders})
                         """,
-                        (int(value),),
+                        [int(value), *server_codes],
                     )
                     account_rows = cur.fetchall()
                     for row in account_rows:
@@ -240,8 +286,14 @@ def resolve_subject(target: str, sources: list[dict], connect: Callable) -> dict
         raise ValueError("没有找到对应的IB、客户或交易账号")
     if len(matches) > 1:
         candidate_rows = []
+        prefixes = {
+            "int_sass_crm_ac": "gb",
+            "sass_crm_ac": "cn",
+            "crm_cn": "dbg-cn",
+            "crm_vn": "dbg-vn",
+        }
         for row in sorted(matches, key=lambda item: (item["schema"], item["userId"])):
-            prefix = "gb" if row["schema"] == "int_sass_crm_ac" else "cn"
+            prefix = prefixes[row["schema"]]
             candidate_rows.append(
                 {
                     "target": f"{prefix}:{row['userId']}",
@@ -257,9 +309,12 @@ def resolve_subject(target: str, sources: list[dict], connect: Callable) -> dict
     return matches[0]
 
 
-def _fetch_tree_and_accounts(subject: dict, connect: Callable) -> tuple[dict[int, dict], list[dict]]:
+def _fetch_tree_and_accounts(subject: dict, sources: list[dict], connect: Callable) -> tuple[dict[int, dict], list[dict]]:
     schema = subject["schema"]
     source = subject["source"]
+    server_codes = _server_codes_for_schema(sources, schema)
+    if not server_codes:
+        raise ValueError(f"{schema}没有配置可用的交易服务器")
     fields = """
         id, supper_id, top_ib_id, user_type, customer_type, ib_level,
         status, full_name, first_name, middle_name, last_name
@@ -297,13 +352,14 @@ def _fetch_tree_and_accounts(subject: dict, connect: Callable) -> tuple[dict[int
             accounts = []
             for batch in _batches(users):
                 placeholders = ",".join(["%s"] * len(batch))
+                server_placeholders = ",".join(["%s"] * len(server_codes))
                 cur.execute(
                     f"""
                     select user_id, mt_login, mt_server_code, mt_type_name, status, create_time
                     from `{schema}`.`mt_users_account`
-                    where user_id in ({placeholders}) and mt_server_code in ('1', '2')
+                    where user_id in ({placeholders}) and mt_server_code in ({server_placeholders})
                     """,
-                    batch,
+                    [*batch, *server_codes],
                 )
                 accounts.extend(cur.fetchall())
                 if len(accounts) > MAX_ACCOUNTS:
@@ -312,29 +368,38 @@ def _fetch_tree_and_accounts(subject: dict, connect: Callable) -> tuple[dict[int
 
 
 def _source_for_account(sources: list[dict], crm_schema: str, server_code: str) -> dict | None:
-    if server_code == "1":
-        return next(
-            (
-                source
-                for source in sources
-                if _text(source.get("crm_schema")) == crm_schema
-                and _text(source.get("mt_server_code")) == "1"
-                and source.get("kind") == "mt5_deals"
-            ),
-            None,
-        )
-    if server_code == "2":
-        return next((source for source in sources if _text(source.get("name")) == "AC MT4"), None)
-    return None
+    route_key = (_text(crm_schema), _text(server_code))
+    return next(
+        (
+            source
+            for source in sources
+            if route_key in {
+                (route["schema"], route["mt_server_code"])
+                for route in _source_routes(source)
+            }
+        ),
+        None,
+    )
 
 
 def list_products(sources: list[dict], connect: Callable) -> dict:
     products: dict[str, str] = {}
     errors = []
-    source_names = {"AC GB MT5", "AC CN MT5", "AC MT4"}
+    physical_sources = []
+    seen = set()
     for source in sources:
-        if _text(source.get("name")) not in source_names:
+        key = (
+            _text(source.get("host")),
+            _text(source.get("schema")),
+            _text(source.get("table")),
+            _text(source.get("kind")),
+        )
+        if not key[1] or not key[2] or not key[3] or key in seen or not _source_routes(source):
             continue
+        seen.add(key)
+        physical_sources.append(source)
+
+    for source in physical_sources:
         try:
             with connect(source) as conn:
                 with conn.cursor() as cur:
@@ -755,7 +820,7 @@ def build_payload(
 ) -> dict:
     query = parse_query(target, start, end, product, activity_rules)
     subject = resolve_subject(query["target"], sources, connect)
-    users, raw_accounts = _fetch_tree_and_accounts(subject, connect)
+    users, raw_accounts = _fetch_tree_and_accounts(subject, sources, connect)
     metrics = _collect_metrics(
         subject,
         raw_accounts,

@@ -6,11 +6,72 @@
 | --- | --- | --- |
 | Account web | `127.0.0.1:8777` | `127.0.0.1:8877` |
 | K-line web | `127.0.0.1:8766` | `127.0.0.1:8866` |
-| Workers | interactive and discovery queues | isolated dev queues |
+| Workers | interactive and discovery queues (push, rebate, bonus and position-risk discovery) | isolated dev queues |
 
 Use `scripts/start_prod.ps1`, `stop_prod.ps1` and `health_check_prod.ps1`. The stop script verifies
 port ownership before terminating a process. Production logs are under `runtime/prod/logs` and must
 not contain credentials or sensitive account fields.
+`scripts/start_prod.ps1 -AccountOnly` starts only the main account service on 8777 and intentionally
+does not start 8766 or production workers; use it for the dedicated copy-pool deployment.
+
+The Vue index is served with `no-store`. Open workbench pages compare the deployed hashed entry
+asset every 15 seconds and on focus, then reload when a deployment changes it; persistent jobs are
+restored from browser storage or the active-job API.
+
+The `动态跟单` page reads local copier snapshots from
+`KDESK_COPY_POOL_OUTPUT_DIR`; when unset it uses
+`<KDESK_LEGACY_OUTPUT>/copy_live_demo_capital10k`. The snapshot producer and K_desk web service are
+independent processes. A source age above five seconds is displayed as stale. Operators diagnose
+the producer and file permissions separately; K_desk must not restart the copier or place a repair
+order. Keep `runtime_state_private.json` and `client_routes_private.json` local and out of logs.
+
+The governed production producer entry is
+`services\copy_pool_runtime\run_copy_demo_live.ps1` in the checked-out production worktree. It loads
+both AC and DBG Workbench read-only credentials into the process environment, starts the sibling
+`copy_trading_multi_demo.py`, and restores the environment on exit. The launcher adds its own
+directory and `D:\risk\pydeps` to `PYTHONPATH`; Terminal, Input and Output defaults remain under
+`D:\risk`. This keeps the Producer code selected by the checked-out Git worktree while preserving
+the existing external runtime resources. `-PreflightOnly
+-ForceRebuild -Mode Shadow` performs a complete eleven-route build without initializing MT5 or
+sending an order. A normal same-day restart restores the versioned accepted pool, then reads every
+selected source's current positions and independent high-water mark before leaving shadow. Daily
+rebuild failure keeps the Demo strategy flat and retries no more than once per minute. Existing
+source positions are monitor-only; the producer never opens from an old target. Persisted source-to-
+Demo Ticket ownership must exactly match current strategy Tickets before startup. Any unknown or
+missing Ticket is an execution hard stop requiring operator review.
+The accepted cache is rejected unless metadata, route counts and source-health rows exactly cover
+all configured eleven logical routes and nine physical sources; an older or partial cache forces a
+new full preflight instead of entering Demo execution.
+When a valid cache is restored, its accepted build day advances the daily scheduler guard before the
+first loop and a fresh status snapshot is published immediately. This prevents a restart after 05:15
+from launching a duplicate full build while the dashboard continues to show stale prior-day state.
+The accepted cache producer is `copy-pool-multisource-v6-weight-fallback`; older snapshots are
+rebuilt because their factor weights and delay-factor state differ. V0.1 complete builds do not
+load historical Tick partitions. They still require drawdown and holding-quality gates in addition to
+account-product selection, complete open-position risk or independent execution inputs. Bootstrap
+and each ten-second refresh must read
+complete selected-account floating P/L and position risk before weights are accepted. A partial-
+source refresh is a runtime error and continues to block new exposure through source health.
+The producer consumes four persisted schedules: client risk every 10 seconds, current-range rank
+every 15 minutes, accepted-universe discovery every hour and a complete rebuild at 05:15 Beijing.
+Hourly discovery reads only the daily factor-ready cache plus bounded session facts. A failed
+discovery leaves the last accepted pool in place and retries no faster than once per minute. A
+membership change seeds current source positions as monitor-only, retains same-day retiring Ticket
+owners for attribution and never replays an offline source increase.
+Successful hourly membership is persisted to the accepted same-day snapshot. A restart restores
+that latest membership. If an older snapshot lacks hourly evidence, those values remain unknown and
+the scheduler runs a bounded discovery immediately instead of publishing fabricated zeros.
+
+`-AllowDemoMinLotOverride` is an explicit `ACCMGlobal-Demo`/`StagedLive` experiment switch. It may
+open at most one minimum copied lot per product/direction when portfolio stress and margin still
+fit. It does not authorize trading by itself: `-EnableLiveTrading`, terminal AutoTrading, healthy
+operational gates and a new post-activation source signal remain mandatory.
+
+The legacy net-target Live process must remain stopped. Initial deployment may run only `Shadow`
+without `-EnableLiveTrading`; it may start the existing 8777 service but no additional web port.
+Before Demo authorization, offline event replay must prove old-position suppression, exact A/B Ticket isolation,
+partial-close/reverse order, restart mapping recovery, gross-position outage flatten and equality
+between shadow and offline state. K_desk never starts, stops or repairs the producer.
 
 ## Change verification
 
@@ -19,8 +80,16 @@ deployment. Release additionally requires explicitly enabled read-only contract 
 health acceptance.
 
 Install repository hooks once with `scripts/install_git_hooks.ps1`. Pre-commit runs Fast and
-pre-push runs Full. `scripts/publish_change.ps1 -Message '<summary>' [-Push]` is the recommended
-direct-to-main workflow; it refuses to push when no remote is configured.
+pre-push runs Full. Production remains checked out on `main`. Normal changes are made in a separate
+`develop` worktree, verified there, merged into `main`, and deployed by a controlled restart. Do not
+edit feature or Producer code in the running production worktree.
+
+The production checkout is `D:\risk\K_desk_v2` on `main`; the development checkout is
+`D:\risk\K_desk_v2_dev` on `develop`. A normal promotion requires a clean development worktree,
+`verify_change.ps1 -Mode Full`, a committed and pushed `develop`, then a non-interactive merge into
+`main`, another Full verification from the production checkout and a pushed `main`. Only after the
+second verification may the 8777 account service or copy-pool Producer be restarted from `main`.
+Runtime snapshots, credentials, terminals and logs stay outside both Git histories.
 
 ## Release sequence
 
@@ -43,3 +112,14 @@ recovery for disk loss.
 Check readiness, process ownership, latest error logs, SQLite free space/lock state, remote provider
 availability and job events in that order. Do not retry remote calls indefinitely. Never use an MT
 Manager write operation as a recovery action.
+
+## K-line quote sources
+
+Set `KDESK_KLINE_QUOTE_SOURCES` to a local JSON based on
+`config/kline_quote_sources.example.json`. Keep it credential-free. Routes list same-source providers
+before explicitly allowed fallbacks. Deleting the variable retains the legacy single Terminal only
+as the universal read-only fallback for uploaded reports and server-routed database jobs. Database
+jobs apply the stricter fallback endpoint-validation gate so a divergent Terminal feed cannot
+silently produce a misaligned chart.
+Provider-qualified caches prevent cross-provider reuse and old cache files remain readable. Rollback
+restores the prior code/config only; SQLite, historical charts and direct links require no migration.

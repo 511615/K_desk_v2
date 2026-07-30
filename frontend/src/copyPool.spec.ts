@@ -1,0 +1,37 @@
+import { describe, expect, it } from 'vitest'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, delayGateLabel, formatDuration, linePath, orderActionLabel, phaseLabel, poolTierLabel, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
+
+describe('copy pool presentation helpers', () => {
+  it('localizes operational states and events', () => {
+    expect(phaseLabel('live')).toBe('实时运行')
+    expect(phaseLabel('pool_rebuild_failed')).toBe('客户池重建失败')
+    expect(orderActionLabel('TARGET_RECONCILE')).toBe('目标仓位调整')
+    expect(orderActionLabel('INDEPENDENT_OPEN')).toBe('客户独立开仓 / 加仓')
+    expect(copyStatusLabel('risk_rejected')).toBe('风控拒绝')
+    expect(poolTierLabel('entry_shadow')).toBe('入池影子观察')
+    expect(schedulerStateLabel('running')).toBe('执行中')
+    expect(delayGateLabel('incomplete')).toBe('报价覆盖不完整')
+    expect(copyReasonLabel('below_minimum_risk_lot')).toBe('风险额度不足最小手')
+    expect(sourceActionLabel('reverse')).toBe('反转')
+    expect(sourceSideLabel('BUY')).toBe('买入')
+    expect(sourceEntryLabel(1)).toBe('平仓')
+    expect(sourceStateLabel({ state: 'idle', subscriptionState: 'unsubscribed' })).toBe('已接入，当前无订阅账号')
+    expect(sourceStateFailed({ state: 'idle' })).toBe(false)
+    expect(sourceStateLabel({ state: 'error' })).toBe('读取失败')
+    expect(sourceStateFailed({ state: 'error' })).toBe(true)
+    expect(formatDuration(3725)).toBe('1小时2分')
+    expect(accountPrimaryLabel({ accountLogin: '5200101', clientAlias: 'C001' })).toBe('5200101')
+    expect(accountSecondaryLabel({ clientAlias: 'C001', accountServer: 'DBG GB MT5 Live2' })).toBe('DBG GB MT5 Live2')
+    expect(accountPrimaryLabel({ clientAlias: 'C001' })).toBe('-')
+    expect(weightStateLabel({ weightState: 'removed' })).toBe('移出 · 下调 100%')
+    expect(weightReason({ weightState: 'removed', dynamicEvaluationUsd: -11.28 })).toBe('下调 100% · 动态评估 -11.28 USD')
+    expect(weightReason({ weightState: 'reduced', weightAdjustment: -0.5, dynamicEvaluationUsd: -3 })).toBe('下调 50% · 动态评估 -3.00 USD')
+  })
+
+  it('builds bounded line and stepped position paths', () => {
+    const rows = [{ equityUsd: 10000, actualStrategyLots: 0 }, { equityUsd: 9990, actualStrategyLots: 0.05 }]
+    expect(linePath(rows, 'equityUsd', 200, 100)).toMatch(/^M/)
+    expect(stepPath(rows, 'actualStrategyLots', 0.05, 200, 100)).toContain(' H')
+    expect(linePath([], 'equityUsd', 200, 100)).toBe('')
+  })
+})

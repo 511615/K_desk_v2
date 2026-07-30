@@ -26,11 +26,12 @@ def _safe_artifact(name: str, roots: tuple[Path, ...]) -> Path | None:
     return None
 
 
-def _index_html(account_port: int) -> str:
+def _index_html(account_port: int, theme_css: str = "") -> str:
     return f"""<!doctype html>
 <html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>K_desk v2 K线任务</title><style>
-body{{margin:0;background:#07111f;color:#d9e7f5;font-family:Arial,'Microsoft YaHei',sans-serif}}header{{padding:18px 24px;background:#0b1b2e;border-bottom:1px solid #24415f}}main{{padding:24px;max-width:1100px;margin:auto}}.panel{{background:#0d1d31;border:1px solid #24415f;border-radius:10px;padding:18px;margin-bottom:16px}}button{{background:#1a73b8;color:white;border:0;padding:9px 14px;border-radius:6px;cursor:pointer}}input{{background:#07111f;color:#fff;border:1px solid #345775;border-radius:6px;padding:9px}}pre{{white-space:pre-wrap;background:#050b13;padding:12px;border-radius:6px}}a{{color:#53b9ff}}</style></head>
+{theme_css}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--kdesk-bg,#04111f);color:var(--kdesk-text,#dcecff);font-family:var(--kdesk-font,Arial,sans-serif)}}header{{padding:18px 24px;background:#071d37;border-bottom:1px solid var(--kdesk-border,#17466d)}}main{{width:100%;padding:24px;max-width:1100px;margin:auto}}.panel{{min-width:0;background:var(--kdesk-surface,#06192c);border:1px solid var(--kdesk-border,#17466d);border-radius:6px;padding:18px;margin-bottom:16px}}button{{background:#0b5683;color:white;border:1px solid var(--kdesk-border-strong,#1d5b85);padding:9px 14px;border-radius:5px;cursor:pointer}}input{{max-width:100%;background:var(--kdesk-bg,#04111f);color:#fff;border:1px solid var(--kdesk-border-strong,#1d5b85);border-radius:5px;padding:9px}}pre{{white-space:pre-wrap;background:#030b14;border:1px solid var(--kdesk-border,#17466d);padding:12px;border-radius:5px}}a{{color:#54c2ff}}#recent p,#recent a{{overflow-wrap:anywhere;word-break:break-word}}@media(max-width:600px){{main{{padding:10px}}header{{display:flex;flex-wrap:wrap;gap:6px;padding:14px 12px}}.panel{{padding:14px}}}}</style></head>
 <body><header><b>K_desk v2 · K线/AI任务</b>　<a href='http://127.0.0.1:{account_port}'>返回账户工作台</a></header><main>
 <section class='panel'><h2>上传报表</h2><form id='upload'><input type='file' name='statement' accept='.htm,.html' required> <button>上传并解析</button></form><p id='status'></p></section>
 <section class='panel'><h2>最近图表</h2><div id='recent'>读取中...</div></section><section class='panel'><h2>任务日志</h2><pre id='logs'>暂无任务</pre></section>
@@ -38,7 +39,7 @@ body{{margin:0;background:#07111f;color:#d9e7f5;font-family:Arial,'Microsoft YaH
 const statusEl=document.getElementById('status'),logs=document.getElementById('logs');
 async function api(url,opt){{const r=await fetch(url,opt),d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||`HTTP ${{r.status}}`);return d}}
 async function recent(){{try{{const d=await api('/api/recent');document.getElementById('recent').innerHTML=d.charts.length?d.charts.map(x=>`<p><a target='_blank' href='${{x.url}}'>${{x.name}}</a> · ${{x.mtime}}</p>`).join(''):'暂无图表'}}catch(e){{document.getElementById('recent').textContent=e.message}}}}
-async function poll(id){{const d=await api('/api/jobs/'+id);statusEl.textContent=`${{d.status}} · ${{d.progress}}%`;logs.textContent=(d.events||[]).map(x=>`[${{x.at}}] ${{x.message}}`).join('\\n')||d.error||'';if(!['done','failed','cancelled'].includes(d.status))setTimeout(()=>poll(id),1200);else recent()}}
+async function poll(id){{const d=await api('/api/jobs/'+id),result=d.result||{{}},failures=result.failures||[];statusEl.textContent=`${{d.status}} · ${{d.progress}}%${{result.partial?' · 部分成功':''}}`;const events=(d.events||[]).map(x=>`[${{x.at}}] ${{x.message}}`),details=failures.map(x=>`${{x.symbol}} · ${{x.stage}}/${{x.code}} · ${{x.reason}}`);logs.textContent=[...events,...details].join('\\n')||d.error||'';if(!['done','failed','cancelled'].includes(d.status))setTimeout(()=>poll(id),1200);else recent()}}
 document.getElementById('upload').addEventListener('submit',async e=>{{e.preventDefault();try{{const d=await api('/api/uploads',{{method:'POST',body:new FormData(e.target)}});poll(d.job.id)}}catch(err){{statusEl.textContent=err.message}}}});recent();
 </script></main></body></html>"""
 
@@ -58,7 +59,9 @@ def create_kline_app(app_settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def home() -> str:
-        return _index_html(config.account_port)
+        theme_path = config.root / "frontend" / "src" / "kdesk-theme.css"
+        theme_css = theme_path.read_text(encoding="utf-8") if theme_path.is_file() else ""
+        return _index_html(config.account_port, theme_css)
 
     @app.get("/health/live")
     def health_live() -> dict:

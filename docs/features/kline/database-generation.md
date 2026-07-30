@@ -4,11 +4,11 @@ title: Database K-line generation
 module: kline
 status: active
 apis: ["POST /api/kline/generate-from-db", "POST /api/uploads", "POST /api/jobs/{job_id}/generate", "GET /output/{name}"]
-code: ["src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py"]
-tests: ["tests/test_api.py"]
+code: [".env.example", "config/kline_quote_sources.example.json", "frontend/src/kdesk-theme.css", "src/kdesk/domain/kline.py", "src/kdesk/application/kline_generation.py", "src/kdesk/infrastructure/quote_sources.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/API.md", "legacy/tools/trade_kline_tool/README.md"]
+tests: ["tests/test_api.py", "tests/test_kline.py", "tests/test_worker.py"]
 depends_on: ["JOB-RECOVERY-001", "ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-17
+last_verified_date: 2026-07-23
 ---
 
 # Database K-line generation
@@ -21,22 +21,55 @@ result through account detail and the K-line task center.
 ## UI and behavior
 
 Submission is asynchronous; users see durable progress/events and can open generated HTML charts.
+New HTML preserves the established white high-contrast chart workspace and remains standalone for
+iframe, direct and offline use. It defaults to a compressed quote-index axis with visible market-break labels; the
+`隐藏停盘 / 显示停盘` segmented control expands actual elapsed time without manufacturing bars.
+Buy opens use upward arrows, sell opens use downward arrows and closes use squares. A missing-quote
+endpoint keeps the same directional/square outline as an anomaly marker.
+Interactive charts precompute bar positions, locate visible ranges and crosshair bars with binary
+search, and aggregate dense candles by horizontal canvas pixel so pan, zoom and crosshair movement
+remain responsive on long M1 histories without changing underlying trade or quote data. Compressed
+mode also binary-selects visible gap markers and groups dense boundaries by canvas pixel while
+retaining exact break labels after zoom-in.
 
 ## API contract
 
 Account and K-line endpoints submit jobs, poll by job ID, cancel and serve safe artifact names.
+Job results retain `chart`, `status` and `message` and add `partial`, `symbols[]`, `failures[]` and
+`quoteSources[]`. Failure rows contain symbol, stage, code, attempted sources, metrics and reason.
 
 ## Data, routing and read-only constraints
 
 Database and MT5 quote access is read-only. Uploads/artifacts remain inside configured runtime directories.
+Database order lookup includes DBG MT5 Live2 through `crm_vn` code 5 / `crm_vn_mt5_live2`; quote
+selection still follows the returned logical server and the configured provider registry.
+`KDESK_KLINE_QUOTE_SOURCES` may point to a local credential-free JSON registry. Database orders use
+their platform/server same-source route first; only route-declared fallback providers are eligible.
+Uploaded reports evaluate the allowed provider pool and select the highest-confidence accepted source.
+Without a registry, the current legacy `default` Terminal is the universal read-only fallback for
+database tasks and is evaluated under the stricter fallback acceptance gate. An explicit registry may
+still constrain server routes; a missing configured route fails with `NO_SAME_SOURCE_PROVIDER` and
+includes the requested route plus configured provider identities.
 
 ## Business rules and units
 
-Chart alignment uses documented symbol/time mapping; trade identifiers, lots and prices are not USC-scaled.
+Symbol candidates are scored rather than resolved by first fuzzy match. `UT100` maps to the NAS100
+roll family and standard dotted broker suffixes (including G/P), ECN/PRO/E/Roll variants remain
+compatible. Alignment samples up to five
+evenly distributed orders at both endpoints. GMT and GMT+3 are tried first; offsets GMT-4 through
+GMT+4 are considered only after initial rejection. Same-source acceptance requires 60% raw M1
+envelope hits and normalized median distance at most 2; fallback requires 80% hits or every endpoint
+within tolerance. Price correction is applied only when declared by the selected provider.
+
+Gaps over five minutes form segment boundaries and gaps over sixty minutes are labelled closed/no
+quote. Long-history aggregation occurs within each segment. Missing-minute trades retain their real
+time and use hollow warning markers rather than moving to the next quote.
 
 ## Loading, empty and failure behavior
 
-Invalid uploads, unavailable quotes and unsafe paths fail explicitly. Jobs survive web restart.
+Invalid uploads, unavailable quotes and unsafe paths fail explicitly. A failed symbol does not block
+accepted symbols; the job fails only when no symbol is accepted. Jobs survive web restart and retain
+structured failure details in the existing SQLite result JSON.
 
 ## Code and dependencies
 
@@ -44,8 +77,11 @@ FastAPI validates/submits; the worker owns quote sessions and generator executio
 
 ## Tests and acceptance
 
-API tests cover upload, job generation, polling, cancellation and path traversal protection.
+Tests cover routing priority, suffix and UT100 aliases, acceptance gates, offset expansion, rejected
+anomaly profiles, partial success, structured results, gap segmentation and white chart controls.
 
 ## Compatibility and deprecation
 
-Existing chart URLs and account generation parameters remain compatible.
+Existing chart URLs, ports, parameters, mapping organization and old cache naming remain compatible.
+Provider-qualified caches are preferred for new output; old caches remain readable. Historical HTML
+is never rebuilt or overwritten by this change.

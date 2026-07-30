@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
-import { api, queryString } from '../api'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { api, ApiError, queryString } from '../api'
 import PanelState from '../components/PanelState.vue'
+import BonusArbitrageDiscoveryPanel from '../components/BonusArbitrageDiscoveryPanel.vue'
+import PositionRiskDiscoveryPanel from '../components/PositionRiskDiscoveryPanel.vue'
 import RebateAuditPanel from '../components/RebateAuditPanel.vue'
+import RebateDiscoveryPanel from '../components/RebateDiscoveryPanel.vue'
+import { startFrontendUpdateMonitor } from '../frontendUpdate'
+import { loadPushJobId, pushPollRetryDelay, recoverPushPollingState, savePushJobId } from '../pushDiscovery'
 
 const queryClient = useQueryClient()
 const accountInput = ref('')
@@ -34,7 +39,10 @@ const pushForm = reactive({
   excludeHandled: true,
 })
 const pushJob = ref<any>(null)
+const discoveryTab = ref<'push' | 'rebate' | 'bonus' | 'position'>('push')
 let pushTimer = 0
+let pushPollFailures = 0
+let stopFrontendUpdateMonitor: () => void = () => undefined
 const hierarchyForm = reactive({ target: '', start: localDate(-7), end: localDate(0), product: '', activityRules: false })
 const hierarchyResult = ref<any>(null)
 const hierarchyBusy = ref(false)
@@ -161,6 +169,7 @@ function suspectedIntervalTitle(row: any): string {
     `毛收益 ${pushNumber(row.suspectedIntervalGrossProfit)} ${row.currency || ''}`,
     `费用调整 ${pushNumber(row.suspectedIntervalCosts)} ${row.currency || ''}`,
     `净收益 ${pushNumber(row.suspectedIntervalNetProfit)} ${row.currency || ''}`,
+    row.suspectedIntervalReturnPct == null ? '入金回报率不可用' : `约占累计入金 ${pushNumber(row.suspectedIntervalReturnPct, 1)}%`,
     `覆盖 ${row.suspectedIntervalOrders || 0} 单（${pushNumber(row.suspectedIntervalOrderRatio, 1)}%）`,
   ].join(' · ')
 }
@@ -169,29 +178,58 @@ function pushProfitClass(value: unknown): string {
   return Number(value) > 0 ? 'positive' : Number(value) < 0 ? 'negative' : ''
 }
 
+function pushFailureSummary(): string {
+  const summary = pushJob.value?.result?.failureSummary || {}
+  return Object.entries(summary).map(([stage, count]) => `${stage} ${count}项`).join(' · ')
+}
+
 function pushJobMessage(): string {
   const job = pushJob.value
   if (!job) return '尚未运行'
+  if (job.connectionError) return job.connectionError
   if (job.events?.length) return job.events[job.events.length - 1].message
   return job.error || ({ queued: '已提交，等待扫描', running: '正在扫描', done: '扫描完成', failed: '扫描失败', cancelled: '已取消' } as any)[job.status] || ''
+}
+
+async function resumeNextActivePushJob(completedId: string) {
+  try {
+    const active = await api<any>('/api/push-discovery/active')
+    if (!active.job?.id || active.job.id === completedId) return
+    pushJob.value = active.job
+    savePushJobId(window.localStorage, active.job.id)
+    void pollPushDiscovery(active.job.id)
+  } catch {
+    // Keep the completed result visible when no next task can be loaded.
+  }
 }
 
 async function pollPushDiscovery(id: string) {
   try {
     pushJob.value = await api<any>(`/api/push-discovery/jobs/${encodeURIComponent(id)}`)
+    pushPollFailures = 0
     if (!['done', 'failed', 'cancelled'].includes(pushJob.value.status)) {
       pushTimer = window.setTimeout(() => pollPushDiscovery(id), 1200)
+    } else {
+      await resumeNextActivePushJob(id)
     }
   } catch (error: any) {
-    pushJob.value = { status: 'failed', error: error.message || '读取扫描任务失败' }
+    if (error instanceof ApiError && error.status === 404) {
+      pushJob.value = { status: 'failed', error: '之前的扫描任务记录已不存在' }
+      return
+    }
+    pushPollFailures += 1
+    pushJob.value = recoverPushPollingState(pushJob.value, error, pushPollFailures)
+    pushTimer = window.setTimeout(() => pollPushDiscovery(id), pushPollRetryDelay(pushPollFailures))
   }
 }
 
 async function startPushDiscovery() {
+  pushPollFailures = 0
   pushJob.value = { status: 'queued', progress: 0 }
   try {
     const result = await api<any>('/api/push-discovery/start', { method: 'POST', body: JSON.stringify(pushForm) })
     pushJob.value = result.job
+    savePushJobId(window.localStorage, result.job.id)
     await pollPushDiscovery(result.job.id)
   } catch (error: any) {
     pushJob.value = { status: 'failed', error: error.message || '提交扫描失败' }
@@ -200,16 +238,43 @@ async function startPushDiscovery() {
 
 async function cancelPushDiscovery() {
   if (!pushJob.value?.id) return
-  pushJob.value = await api<any>(`/api/jobs/${encodeURIComponent(pushJob.value.id)}/cancel`, { method: 'POST' })
+  try {
+    const cancelled = await api<any>(`/api/jobs/${encodeURIComponent(pushJob.value.id)}/cancel`, { method: 'POST' })
+    pushJob.value = { ...pushJob.value, ...cancelled, connectionError: '', connectionDetail: '' }
+  } catch (error: any) {
+    pushPollFailures += 1
+    pushJob.value = recoverPushPollingState(pushJob.value, error, pushPollFailures)
+  }
 }
 
-onBeforeUnmount(() => { if (pushTimer) window.clearTimeout(pushTimer) })
+onMounted(async () => {
+  stopFrontendUpdateMonitor = startFrontendUpdateMonitor(() => window.location.reload())
+  const storedJobId = loadPushJobId(window.localStorage)
+  if (storedJobId) {
+    pushJob.value = { id: storedJobId, status: 'queued', progress: 0 }
+    void pollPushDiscovery(storedJobId)
+    return
+  }
+  try {
+    const active = await api<any>('/api/push-discovery/active')
+    if (!active.job?.id) return
+    pushJob.value = active.job
+    savePushJobId(window.localStorage, active.job.id)
+    void pollPushDiscovery(active.job.id)
+  } catch {
+    // Passive task recovery must not block the rest of the workbench.
+  }
+})
+onBeforeUnmount(() => {
+  if (pushTimer) window.clearTimeout(pushTimer)
+  stopFrontendUpdateMonitor()
+})
 </script>
 
 <template>
   <header class="topbar legacy-topbar">
     <div><b>账号风控台账</b><span>统一主帐台 · 8777</span></div>
-    <nav><a href="#rebateAuditPanel">IB刷返佣</a><a href="/download/problematic_accounts.xlsx">导出台账</a><a href="/?legacy=1">旧版工作台</a></nav>
+    <nav><a href="/copy-pool">动态跟单</a><a href="#rebateAuditPanel">IB刷返佣</a><a href="/download/problematic_accounts.xlsx">导出台账</a><a href="/?legacy=1">旧版工作台</a></nav>
   </header>
   <main class="workbench dense-page">
     <section class="hero compact-hero">
@@ -239,8 +304,10 @@ onBeforeUnmount(() => { if (pushTimer) window.clearTimeout(pushTimer) })
     </section>
 
     <section class="panel tool-panel push-panel">
-      <div class="section-head"><div><h2>全平台推盘发现</h2><small>只读 · 近期开仓结构初筛 → Tick / 协同深检 · 持久化任务</small></div><span>{{ pushJobMessage() }}</span></div>
-      <div class="push-scope-row"><label>扫描窗口（天）<input v-model.number="pushForm.days" type="number" min="1" max="30"></label><label>深检账号上限<input v-model.number="pushForm.deepLimit" type="number" min="1" max="300"></label><span>按初筛优先级最多深检 {{ pushForm.deepLimit }} 个账号</span><button class="primary" :disabled="pushJob && ['queued','running'].includes(pushJob.status)" @click="startPushDiscovery">{{ pushJob && ['queued','running'].includes(pushJob.status) ? '检测中…' : '开始全平台检测' }}</button><button v-if="pushJob && ['queued','running'].includes(pushJob.status)" @click="cancelPushDiscovery">取消</button></div>
+      <div class="section-head"><div><h2>全平台风险发现</h2><small>只读 · 持久化任务 · 支持取消和重启恢复</small></div><span>{{ discoveryTab === 'push' ? pushJobMessage() : discoveryTab === 'rebate' ? '返佣确认型检测' : discoveryTab === 'bonus' ? '赠金资金周期检测' : '仓位风险与特殊时点检测' }}</span></div>
+      <div class="discovery-tabs" role="tablist"><button :class="{ active: discoveryTab === 'push' }" @click="discoveryTab='push'">推盘发现</button><button :class="{ active: discoveryTab === 'rebate' }" @click="discoveryTab='rebate'">刷返佣发现</button><button :class="{ active: discoveryTab === 'bonus' }" @click="discoveryTab='bonus'">赠金套利发现</button><button :class="{ active: discoveryTab === 'position' }" @click="discoveryTab='position'">重仓时点发现</button></div>
+      <div v-if="discoveryTab === 'push'">
+      <div class="push-scope-row"><label>扫描窗口（天）<input v-model.number="pushForm.days" type="number" min="1" max="30"></label><label>深检账号上限<input v-model.number="pushForm.deepLimit" type="number" min="1" max="300"></label><span>按初筛优先级最多深检 {{ pushForm.deepLimit }} 个账号</span><button class="primary" :disabled="pushJob && ['queued','running'].includes(pushJob.status)" @click="startPushDiscovery">{{ pushJob && ['queued','running'].includes(pushJob.status) ? '检测中…' : '开始全平台检测' }}</button><button v-if="pushJob && ['queued','running'].includes(pushJob.status)" :disabled="pushJob.cancel_requested" @click="cancelPushDiscovery">{{ pushJob.cancel_requested ? '正在停止…' : '取消' }}</button></div>
       <div class="push-filter-grid">
         <div class="push-filter-item"><label class="filter-toggle"><input v-model="pushForm.requirePeriodProfit" type="checkbox"><span>窗口净收益为正</span></label><small>只保留扫描窗口内交易净收益大于 0 的账户</small></div>
         <div class="push-filter-item"><label class="filter-toggle"><input v-model="pushForm.limitOrders" type="checkbox"><span>限制窗口订单数</span></label><label class="filter-value">最多<input v-model.number="pushForm.maxOrders" type="number" min="1" max="1000" :disabled="!pushForm.limitOrders"> 单</label></div>
@@ -250,9 +317,19 @@ onBeforeUnmount(() => { if (pushTimer) window.clearTimeout(pushTimer) })
         <div class="push-filter-item"><label class="filter-toggle"><input v-model="pushForm.limitActiveRatio" type="checkbox"><span>限制活跃天数占比</span></label><label class="filter-value">不超过<input v-model.number="pushForm.maxActiveRatio" type="number" min="0" max="100" step="1" :disabled="!pushForm.limitActiveRatio"> %</label></div>
         <div class="push-filter-item"><label class="filter-toggle"><input v-model="pushForm.excludeHandled" type="checkbox"><span>排除已处置账户</span></label><small>排除数据库状态及本地台账中的 T / TA / A / A/TA</small></div>
       </div>
-      <p class="tool-note">最大手数按扫描窗口内单笔成交手数计算，并严格要求大于设定值。活跃天数占比 = 有开仓行为的自然日数 ÷ 注册至今总天数。关闭某项后，该条件不参与候选排除。扫描窗口只用于候选初筛；进入深检后读取账号全部历史订单。</p>
-      <div v-if="pushJob" class="job-card"><div class="job-head"><b>{{ pushJobMessage() }}</b><span>{{ pushJob.progress || 0 }}%</span></div><div class="progress"><i :style="{width:`${pushJob.progress || 0}%`}" /></div><div v-if="pushJob.error" class="inline-error">{{ pushJob.error }}</div></div>
+      <p class="tool-note">最大手数按扫描窗口内单笔成交手数计算，并严格要求大于设定值。活跃天数占比 = 有开仓行为的自然日数 ÷ 注册至今总天数。关闭某项后，该条件不参与候选初筛。扫描窗口只用于候选初筛；进入深检后读取账号全部历史订单。最终名单固定要求历史净收益为正，且疑似区间净收益达到 100，或达到 50 且不低于累计入金的 10%。</p>
+      <div v-if="pushJob" class="job-card"><div class="job-head"><b>{{ pushJobMessage() }}</b><span>{{ pushJob.progress || 0 }}%</span></div><div class="progress"><i :style="{width:`${pushJob.progress || 0}%`}" /></div><div v-if="pushJob.connectionError" class="inline-warning">{{ pushJob.connectionDetail }}</div><div v-if="pushJob.error" class="inline-error">{{ pushJob.error }}</div></div>
+      <div v-if="pushJob?.result?.summary?.economicQualified != null" class="push-result-subhead"><h3>经济证据通过 {{ pushJob.result.summary.economicQualified }} 个</h3><span>完成深检 {{ pushJob.result.summary.deepCompleted }} 个 · 排除低收益/亏损 {{ pushJob.result.summary.economicallyRejected }} 个</span></div>
       <div v-if="pushJob?.result?.results?.length" class="table-wrap push-results"><table><thead><tr><th>排名</th><th>账号</th><th>平台 / 服务器</th><th>窗口 / 深检订单</th><th>窗口最大手数</th><th>历史净收益</th><th>疑似区间净收益</th><th>累计入金</th><th>活跃 / 注册</th><th>初筛分</th><th>深检分</th><th>等级</th><th>Tick</th><th>协同开仓</th><th>结论</th></tr></thead><tbody><tr v-for="row in pushJob.result.results" :key="`${row.platform}-${row.server}-${row.account}`"><td>{{ row.deepRank }}</td><td><a :href="pushAccountHref(row)">{{ row.account }}</a></td><td>{{ row.platform }} / {{ row.server }}</td><td><b>{{ row.orders }}</b> / <b>{{ row.deepOrders }}</b><small class="cell-sub">初筛窗口 / 全历史深检</small></td><td>{{ pushNumber(row.maxLot, 2) }} 手</td><td>{{ pushNumber(row.totalNet) }} {{ row.currency }}</td><td class="push-interval-profit" :class="pushProfitClass(row.suspectedIntervalNetProfit)" :title="suspectedIntervalTitle(row)"><b>{{ Number(row.suspectedIntervalCount) ? pushNumber(row.suspectedIntervalNetProfit) : '-' }} {{ Number(row.suspectedIntervalCount) ? row.currency : '' }}</b><small>{{ Number(row.suspectedIntervalCount) ? `${row.suspectedIntervalOrders}单 / ${row.suspectedIntervalCount}段 · ${suspectedIntervalBasis(row)}` : '未形成可单列区间' }}</small></td><td>{{ pushNumber(row.depositTotal) }} {{ row.currency }}</td><td>{{ row.activeDays ?? '-' }} / {{ row.registrationDays ?? '-' }}（{{ pushNumber(row.activeRatio, 1) }}%）</td><td>{{ row.initialScore }}</td><td :class="Number(row.deepScore)>=60 ? 'negative' : ''">{{ row.deepScore }}</td><td>{{ row.level || '-' }}</td><td>{{ row.tickAvailable ? '可用' : '无' }}</td><td>{{ row.coordinatedMatchedRatio }}%</td><td class="note-cell" :title="row.headline">{{ row.headline || '-' }}</td></tr></tbody></table></div>
+      <div v-else-if="pushJob?.status === 'done' && pushJob?.result?.summary?.economicQualified === 0" class="panel-state">深检已完成，没有账号同时满足形态证据和高风险高回报条件。</div>
+      <div v-if="pushJob?.result?.failures?.length" class="push-failure-section">
+        <div class="push-result-subhead"><h3>失败明细（{{ pushJob.result.failureTotal }}）</h3><span>{{ pushFailureSummary() }}</span></div>
+        <div class="table-wrap push-failures"><table class="push-failure-table"><thead><tr><th>阶段</th><th>账号</th><th>平台 / 服务器</th><th>数据源</th><th>失败原因</th><th>影响</th><th>尝试次数</th></tr></thead><tbody><tr v-for="(failure,index) in pushJob.result.failures" :key="`${failure.stage}-${failure.source}-${failure.account}-${index}`"><td><span class="failure-stage">{{ failure.stageLabel }}</span></td><td><a v-if="failure.account" :href="accountHref(failure.account, failure.platform, failure.server)">{{ failure.account }}</a><span v-else>-</span></td><td>{{ failure.platform && failure.server ? `${failure.platform} / ${failure.server}` : failure.server || failure.platform || '-' }}</td><td>{{ failure.source || '-' }}</td><td class="failure-reason"><b>{{ failure.reason }}</b><small v-if="failure.detail && failure.detail !== failure.reason">{{ failure.detail }}</small></td><td class="failure-impact">{{ failure.impact }}</td><td>{{ failure.attempts }}</td></tr></tbody></table></div>
+      </div>
+      </div>
+      <RebateDiscoveryPanel v-else-if="discoveryTab === 'rebate'" />
+      <BonusArbitrageDiscoveryPanel v-else-if="discoveryTab === 'bonus'" />
+      <PositionRiskDiscoveryPanel v-else />
     </section>
 
     <section class="panel tool-panel">

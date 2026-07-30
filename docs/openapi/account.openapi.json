@@ -65,6 +65,24 @@
         }
       }
     },
+    "/copy-pool": {
+      "get": {
+        "summary": "Home",
+        "operationId": "home_copy_pool_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "summary": "Home",
@@ -76,6 +94,107 @@
               "text/html": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/copy-pool/dashboard": {
+      "get": {
+        "summary": "Copy Pool Dashboard",
+        "operationId": "copy_pool_dashboard_api_copy_pool_dashboard_get",
+        "parameters": [
+          {
+            "name": "timeline_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "minimum": 30,
+              "default": 720,
+              "title": "Timeline Limit"
+            }
+          },
+          {
+            "name": "event_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 10,
+              "default": 100,
+              "title": "Event Limit"
+            }
+          },
+          {
+            "name": "order_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 10,
+              "default": 100,
+              "title": "Order Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copy-pool/accounts/{alias}": {
+      "get": {
+        "summary": "Copy Pool Account",
+        "operationId": "copy_pool_account_copy_pool_accounts__alias__get",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alias"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -608,6 +727,43 @@
         }
       }
     },
+    "/api/accounts/by-login/{login}/relationship-network": {
+      "get": {
+        "summary": "Relationship Network Payload",
+        "operationId": "relationship_network_payload_api_accounts_by_login__login__relationship_network_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/accounts/by-login/{login}/copy-origins": {
       "get": {
         "summary": "Copy Origins",
@@ -686,6 +842,80 @@
       "get": {
         "summary": "Ea Comment Profit",
         "operationId": "ea_comment_profit_api_accounts_by_login__login__ea_comment_profit_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/by-login/{login}/copy-report.xlsx": {
+      "get": {
+        "summary": "Copy Profit Report",
+        "operationId": "copy_profit_report_api_accounts_by_login__login__copy_report_xlsx_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/by-login/{login}/ea-report.xlsx": {
+      "get": {
+        "summary": "Ea Profit Report",
+        "operationId": "ea_profit_report_api_accounts_by_login__login__ea_report_xlsx_get",
         "parameters": [
           {
             "name": "login",
@@ -1042,6 +1272,358 @@
         }
       }
     },
+    "/api/rebate-churning/scans": {
+      "post": {
+        "summary": "Start Rebate Churning Scan",
+        "operationId": "start_rebate_churning_scan_api_rebate_churning_scans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Start Rebate Churning Scan Api Rebate Churning Scans Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebate-churning/scans/{job_id}": {
+      "get": {
+        "summary": "Get Rebate Churning Scan",
+        "operationId": "get_rebate_churning_scan_api_rebate_churning_scans__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Rebate Churning Scan Api Rebate Churning Scans  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebate-churning/ibs/{environment}/{ib_id}": {
+      "get": {
+        "summary": "Rebate Churning Ib Detail",
+        "operationId": "rebate_churning_ib_detail_api_rebate_churning_ibs__environment___ib_id__get",
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Environment"
+            }
+          },
+          {
+            "name": "ib_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Ib Id"
+            }
+          },
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Start"
+            }
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bonus-arbitrage/scans": {
+      "post": {
+        "summary": "Start Bonus Arbitrage Scan",
+        "operationId": "start_bonus_arbitrage_scan_api_bonus_arbitrage_scans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Start Bonus Arbitrage Scan Api Bonus Arbitrage Scans Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bonus-arbitrage/scans/active": {
+      "get": {
+        "summary": "Get Active Bonus Arbitrage Scan",
+        "operationId": "get_active_bonus_arbitrage_scan_api_bonus_arbitrage_scans_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Active Bonus Arbitrage Scan Api Bonus Arbitrage Scans Active Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bonus-arbitrage/scans/{job_id}": {
+      "get": {
+        "summary": "Get Bonus Arbitrage Scan",
+        "operationId": "get_bonus_arbitrage_scan_api_bonus_arbitrage_scans__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Bonus Arbitrage Scan Api Bonus Arbitrage Scans  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/position-risk/scans": {
+      "post": {
+        "summary": "Start Position Risk Scan",
+        "operationId": "start_position_risk_scan_api_position_risk_scans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Start Position Risk Scan Api Position Risk Scans Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/position-risk/scans/active": {
+      "get": {
+        "summary": "Get Active Position Risk Scan",
+        "operationId": "get_active_position_risk_scan_api_position_risk_scans_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Active Position Risk Scan Api Position Risk Scans Active Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/position-risk/scans/{job_id}": {
+      "get": {
+        "summary": "Get Position Risk Scan",
+        "operationId": "get_position_risk_scan_api_position_risk_scans__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Position Risk Scan Api Position Risk Scans  Job Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/hierarchy-products": {
       "get": {
         "summary": "Hierarchy Products",
@@ -1245,6 +1827,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/push-discovery/active": {
+      "get": {
+        "summary": "Get Active Push Discovery",
+        "operationId": "get_active_push_discovery_api_push_discovery_active_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Active Push Discovery Api Push Discovery Active Get"
                 }
               }
             }

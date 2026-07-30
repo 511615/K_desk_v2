@@ -8,6 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $Python = Join-Path $Root '.venv\Scripts\python.exe'
+$CopyPoolRuntime = Join-Path $Root 'services\copy_pool_runtime'
+$CopyPoolExternalDeps = 'D:\risk\pydeps'
 $Pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
 $BundledNode = 'C:\Users\amber\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin'
 
@@ -24,9 +26,15 @@ function Invoke-NativeChecked {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$Label,
-        [string]$WorkingDirectory = $Root
+        [string]$WorkingDirectory = $Root,
+        [hashtable]$Environment = @{}
     )
     Write-Host "==> $Label"
+    $savedEnvironment = @{}
+    foreach ($key in $Environment.Keys) {
+        $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+        [Environment]::SetEnvironmentVariable($key, [string]$Environment[$key], 'Process')
+    }
     Push-Location -LiteralPath $WorkingDirectory
     try {
         & $FilePath @Arguments
@@ -35,6 +43,9 @@ function Invoke-NativeChecked {
         }
     } finally {
         Pop-Location
+        foreach ($key in $Environment.Keys) {
+            [Environment]::SetEnvironmentVariable($key, $savedEnvironment[$key], 'Process')
+        }
     }
 }
 
@@ -43,9 +54,20 @@ if ($Base) { $governanceArguments += @('--base', $Base) }
 Invoke-NativeChecked -FilePath $Python -Arguments $governanceArguments -Label 'Governance and generated contracts'
 Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'compileall', '-q', 'src', 'tests', 'scripts\governance.py') -Label 'Python compile'
 Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'ruff', 'check', 'src', 'tests', 'scripts\governance.py') -Label 'Ruff'
+if (Test-Path -LiteralPath $CopyPoolRuntime) {
+    Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'compileall', '-q', '.') -Label 'Copy-pool Producer compile' -WorkingDirectory $CopyPoolRuntime
+    Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'ruff', 'check', '--select', 'E9,F63,F7,F82', '.') -Label 'Copy-pool Producer safety lint' -WorkingDirectory $CopyPoolRuntime
+}
 
 if ($Mode -in @('Full', 'Release')) {
     Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'pytest') -Label 'Python and legacy tests'
+    if (Test-Path -LiteralPath $CopyPoolRuntime) {
+        $runtimePythonPath = "$CopyPoolRuntime;$CopyPoolExternalDeps"
+        if ($env:PYTHONPATH) {
+            $runtimePythonPath = "$runtimePythonPath;$env:PYTHONPATH"
+        }
+        Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'pytest', '-q', 'tests') -Label 'Copy-pool Producer tests' -WorkingDirectory $CopyPoolRuntime -Environment @{ PYTHONPATH = $runtimePythonPath }
+    }
     if (-not $Pnpm) { throw 'pnpm is required for Full and Release verification.' }
     Invoke-NativeChecked -FilePath $Pnpm.Source -Arguments @('install', '--frozen-lockfile') -Label 'Frontend locked install' -WorkingDirectory (Join-Path $Root 'frontend')
     Invoke-NativeChecked -FilePath $Pnpm.Source -Arguments @('test') -Label 'Frontend tests' -WorkingDirectory (Join-Path $Root 'frontend')

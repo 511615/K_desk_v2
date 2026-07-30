@@ -35,6 +35,7 @@ class Settings:
     legacy_compat_dir: Path
     frontend_dist: Path
     ui_mode: str
+    copy_pool_output_dir: Path | None = None
 
     @classmethod
     def load(cls) -> Settings:
@@ -65,6 +66,10 @@ class Settings:
             legacy_compat_dir=(runtime_dir / "legacy_compat").resolve(),
             frontend_dist=(root / "frontend" / "dist").resolve(),
             ui_mode=os.environ.get("KDESK_UI_MODE", "vue").strip().lower() or "vue",
+            copy_pool_output_dir=_env_path(
+                "KDESK_COPY_POOL_OUTPUT_DIR",
+                legacy_output / "copy_live_demo_capital10k",
+            ).resolve(),
         )
 
     def ensure_runtime(self) -> None:

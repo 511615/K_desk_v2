@@ -1,0 +1,47 @@
+:root {
+  color-scheme: dark;
+  --kdesk-bg: #04111f;
+  --kdesk-surface: #06192c;
+  --kdesk-surface-raised: #082440;
+  --kdesk-canvas: #06172a;
+  --kdesk-border: #17466d;
+  --kdesk-border-strong: #1d5b85;
+  --kdesk-text: #dcecff;
+  --kdesk-muted: #7895ad;
+  --kdesk-primary: #149fe6;
+  --kdesk-primary-active: #16b4fb;
+  --kdesk-success: #34c890;
+  --kdesk-danger: #f45c6b;
+  --kdesk-warning: #ffc779;
+  --kdesk-radius: 5px;
+  --kdesk-font: Arial, "Microsoft YaHei", sans-serif;
+}
+
+.kdesk-control {
+  min-height: 36px;
+  border: 1px solid var(--kdesk-border-strong);
+  border-radius: var(--kdesk-radius);
+  background: var(--kdesk-bg);
+  color: var(--kdesk-text);
+  font: inherit;
+}
+
+.kdesk-segmented {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--kdesk-border-strong);
+  border-radius: var(--kdesk-radius);
+  background: var(--kdesk-bg);
+}
+
+.kdesk-segmented button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--kdesk-muted);
+}
+
+.kdesk-segmented button.active {
+  background: #0b5683;
+  color: #fff;
+}

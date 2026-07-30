@@ -48,6 +48,9 @@ The Python governance CLI is cross-platform; PowerShell composes local Windows v
 ## Tests and acceptance
 
 Tests validate parsing, registry determinism, change records, architecture boundaries and metadata.
+The shared verifier also compiles and safety-lints the versioned copy-pool Producer in Fast mode and
+runs its complete offline regression suite in Full mode. Production remains on `main`; changes are
+verified in the separate `develop` worktree and pass Full again after promotion before restart.
 
 ## Compatibility and deprecation
 

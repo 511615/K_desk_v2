@@ -3,12 +3,12 @@ feature_id: ACC-DETAIL-001
 title: Legacy account detail page
 module: account
 status: active
-apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/risk-panels"]
-code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
+apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
+code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
-depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "AUT-COPY-001", "TOX-PUSH-001"]
+depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-17
+last_verified_date: 2026-07-29
 ---
 
 # Legacy account detail page
@@ -21,24 +21,73 @@ service. Platform/server query parameters select the account source.
 ## UI and behavior
 
 The page contains ledger controls, finance and risk panels, order paging, chart generation, copy
-origin, EA comment and Toxic controls. It is intentionally not replaced by the Vue AccountPage.
+origin, EA comment, relationship-network and Toxic controls. Copy and EA query dialogs each provide a one-click Excel
+profit report using the current platform/server filters. It is intentionally not replaced by the
+Vue AccountPage.
+Successful Copy and EA dialog payloads are retained in page memory by normalized platform/server/
+symbol filters. Closing a dialog preserves its result; reopening uses no network request. The main
+refresh button clears both dialog caches before loading fresh account data.
+Each EA result group starts expanded and can be collapsed independently from its header; this is a
+local display state and does not invalidate or repeat the query.
+The additive `关系网络` dialog is generated only after its button is clicked; it delegates its
+evidence-only relation categories, aggregation expansion and local page cache to `ACC-REL-001`. Its
+interactive graph is one client-only native Canvas. Its static scene is held in a detached 3x raster cache,
+so camera gestures copy the cache once per animation frame; only an actively dragged node is redrawn over
+it. Filters, aggregate expansion and finished node movement refresh the cache without re-querying data.
+EA account rows display the observed ExpertID/MAGIC and an explicit match clue. Same-server clues
+state that both Comment and identifier matched; cross-server clues state that Comment matched.
+The EA dialog separately labels `可能是跟单路由` groups. Those groups remain expandable with the
+same account/order/profit detail but the dialog headline and Excel EA KPIs exclude them.
+No-comment ExpertID-sequence groups use the same route label, show the complete shared-ID count and
+compact long per-account identifier lists to eight samples without discarding API/report evidence.
+Confirmed cent accounts show `USC` with money normalized to USD even when a newly registered MT5
+account has not produced its first daily snapshot. The same-name panel includes every account owned
+by the same CRM user across configured logical servers and displays each account's actual server.
+MT4 rows whose close time is the `1970-01-01` open-position sentinel, or otherwise is not later
+than the open time, are excluded from closed-order counts, duration metrics and daily P/L charts.
+MT4 detail analytics read the complete closed-order history rather than a 50,000-row prefix. The
+full-history rows, costs and metrics are calculated once per account/source cache window and reused
+by detail, risk, finance and automation panels. The order table uses exact database pagination and
+reports the exact total without first loading the complete account history.
+The chart task card displays partial-success totals and structured per-symbol quote failures without
+hiding the successfully generated chart.
+The Toxic `平台内多账户对锁` item renders a dedicated query result: physical-source coverage,
+opposite-account routing, subject/peer lots and exact synchronized opening/closing order evidence. It
+does not display the copied account-internal reverse-leg score as the completed result.
+The additive read-only `复制实验` section matches the selected Login, platform and server against
+`AUT-POOL-001`. It shows account-product sleeves, base/current weight, the client loss budget and
+each source Position to Demo Ticket mapping. Execution states and rejection reasons are localized
+in Chinese; unavailable or unmatched dashboard data degrades inside this section without blocking
+the rest of the account page.
 
 ## API contract
 
 The HTML URL and supporting detail/risk API response structures remain backward compatible.
+The additive relationship-network response is governed by `ACC-REL-001`.
+The copy-experiment section consumes the existing read-only `GET /api/copy-pool/dashboard` contract
+owned by `AUT-POOL-001`; it adds no account-detail write endpoint.
 
 ## Data, routing and read-only constraints
 
-Analytics use the selected read-only server route; local edits go only to authoritative SQLite.
+The selected account uses its selected read-only route. Same-name account analytics resolve every
+related account through its own CRM server code and trading source; local edits go only to
+authoritative SQLite. DBG MT5 Live2 resolves only through `crm_vn` code 5 and
+`crm_vn_mt5_live2`; the legacy DBG GB MT5 code 2 route remains on `mt5_export_new`.
 
 ## Business rules and units
 
 Displayed finance and automation values defer to their feature documents.
+Weekend and opening Toxic rows defer to `TOX-POSITION-001` and present leverage-adjusted economic
+position evidence rather than the copied page's legacy time-only heuristics.
+Cross-account hedge queries defer to `TOX-HEDGE-001` and show only opposite synchronized open/close
+evidence, without adding other Toxic conclusions.
 
 ## Loading, empty and failure behavior
 
 Panels load independently where supported. A failed panel shows its own reason and must not block
-the complete page or leave a false 100% progress state.
+the complete page or leave a false 100% progress state. A cold read of the normal account detail
+and risk-panel APIs must return complete results within 10 seconds; a warm read must not be used to
+hide a cold-path regression.
 
 ## Code and dependencies
 
@@ -47,7 +96,26 @@ FastAPI calls `LegacyBridge.account_page`; no other v2 module imports the copied
 ## Tests and acceptance
 
 Account 302360 returns HTTP 200, includes the legacy control IDs (controls may be conditionally
-hidden when their feature has no data) and contains no Vue `#app` mount.
+hidden when their feature has no data) and contains no Vue `#app` mount. Live3 account 241003365
+must show the USC badge and USD-normalized money rather than raw cent values. Its same-name panel
+must include Live1 account 245856 plus the four Live3 accounts belonging to CRM user 133018. A
+cache-cleared production request for this five-account panel must finish in less than 10 seconds.
+MT4 account 5013015 is the open-position sentinel regression sample: its three current positions
+remain in current holding state but do not create a `01-01` chart bar or a negative holding time.
+High-volume MT4 account 8208074 is the completeness and performance sample: it must report 59,504
+closed orders, 704 daily bars and an exact 59,504-order pagination total; page 1 returns 100 newest
+orders. Cold detail, risk, automation and order-page requests must each finish within 10 seconds.
+AC GB MT5 account 641903 is the Copy completeness sample: 895 positions map with no unresolved rows,
+640598 owns 625 and 632824 owns 270, current-account follower profits reconcile to 439.89 and 64.43,
+and a cold complete response finishes within 10 seconds. DBG CN MT5 account 2013674 is the EA-route
+format sample: the EA dialog must classify its `@8@...@7` structure as `可能是跟单路由`, retain
+database/server-aware member profit detail, exclude it from EA headline totals, and complete a cold
+correct response within 10 seconds.
+DBG CN MT5 account 2014201 is the no-comment EA-route sample: the dialog must list 2014201, 2014202,
+2014137 and 2014195 through conservative complete-ExpertID/time/symbol/direction evidence, while
+keeping the EA headline at zero groups.
+Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
+carry a non-empty match clue in both the dialog and Excel report.
 
 ## Compatibility and deprecation
 

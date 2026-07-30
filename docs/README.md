@@ -13,6 +13,7 @@ English; Chinese UI labels and business field names remain unchanged.
 | Startup, release and rollback | [OPERATIONS.md](OPERATIONS.md) |
 | Required verification | [TEST_STRATEGY.md](TEST_STRATEGY.md) |
 | Current feature behavior | [features/](features/) |
+| Approved future implementation plans | [plans/](plans/) |
 | Immutable change history | [changes/](changes/) and [CHANGELOG.md](CHANGELOG.md) |
 | Architecture decisions | [ADR/](ADR/) |
 

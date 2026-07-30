@@ -53,6 +53,12 @@ powershell -ExecutionPolicy Bypass -File tools\trade_kline_tool\run_rebuild_from
 - `{stem}_trade_kline.html`: final interactive chart.
 - `{stem}_trades.csv`: normalized trade data.
 - `{stem}_mapping.json`: statement symbol to MT5 symbol and time-mode mapping.
+- `{stem}_kline_result.json`: accepted symbols, structured failures and quote-source identities.
+
+Set `KDESK_KLINE_QUOTE_SOURCES` to a local JSON when server-specific read-only Terminal routes are
+available. The file must not contain credentials. New caches include provider identity; old cache
+names remain readable. New charts default to hidden closed-market spans and can expand them with the
+`隐藏停盘 / 显示停盘` control.
 - `{stem}_alignment_sample.csv`: GMT/GMT+3 sample evidence.
 - `{stem}_m1_price_check_sample.csv`: M1 high-low price check sample.
 - `{stem}_{report_symbol}_quote_cache_{mt5_symbol}_M1_{time_mode}.csv`: local M1 quote cache.
