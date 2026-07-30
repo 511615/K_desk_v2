@@ -2,11 +2,13 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, formatDuration, linePath, orderActionLabel, phaseLabel, poolTierLabel, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
+import type { PoolTierTab } from '../copyPool'
 import { startFrontendUpdateMonitor } from '../frontendUpdate'
 
 const poolSearch = ref('')
 const poolFilter = ref<'all' | 'abook' | 'position' | 'reduced'>('all')
+const selectedPoolTier = ref<PoolTierTab>('active')
 let stopFrontendUpdateMonitor: () => void = () => undefined
 
 const dashboard = useQuery({
@@ -98,11 +100,15 @@ const clientRiskRows = computed(() => [...clientRisks.value]
   .sort((left, right) => Number(right.lossUsage) - Number(left.lossUsage)))
 const activeCopyPositions = computed(() => copyPositions.value
   .filter(row => Number(row.copiedLots) > 0 || row.status !== 'closed'))
-const tierSummary = computed(() => pool.value.reduce((summary, row) => {
-  const tier = String(row.poolTier || row.tier || row.poolStatus || 'monitor')
+const tierRows = computed(() => resolvePoolTierRows(pool.value, dynamicSleeves.value, clientRisks.value))
+const tierSummary = computed(() => tierRows.value.reduce((summary, row) => {
+  const tier = row.currentTier
   summary[tier] = (summary[tier] || 0) + 1
   return summary
 }, {} as Record<string, number>))
+const selectedTierRows = computed(() => tierRows.value
+  .filter(row => row.currentTier === selectedPoolTier.value)
+  .sort((left, right) => Number(right.effectiveWeight) - Number(left.effectiveWeight)))
 const schedulerRows = computed(() => [
   { label: '风险检查', cadence: '10 秒', at: scheduler.value.lastRiskAt || scheduler.value.last_risk_at, state: scheduler.value.riskState || 'completed' },
   { label: '池内重排', cadence: '15 分钟', at: scheduler.value.lastRankAt || scheduler.value.last_rank_at, state: scheduler.value.rankState || 'completed' },
@@ -278,12 +284,15 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
       </section>
 
       <section class="copy-analysis-grid scheduler-grid">
-        <article class="copy-panel">
-          <div class="copy-panel-head"><div><h2>客户池层级与影子准入</h2><small>监控与候补都实时评估；连续两次进入活动区后才开始 10 分钟影子观察</small></div><span>{{ dynamicSleeves.length || pool.length }} 个 sleeve</span></div>
-          <div class="tier-summary">
-            <div v-for="tier in ['active', 'entry_shadow', 'monitor', 'reserve', 'recovery_shadow', 'execution_suspended', 'hard_rejected']" :key="tier">
-              <span>{{ poolTierLabel(tier) }}</span><b>{{ tierSummary[tier] || 0 }}</b>
-            </div>
+        <article class="copy-panel tier-panel">
+          <div class="copy-panel-head"><div><h2>客户池层级与影子准入</h2><small>选择层级查看当前归属账号；监控与候补持续参与动态评估</small></div><span>{{ tierRows.length }} 个 sleeve</span></div>
+          <div class="tier-summary tier-tabs" role="tablist" aria-label="客户池层级">
+            <button v-for="tier in POOL_TIER_TABS" :key="tier" type="button" role="tab" :aria-selected="selectedPoolTier === tier" :class="{ active: selectedPoolTier === tier }" @click="selectedPoolTier = tier">
+              <span>{{ poolTierTabLabel(tier) }}</span><b>{{ tierSummary[tier] || 0 }}</b>
+            </button>
+          </div>
+          <div class="tier-table-wrap" role="tabpanel">
+            <table class="tier-account-table"><thead><tr><th>交易账号</th><th>产品</th><th>计划 / 实际权重</th><th>当前状态</th><th>主要原因</th></tr></thead><tbody><tr v-for="row in selectedTierRows" :key="String(row.clientProductKey)"><td><a v-if="row.detailPath" :href="String(row.detailPath)">{{ accountPrimaryLabel(row) }} ↗</a><b v-else>{{ accountPrimaryLabel(row) }}</b><small v-if="row.accountServer">{{ accountSecondaryLabel(row) }}</small></td><td><b>{{ row.product }}</b></td><td>{{ percent(row.baseWeight) }} / {{ percent(row.effectiveWeight) }}</td><td><b>{{ poolTierLabel(row.currentTier) }}</b><small v-if="row.clientRisk?.status">{{ copyStatusLabel(row.clientRisk.status) }}</small></td><td><small>{{ poolTierReason(row) }}</small></td></tr><tr v-if="!selectedTierRows.length"><td colspan="5" class="empty-cell">当前层级暂无账户 × 产品组合</td></tr></tbody></table>
           </div>
           <small class="panel-footnote">影子期产生的来源仓永久仅监控，不补追；活动资格、最小风险手数和硬门槛均需同时满足。</small>
         </article>
@@ -560,9 +569,18 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 .pool-table table { min-width: 2120px; }
 .scheduler-grid { margin: 14px 0; }
 .tier-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #17466d88; border-left: 1px solid #17466d88; }
-.tier-summary div { min-width: 0; padding: 8px 9px; border-right: 1px solid #17466d88; border-bottom: 1px solid #17466d88; }
+.tier-tabs button { min-width: 0; padding: 8px 9px; border: 0; border-right: 1px solid #17466d88; border-bottom: 1px solid #17466d88; background: transparent; color: var(--kdesk-muted); text-align: left; cursor: pointer; }
+.tier-tabs button:hover,.tier-tabs button.active { background: #0b568344; color: var(--kdesk-text); }
+.tier-tabs button.active { box-shadow: inset 0 -2px 0 var(--kdesk-accent); }
 .tier-summary span,.panel-footnote { display: block; color: var(--kdesk-muted); font-size: 10px; }
 .tier-summary b { display: block; margin-top: 3px; color: var(--kdesk-text); font-size: 16px; }
+.tier-table-wrap { max-height: 286px; margin-top: 9px; overflow: auto; border: 1px solid #17466d88; }
+.tier-account-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 11px; }
+.tier-account-table th { position: sticky; top: 0; z-index: 1; padding: 7px 8px; background: #08223f; color: var(--kdesk-muted); text-align: left; font-size: 10px; font-weight: 600; }
+.tier-account-table td { padding: 7px 8px; border-top: 1px solid #17466d66; vertical-align: top; }
+.tier-account-table td small { display: block; margin-top: 2px; color: var(--kdesk-muted); line-height: 1.4; }
+.tier-account-table a { color: #69c3f0; text-decoration: none; }
+.tier-account-table a:hover { color: #a7dcf7; text-decoration: underline; }
 .panel-footnote { margin: 9px 0 0; line-height: 1.55; }
 .scheduler-list { border-top: 1px solid #17466d88; }
 .scheduler-list>div { display: grid; grid-template-columns: minmax(80px, 1fr) 64px minmax(120px, 1.4fr) 72px; align-items: center; gap: 8px; min-height: 29px; border-bottom: 1px solid #17466d88; font-size: 11px; }
@@ -610,6 +628,7 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
   .copy-title-status { justify-content: flex-start; }
   .copy-summary-grid,.mini-chart-grid,.copy-analysis-grid,.copy-side-stack { grid-template-columns: 1fr; }
   .tier-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tier-table-wrap { max-height: 330px; }
   .scheduler-list>div { grid-template-columns: minmax(80px, 1fr) 58px; gap: 3px 8px; padding: 6px 0; }
   .scheduler-list small { grid-column: 1 / 2; }
   .scheduler-list em { grid-column: 2; grid-row: 1 / 3; }

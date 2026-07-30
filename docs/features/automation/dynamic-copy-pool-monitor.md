@@ -113,6 +113,15 @@ per-product quotes, gross long/short, net and locked exposure, equity history, d
 strategy P/L, recent source/risk/order events and the current execution gates. Search
 and filters are presentation-only and never affect the copier.
 
+The `客户池层级与影子准入` panel is an interactive tabbed read view. Its seven tabs are `活动跟单池`,
+`入场观察`, `监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; each shows the current
+account-product sleeve count. Selecting a tab immediately replaces the panel body with that tier's
+account table, including trading Login detail links, product, planned/effective weight, current tier
+and primary reason. Runtime `dynamicSleeves` overrides the daily pool tier when present. Material
+client-risk states for recovery, pause/flatten or hard rejection override both dynamic and daily
+tiers; other client-risk state contributes only the displayed reason. This is presentation-only and
+does not alter membership, rank or execution.
+
 The open-position risk section shows account count, position count, XAUUSD gross and net lots,
 floating P/L, oldest open age, floating-loss ratio, margin/equity usage and XAUUSD hedge ratio.
 Gross lots remain visible when opposing positions make net lots zero. The current-position filter
@@ -235,6 +244,8 @@ all-source coverage, bounded dashboard API output and alias detail redirect. Fro
 Chinese independent-execution state/event labels, open-risk wording, holding-duration formatting and bounded line/step chart paths.
 They also cover idle/unsubscribed successful build sources, nullable hourly evidence and Chinese
 unknown-state labels.
+Tier-tab tests cover dynamic-sleeve and risk-state tier precedence, real Login-only row rendering,
+tab counts and interactive switching without exposing aliases.
 Legacy-page tests preserve the account detail route and assert that no copy-experiment panel or
 dashboard fetch is embedded. Production
 build and desktop/mobile browser inspection are required before handoff.
