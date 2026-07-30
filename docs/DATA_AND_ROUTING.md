@@ -37,10 +37,13 @@ factor evidence remains immutable until the next complete build.
 The producer treats each append-only public CSV header as a versioned local contract. Before startup
 counter/latency restoration and before every append, `events_public.csv`, `orders_public.csv` and
 `status_timeline_public.csv` must exactly match the current ordered producer columns and every row
-must have that width. A mismatch is renamed atomically in the same snapshot directory as a
-timestamped `schema-mismatch` archive, then the current file is written with a new header. The
-archive is historical evidence only; it is not merged into the dashboard's live reader, so old rows
-cannot shift current DictReader fields.
+must have that width. The multi-source runtime declares fixed event/order supersets before its
+base-service initialization, so MT5 and MT4 events plus independent and product-level orders append
+to one normalized layout; absent allowed columns are empty and unknown fields fail the Producer.
+A mismatch is renamed atomically in the same snapshot directory as a timestamped
+`schema-mismatch` archive, then the current file is written with a new header. The archive is
+historical evidence only; it is not merged into the dashboard's live reader, so old rows cannot
+shift current DictReader fields.
 
 The copy-pool producer treats `(CRM schema, mt_server_code, Login)` as account identity. Shared
 physical sources are scanned once and routed through CRM evidence; a Login mapping to more than one

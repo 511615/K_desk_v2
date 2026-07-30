@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import csv
 import unittest
 import json
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -34,7 +34,12 @@ from copy_pool_multisource import (
 )
 from copy_trading_live_core import ClientSpec
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
-from copy_trading_multi_demo import MultiSourceLiveService, has_complete_hourly_evidence
+from copy_trading_multi_demo import (
+    MULTISOURCE_EVENT_PUBLIC_COLUMNS,
+    MULTISOURCE_ORDER_PUBLIC_COLUMNS,
+    MultiSourceLiveService,
+    has_complete_hourly_evidence,
+)
 from copy_dynamic_pool_domain import SchedulerState
 from copy_independent_execution import IndependentCopyBook
 
@@ -64,6 +69,130 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    @staticmethod
+    def _csv_service(directory: Path) -> MultiSourceLiveService:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.event_path = directory / "events_public.csv"
+        service.order_path = directory / "orders_public.csv"
+        service.timeline_path = directory / "status_timeline_public.csv"
+        return service
+
+    @staticmethod
+    def _event_row(**overrides: object) -> dict[str, object]:
+        row: dict[str, object] = {
+            "event_id": "E0000001",
+            "time_beijing": "2026-07-30T22:00:00+08:00",
+            "client_alias": "C001",
+            "source_route": "ac_cn_mt5",
+            "source_server": "AC CN MT5",
+            "source_platform": "MT5",
+            "source_side": "BUY",
+            "source_entry": 0,
+            "source_lots": 0.1,
+            "product": "XAUUSD",
+            "effective_weight": 0.03,
+            "raw_target_lots": 0.01,
+            "desired_target_lots": 0.01,
+            "actual_strategy_lots": 0.01,
+            "gross_long_lots": 0.01,
+            "gross_short_lots": 0.0,
+            "db_latency_seconds": 0.2,
+            "allowed_delay_seconds": 5.0,
+            "signal_expired": False,
+            "phase": "shadow",
+            "reason": "monitor",
+        }
+        row.update(overrides)
+        return row
+
+    def test_multisource_schema_is_used_for_restart_validation(self) -> None:
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            service = self._csv_service(directory)
+            for path, columns in (
+                (service.event_path, MULTISOURCE_EVENT_PUBLIC_COLUMNS),
+                (service.order_path, MULTISOURCE_ORDER_PUBLIC_COLUMNS),
+            ):
+                path.write_text(",".join(columns) + "\n", encoding="utf-8-sig")
+
+            service._ensure_public_csv_schemas()
+
+            self.assertEqual(list(directory.glob("*.schema-mismatch-*.csv")), [])
+
+    def test_multisource_mt5_then_mt4_events_use_one_aligned_schema(self) -> None:
+        with TemporaryDirectory() as temporary:
+            service = self._csv_service(Path(temporary))
+            service._append_event_csv(self._event_row())
+            service._append_event_csv(self._event_row(
+                event_id="E0000002",
+                source_platform="MT4",
+                latency_known=True,
+            ))
+
+            with service.event_path.open(encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(tuple(rows[0]), MULTISOURCE_EVENT_PUBLIC_COLUMNS)
+            self.assertEqual(rows[0]["latency_known"], "")
+            self.assertEqual(rows[1]["latency_known"], "True")
+            self.assertEqual(list(service.event_path.parent.glob("*.schema-mismatch-*.csv")), [])
+
+    def test_multisource_event_rejects_unknown_field(self) -> None:
+        with TemporaryDirectory() as temporary:
+            service = self._csv_service(Path(temporary))
+            with self.assertRaisesRegex(ValueError, "unexpected fields"):
+                service._append_event_csv(self._event_row(unexpected="reject"))
+
+    def test_multisource_independent_then_flatten_orders_use_one_schema(self) -> None:
+        with TemporaryDirectory() as temporary:
+            service = self._csv_service(Path(temporary))
+            service._append_order_csv({
+                "order_event": "O000001",
+                "time_beijing": "2026-07-30T22:00:00+08:00",
+                "client_alias": "C001",
+                "source_position_id": 7,
+                "product": "XAUUSD",
+                "action": "INDEPENDENT_OPEN",
+                "before_lots": 0.0,
+                "target_lots": 0.01,
+                "after_lots": 0.01,
+                "demo_tickets": "123",
+            })
+            service._append_order_csv({
+                "order_event": "O000002",
+                "time_beijing": "2026-07-30T22:01:00+08:00",
+                "product": "XAUUSD",
+                "action": "FLATTEN:test",
+                "before_lots": 0.01,
+                "target_lots": 0.0,
+                "after_lots": 0.0,
+            })
+
+            with service.order_path.open(encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(tuple(rows[0]), MULTISOURCE_ORDER_PUBLIC_COLUMNS)
+            self.assertEqual(rows[1]["client_alias"], "")
+            self.assertEqual(rows[1]["demo_tickets"], "")
+            self.assertEqual(list(service.order_path.parent.glob("*.schema-mismatch-*.csv")), [])
+
+    def test_multisource_legacy_header_with_wide_row_rotates_once(self) -> None:
+        with TemporaryDirectory() as temporary:
+            service = self._csv_service(Path(temporary))
+            legacy_columns = MULTISOURCE_EVENT_PUBLIC_COLUMNS[:16]
+            service.event_path.write_text(
+                ",".join(legacy_columns) + "\n" + ",".join("legacy" for _ in MULTISOURCE_EVENT_PUBLIC_COLUMNS) + "\n",
+                encoding="utf-8-sig",
+            )
+
+            service._ensure_public_csv_schemas()
+            service._append_event_csv(self._event_row())
+            service._ensure_public_csv_schemas()
+
+            archives = list(service.event_path.parent.glob("*.schema-mismatch-*.csv"))
+            self.assertEqual(len(archives), 1)
+            self.assertEqual(service.event_path.read_text(encoding="utf-8-sig").splitlines()[0], ",".join(MULTISOURCE_EVENT_PUBLIC_COLUMNS))
+
     def test_sources_without_selected_clients_are_idle_not_disconnected(self) -> None:
         database = MultiSourceDatabase()
         source = next(iter(database.sources.values()))
@@ -436,11 +565,11 @@ class MultiSourceTests(unittest.TestCase):
             return "reduce", None
 
         service._handle_source_position_change = capture
-        with patch("copy_trading_multi_demo.append_csv"):
-            service.apply_mt4_snapshot(first.physical_key, [
-                {"account_key": first.account_key, "position_id": 1, "symbol": "XAUUSD", "lots": 0.25},
-                {"account_key": second.account_key, "position_id": 2, "symbol": "XAUUSD", "lots": -0.5},
-            ])
+        service._append_event_csv = lambda _row: None
+        service.apply_mt4_snapshot(first.physical_key, [
+            {"account_key": first.account_key, "position_id": 1, "symbol": "XAUUSD", "lots": 0.25},
+            {"account_key": second.account_key, "position_id": 2, "symbol": "XAUUSD", "lots": -0.5},
+        ])
 
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0]["account_key"], first.account_key)

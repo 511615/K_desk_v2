@@ -190,16 +190,25 @@ def ensure_csv_schema(path: Path, fieldnames: Iterable[str]) -> Path | None:
     return archive_path
 
 
-def append_csv(path: Path, row: Mapping[str, Any]) -> None:
+def append_csv(
+    path: Path,
+    row: Mapping[str, Any],
+    *,
+    fieldnames: Iterable[str] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = tuple(row.keys())
-    ensure_csv_schema(path, fieldnames)
+    columns = tuple(fieldnames) if fieldnames is not None else tuple(row.keys())
+    unexpected = set(row) - set(columns)
+    if unexpected:
+        raise ValueError(f"CSV row contains unexpected fields: {sorted(unexpected)}")
+    normalized_row = {column: row.get(column, "") for column in columns}
+    ensure_csv_schema(path, columns)
     exists = path.exists() and path.stat().st_size > 0
     with path.open("a", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=columns)
         if not exists:
             writer.writeheader()
-        writer.writerow(row)
+        writer.writerow(normalized_row)
 
 
 def csv_data_rows(path: Path) -> int:
@@ -841,6 +850,10 @@ def trading_day_key(now: datetime) -> str:
 
 
 class LiveService:
+    event_public_columns = EVENT_PUBLIC_COLUMNS
+    order_public_columns = ORDER_PUBLIC_COLUMNS
+    timeline_public_columns = TIMELINE_PUBLIC_COLUMNS
+
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.profile = RISK_PROFILES[args.risk_profile]
@@ -853,9 +866,7 @@ class LiveService:
         self.order_path = self.output_dir / "orders_public.csv"
         self.pool_path = self.output_dir / "pool_public.csv"
         self.timeline_path = self.output_dir / "status_timeline_public.csv"
-        ensure_csv_schema(self.event_path, EVENT_PUBLIC_COLUMNS)
-        ensure_csv_schema(self.order_path, ORDER_PUBLIC_COLUMNS)
-        ensure_csv_schema(self.timeline_path, TIMELINE_PUBLIC_COLUMNS)
+        self._ensure_public_csv_schemas()
         self.db = ReadOnlyDb()
         self.mt = Mt5Executor(args.terminal, self.profile)
         self.clients: dict[int, ClientSpec] = {}
@@ -884,6 +895,20 @@ class LiveService:
         self.pending_source_snapshot_count = 0
         self.external_position_conflict = False
         self.pending_order_conflict = False
+
+    def _ensure_public_csv_schemas(self) -> None:
+        ensure_csv_schema(self.event_path, self.event_public_columns)
+        ensure_csv_schema(self.order_path, self.order_public_columns)
+        ensure_csv_schema(self.timeline_path, self.timeline_public_columns)
+
+    def _append_event_csv(self, row: Mapping[str, Any]) -> None:
+        append_csv(self.event_path, row, fieldnames=self.event_public_columns)
+
+    def _append_order_csv(self, row: Mapping[str, Any]) -> None:
+        append_csv(self.order_path, row, fieldnames=self.order_public_columns)
+
+    def _append_timeline_csv(self, row: Mapping[str, Any]) -> None:
+        append_csv(self.timeline_path, row, fieldnames=self.timeline_public_columns)
 
     def cycle_loss_limit(self) -> float:
         return self.profile.cycle_loss_limit(max(self.cycle_reference_equity, 1.0))
@@ -1131,8 +1156,7 @@ class LiveService:
         status = self.public_status()
         atomic_json(self.status_path, status)
         if time.monotonic() - self.last_timeline_write >= 5.0:
-            append_csv(
-                self.timeline_path,
+            self._append_timeline_csv(
                 {
                     "time_beijing": status["updated_at_beijing"],
                     "phase": status["phase"],
@@ -1227,8 +1251,7 @@ class LiveService:
     def log_order(self, action: str, before: float, target: float, result: Any | None) -> None:
         self.order_counter += 1
         bid, ask, age = self.mt.quote_state()
-        append_csv(
-            self.order_path,
+        self._append_order_csv(
             {
                 "order_event": f"O{self.order_counter:06d}",
                 "time_beijing": beijing_now().isoformat(),
@@ -1326,8 +1349,7 @@ class LiveService:
         desired = self.target_for_raw(raw, self.current_target, cycle)
         self.current_target = desired
         self.event_counter += 1
-        append_csv(
-            self.event_path,
+        self._append_event_csv(
             {
                 "event_id": f"E{self.event_counter:07d}",
                 "time_beijing": filetime_to_datetime(event.timestamp).astimezone(BEIJING).isoformat(),

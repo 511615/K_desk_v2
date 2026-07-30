@@ -213,7 +213,9 @@ account detail contract must not embed a `复制实验` section or call the copy
 Producer CSV tests require an exact ordered header and row width for event, order and timeline
 streams, rotation of a mismatched legacy header/data layout before startup counter/latency
 restoration, byte-preserved timestamped archives and a newly headed current file so dashboard
-`DictReader` fields cannot shift.
+`DictReader` fields cannot shift. Multi-source regressions require its schema override to survive
+base initialization, MT5 then MT4 event normalization without rotation, and independent then
+flatten order normalization without rotation.
 Execution-quality dashboard tests additionally require an explicit deferred historical-delay state,
 cashflow-adjusted drawdown coverage, holding/overnight/weekend fields, factor gate-code filtering,
 pool-tier projection and scheduler/dynamic-sleeve state. A dynamic state row with an unmapped private
