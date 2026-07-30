@@ -210,6 +210,12 @@ account labels, Chinese operational labels and chart geometry. Browser acceptanc
 service with live local snapshots at desktop and mobile widths and confirms explicit base/current
 weight comparison, reduction reason, readable event/gate sections and account links. The legacy
 account detail contract must not embed a `复制实验` section or call the copy-pool dashboard.
+Producer CSV tests require an exact ordered header and row width for event, order and timeline
+streams, rotation of a mismatched legacy header/data layout before startup counter/latency
+restoration, byte-preserved timestamped archives and a newly headed current file so dashboard
+`DictReader` fields cannot shift. Multi-source regressions require its schema override to survive
+base initialization, MT5 then MT4 event normalization without rotation, and independent then
+flatten order normalization without rotation.
 Execution-quality dashboard tests additionally require an explicit deferred historical-delay state,
 cashflow-adjusted drawdown coverage, holding/overnight/weekend fields, factor gate-code filtering,
 pool-tier projection and scheduler/dynamic-sleeve state. A dynamic state row with an unmapped private
@@ -237,6 +243,11 @@ reject both unowned actual Tickets and missing persisted Tickets. Exact offsetti
 must still flatten for outage, Friday, daily/equity/margin hard stops. Client tests cover the
 20/50/80/100% loss curve, two-hour pause, 15-minute recovery shadow, slow weight recovery, minimum
 risk-lot rejection, 12/24-hour rules, 40% cluster cap and 15%/25% margin gates.
+The Demo minimum-lot regression must keep one source Position's Ticket unchanged across repeated
+reconciliation while a same-direction sibling remains unfilled. A rolling order-storm fixture must
+hard-stop before a ninth open request in 60 seconds. MT4 adapter tests attach UTC to a naive raw
+`OPEN_TIME`, and a snapshot observed three seconds later must remain within the five-second budget
+instead of receiving an artificial eight-hour delay.
 Producer regressions also pin the broker-retained 16-character independent comment, migrate older
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched

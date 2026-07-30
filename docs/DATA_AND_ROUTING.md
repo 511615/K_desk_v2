@@ -34,6 +34,17 @@ also public snapshot fields. K_desk does not query them from MySQL. The producer
 the accepted `pool_universe_private.csv` plus bounded current-session reads; the daily historical
 factor evidence remains immutable until the next complete build.
 
+The producer treats each append-only public CSV header as a versioned local contract. Before startup
+counter/latency restoration and before every append, `events_public.csv`, `orders_public.csv` and
+`status_timeline_public.csv` must exactly match the current ordered producer columns and every row
+must have that width. The multi-source runtime declares fixed event/order supersets before its
+base-service initialization, so MT5 and MT4 events plus independent and product-level orders append
+to one normalized layout; absent allowed columns are empty and unknown fields fail the Producer.
+A mismatch is renamed atomically in the same snapshot directory as a timestamped
+`schema-mismatch` archive, then the current file is written with a new header. The archive is
+historical evidence only; it is not merged into the dashboard's live reader, so old rows cannot
+shift current DictReader fields.
+
 The copy-pool producer treats `(CRM schema, mt_server_code, Login)` as account identity. Shared
 physical sources are scanned once and routed through CRM evidence; a Login mapping to more than one
 logical route is excluded rather than guessed. Source cursors and health are independent. MT5 uses
@@ -46,6 +57,10 @@ state persists effective weights by composite account-product key so a same-alia
 from a prior pool build cannot overwrite the current pool projection. The dashboard multiplies a
 sleeve dynamic weight by the client-specific Demo loss-budget factor before clamping it through the
 sleeve base weight.
+
+For all four physical MT4 sources, raw `OPEN_TIME` is UTC platform time. The MySQL session renders
+Unix `TIMESTAMP` values at `+08:00`, but that session offset must not be attached to `OPEN_TIME`.
+Current-position routing attaches UTC directly before comparing source age with the signal budget.
 
 Open-position risk reads all market positions for each candidate, not only XAUUSD. MT5 uses current
 `mt5_positions` plus the current account `Profit`, `Equity` and `Margin`; MT4 uses `CMD IN (0,1)`

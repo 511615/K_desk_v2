@@ -2006,7 +2006,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         "symbol": item["SYMBOL"], "lots": float(item["lots"]) * (1 if int(item["CMD"]) == 0 else -1),
                         "contract_size": 0.0,
                         "source_opened_at": (
-                            item["OPEN_TIME"].replace(tzinfo=BEIJING).astimezone(timezone.utc).isoformat()
+                            item["OPEN_TIME"].replace(tzinfo=timezone.utc).isoformat()
                             if isinstance(item.get("OPEN_TIME"), datetime)
                             else ""
                         ),

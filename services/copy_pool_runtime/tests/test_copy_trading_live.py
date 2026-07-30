@@ -33,6 +33,7 @@ from copy_trading_live_demo import (
     LiveService,
     append_csv,
     csv_data_rows,
+    ensure_csv_schema,
     recent_csv_latencies,
 )
 
@@ -259,6 +260,29 @@ class CoreTests(unittest.TestCase):
             append_csv(path, {"event_id": "E0000001", "value": 1})
             append_csv(path, {"event_id": "E0000002", "value": 2})
             self.assertEqual(csv_data_rows(path), 2)
+
+    def test_csv_schema_mismatch_rotates_original_before_appending(self) -> None:
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "events_public.csv"
+            legacy = "\n".join((
+                "event_id,time_beijing,current_value",
+                "E0000001,old,1,legacy_trailing_value",
+                "",
+            ))
+            path.write_text(legacy, encoding="utf-8-sig", newline="")
+
+            archive = ensure_csv_schema(path, ("event_id", "time_beijing", "current_value"))
+            self.assertIsNotNone(archive)
+            assert archive is not None
+            self.assertEqual(archive.read_text(encoding="utf-8-sig"), legacy)
+            self.assertFalse(path.exists())
+
+            append_csv(path, {"event_id": "E0000002", "time_beijing": "new", "current_value": 2})
+            self.assertEqual(
+                path.read_text(encoding="utf-8-sig").splitlines(),
+                ["event_id,time_beijing,current_value", "E0000002,new,2"],
+            )
+            self.assertEqual(csv_data_rows(path), 1)
 
     def test_recent_latency_window_restores_only_valid_samples(self) -> None:
         with TemporaryDirectory() as temporary:

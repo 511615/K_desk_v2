@@ -85,7 +85,6 @@ from copy_trading_live_demo import (
     RISK_PROFILES,
     SPREAD_CAP_PRICE,
     LiveService,
-    append_csv,
     atomic_json,
     beijing_now,
     csv_data_rows,
@@ -106,6 +105,8 @@ SOURCE_CLOSE_LIMIT_SECONDS = 24 * 60 * 60
 PORTFOLIO_MARGIN_SOFT_FRACTION = 0.15
 PORTFOLIO_MARGIN_HARD_FRACTION = 0.25
 PORTFOLIO_CLUSTER_RISK_FRACTION = 0.40
+OPEN_REQUEST_WINDOW_SECONDS = 60.0
+OPEN_REQUEST_LIMIT = 8
 PORTFOLIO_CLIENT_RISK_FRACTION = 0.20
 HOURLY_EVIDENCE_COLUMNS = {
     "hourly_score",
@@ -121,6 +122,19 @@ DEFAULT_ENTRY_QUALIFICATIONS = 2
 DEFAULT_ENTRY_SHADOW_DURATION = timedelta(minutes=10)
 DEMO_FAST_ENTRY_QUALIFICATIONS = 1
 DEMO_FAST_ENTRY_SHADOW_DURATION = timedelta(minutes=2)
+
+MULTISOURCE_EVENT_PUBLIC_COLUMNS = (
+    "event_id", "time_beijing", "client_alias", "source_route", "source_server",
+    "source_platform", "source_side", "source_entry", "source_lots", "product",
+    "effective_weight", "raw_target_lots", "desired_target_lots", "actual_strategy_lots",
+    "gross_long_lots", "gross_short_lots", "db_latency_seconds", "allowed_delay_seconds",
+    "signal_expired", "latency_known", "phase", "reason",
+)
+MULTISOURCE_ORDER_PUBLIC_COLUMNS = (
+    "order_event", "time_beijing", "client_alias", "source_position_id", "product",
+    "action", "before_lots", "target_lots", "after_lots", "demo_tickets", "bid", "ask",
+    "spread_price", "quote_age_seconds", "retcode", "comment",
+)
 
 
 def has_complete_hourly_evidence(pool: pd.DataFrame) -> bool:
@@ -139,6 +153,9 @@ def pool_build_day_key(now: datetime) -> str:
 
 
 class MultiSourceLiveService(LiveService):
+    event_public_columns = MULTISOURCE_EVENT_PUBLIC_COLUMNS
+    order_public_columns = MULTISOURCE_ORDER_PUBLIC_COLUMNS
+
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
         quote_provider = Mt5QuotePartitionProvider(
@@ -167,6 +184,7 @@ class MultiSourceLiveService(LiveService):
         self.current_targets: dict[str, float] = {}
         self.product_execution: dict[str, dict[str, Any]] = {}
         self.product_order_counter: dict[str, int] = {}
+        self.open_request_times: list[float] = []
         self.copy_book = IndependentCopyBook()
         self.copy_recovery_shadow_started = 0.0
         self.last_client_risk_refresh = 0.0
@@ -1144,6 +1162,23 @@ class MultiSourceLiveService(LiveService):
                 clients[account_key] = clients.get(account_key, 0.0) + stress
         return total, clusters, clients
 
+    def _reserve_open_request(self) -> None:
+        now = time.monotonic()
+        recent = [
+            stamp
+            for stamp in getattr(self, "open_request_times", [])
+            if now - stamp < OPEN_REQUEST_WINDOW_SECONDS
+        ]
+        self.open_request_times = recent
+        if len(recent) >= OPEN_REQUEST_LIMIT:
+            error = RuntimeError(
+                f"Order storm guard blocked more than {OPEN_REQUEST_LIMIT} open requests "
+                f"within {OPEN_REQUEST_WINDOW_SECONDS:.0f} seconds."
+            )
+            self.execution_hard_stop("order_storm_guard", error)
+            raise error
+        recent.append(now)
+
     def _desired_copy_lots(
         self,
         position: IndependentCopyPosition,
@@ -1222,7 +1257,6 @@ class MultiSourceLiveService(LiveService):
             target_abs < minimum - 1e-12
             and proportional > 0.0
             and allow_increase
-            and current_abs < minimum - 1e-12
             and self._demo_minimum_lot_override_enabled(account)
             and total_stress + minimum * stress_per_lot <= cycle_budget + 1e-12
             and clusters.get((position.product, position.side), 0.0) < 1e-12
@@ -1250,7 +1284,7 @@ class MultiSourceLiveService(LiveService):
     ) -> None:
         self.order_counter += 1
         bid, ask, age = self.mt.quote_state(position.product)
-        append_csv(self.order_path, {
+        self._append_order_csv({
             "order_event": f"O{self.order_counter:06d}",
             "time_beijing": beijing_now().isoformat(),
             "client_alias": position.client_alias,
@@ -1330,6 +1364,7 @@ class MultiSourceLiveService(LiveService):
             )
             if can_open:
                 delta = target - before
+                self._reserve_open_request()
                 result = self.mt.open_position(
                     delta,
                     position.product,
@@ -1804,8 +1839,7 @@ class MultiSourceLiveService(LiveService):
         gross_short = gross_shorts.get(product, 0.0)
         desired = self.current_targets.get(product, 0.0)
         self.event_counter += 1
-        append_csv(
-            self.event_path,
+        self._append_event_csv(
             {
                 "event_id": f"E{self.event_counter:07d}",
                 "time_beijing": filetime_to_datetime(event.timestamp).astimezone(BEIJING).isoformat(),
@@ -1971,8 +2005,7 @@ class MultiSourceLiveService(LiveService):
             gross_short = gross_shorts.get(product, 0.0)
             desired = self.current_targets.get(product, 0.0)
             self.event_counter += 1
-            append_csv(
-                self.event_path,
+            self._append_event_csv(
                 {
                     "event_id": f"E{self.event_counter:07d}",
                     "time_beijing": beijing_now().isoformat(),
@@ -2028,8 +2061,7 @@ class MultiSourceLiveService(LiveService):
     ) -> None:
         self.order_counter += 1
         bid, ask, age = self.mt.quote_state(product)
-        append_csv(
-            self.order_path,
+        self._append_order_csv(
             {
                 "order_event": f"O{self.order_counter:06d}",
                 "time_beijing": beijing_now().isoformat(),

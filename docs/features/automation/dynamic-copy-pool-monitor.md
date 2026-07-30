@@ -92,6 +92,10 @@ The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGloba
 allocation is smaller, but only while whole-portfolio stress and margin permit it and no copied
 Ticket already occupies that product/direction. It does not bypass quote, spread, database,
 Ticket-ownership, daily-stop, equity-floor or margin hard gates and is never implicit.
+Once a source Position owns that minimum lot, normal reconciliation preserves the same Ticket while
+the source, weight and gates remain eligible; another same-direction Position cannot displace it.
+More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
+strategy flatten before another opening request is sent.
 
 The optional `-DemoFastActivation` switch is also effective only for `ACCMGlobal-Demo` in
 `StagedLive`. It changes entry from two consecutive rankings plus ten healthy minutes to one
@@ -198,6 +202,9 @@ them; those actions never change virtual positions, intraday trading P/L, dynami
 signals. MT4 remains snapshot-authoritative. The producer persists effective weights by composite
 account key; the dashboard prefers that current mapping over historical event rows and clamps any
 legacy fallback to zero through the accepted pool's base weight.
+Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
+render at `+08:00`; the producer attaches UTC before calculating signal age. This prevents a timely
+snapshot position from acquiring an artificial eight-hour delay.
 The producer also persists normalized per-account open-risk state. The dashboard prefers the
 runtime projection over the build-time snapshot, while missing legacy fields degrade to the build
 values without inventing a clean current state. Missing hourly discovery fields remain unknown and
@@ -210,6 +217,15 @@ The v6 execution-quality and sparse-product fallback `pool_public.csv` columns a
 contract. K_desk projects
 only their documented numeric/boolean fields and bounded gate codes, while status-level scheduler
 and dynamic sleeve records are anonymized through the current route map before response assembly.
+The append-only `events_public.csv`, `orders_public.csv` and `status_timeline_public.csv` files each
+require an exact producer header and row width. The single-source Producer retains its own fixed
+columns; the multi-source Producer uses fixed event and order supersets, normalizes unavailable
+source-specific values to empty cells and rejects unexpected fields. At producer startup and before
+every append, a missing or matching file is retained; a non-empty file with any different column
+order, name, header count or row count is atomically renamed in place to
+`*.schema-mismatch-<UTC timestamp>.csv` and a new public file starts with the current header.
+Archived rows remain byte-preserved for investigation and are intentionally not mixed into the
+current dashboard feed.
 
 The page does not query MySQL or MT terminals and does not start, stop or modify the copier. It has
 no order, balance, permission or MT Manager write action.
@@ -261,6 +277,9 @@ preservation. They also require hourly pool persistence, unknown rather than zer
 idle source semantics and the bounded explicit Demo minimum-lot exception.
 Producer and dashboard tests also cover the explicit Demo fast-activation scope, one-ranking/two-
 minute policy, default two-ranking/ten-minute compatibility and effective status projection.
+Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
+MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
+file, preventing DictReader field shifts after a producer schema upgrade.
 
 ## Compatibility and deprecation
 
