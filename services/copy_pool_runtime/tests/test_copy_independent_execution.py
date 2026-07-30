@@ -705,6 +705,79 @@ class IndependentExecutionServiceTests(unittest.TestCase):
 
         self.assertEqual(service.copy_book.ticket_owners(), {777: position.source_key})
 
+    def test_restart_without_demo_ticket_is_monitor_only_and_never_reopens(self) -> None:
+        original = IndependentCopyBook()
+        _action, position = original.observe_source_position(
+            "route:1", "C001", "XAUUSD", 55, 0.0, 10.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        restored = IndependentCopyBook.from_private(original.to_private())
+        service = self.sizing_service(FakeHedgingMt())
+        service.copy_book = restored
+
+        service._validate_copy_ticket_mapping()
+        marked = service.copy_book.mark_restart_positions_monitor_only(
+            set(service.copy_book.positions)
+        )
+        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+            service.reconcile_independent_copies(allow_increase=True)
+
+        restored_position = service.copy_book.positions[position.source_key]
+        self.assertEqual(marked, 1)
+        self.assertFalse(restored_position.copy_eligible)
+        self.assertTrue(restored_position.restart_monitor_only)
+        self.assertEqual(restored_position.status, "monitor")
+        self.assertEqual(
+            restored_position.reject_reason, "restart_without_demo_ticket"
+        )
+        self.assertEqual(service.mt.actions, [])
+
+    def test_restart_unique_actual_ticket_remains_owned_and_can_close(self) -> None:
+        original = IndependentCopyBook()
+        _action, position = original.observe_source_position(
+            "route:1", "C001", "XAUUSD", 56, 0.0, 10.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        mt = FakeHedgingMt()
+        mt.add(778, position.comment, 1, 0.01)
+        service = self.sizing_service(mt)
+        service.copy_book = IndependentCopyBook.from_private(original.to_private())
+
+        service._validate_copy_ticket_mapping()
+        marked = service.copy_book.mark_restart_positions_monitor_only(
+            set(service.copy_book.positions)
+        )
+        recovered = service.copy_book.positions[position.source_key]
+        recovered.source_lots = 0.0
+        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+            service.reconcile_independent_copies(allow_increase=True)
+
+        self.assertEqual(marked, 0)
+        self.assertTrue(recovered.copy_eligible)
+        self.assertFalse(recovered.restart_monitor_only)
+        self.assertEqual(mt.actions, [("close", 778, 0.01)])
+        self.assertEqual(recovered.status, "closed")
+
+    def test_restart_monitor_only_mapping_is_removed_when_source_closes(self) -> None:
+        book = IndependentCopyBook()
+        _action, position = book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 57, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        book.mark_restart_positions_monitor_only({position.source_key})
+
+        action, closed = book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 57, 1.0, 0.0, NOW
+        )
+        assert closed is not None
+        book.remove_closed(closed.source_key)
+
+        self.assertEqual(action, "close")
+        self.assertNotIn(position.source_key, book.positions)
+
     def test_source_change_persists_before_and_after_execution(self) -> None:
         service = self.service(FakeHedgingMt())
         service.phase = "live"

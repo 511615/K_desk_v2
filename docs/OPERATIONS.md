@@ -43,6 +43,10 @@ The Producer may self-recover a Ticket that was filled immediately before a proc
 only when its retained 16-character comment and product uniquely match one persisted source-position
 owner. It records the recovered ownership before resuming reconciliation. Ambiguous, foreign or
 unmatched Tickets are never adopted and continue to require operator review.
+After this recovery pass, a persisted open source Position with no actual Demo child Ticket is
+retained as `restart_without_demo_ticket` monitor-only state until the source closes. It is not an
+ownership mismatch and must not be repaired by manually relaunching or forcing a replacement order.
+Positions with recovered or existing child Tickets remain under reduction, close and risk control.
 The accepted cache is rejected unless metadata, route counts and source-health rows exactly cover
 all configured eleven logical routes and nine physical sources; an older or partial cache forces a
 new full preflight instead of entering Demo execution.

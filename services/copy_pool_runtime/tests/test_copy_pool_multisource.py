@@ -725,6 +725,18 @@ class MultiSourceTests(unittest.TestCase):
 
     def test_restart_uses_authoritative_highwaters_and_persists_source_cursors(self) -> None:
         routed = client(0, 1, "C001")
+        restored_book = IndependentCopyBook()
+        _action, restored_position = restored_book.observe_source_position(
+            routed.account_key,
+            "C001",
+            "XAUUSD",
+            901,
+            0.0,
+            1.0,
+            utc_now(),
+        )
+        assert restored_position is not None
+        restored_position.copy_eligible = True
 
         class FakeDatabase:
             @staticmethod
@@ -733,7 +745,12 @@ class MultiSourceTests(unittest.TestCase):
 
             @staticmethod
             def all_positions() -> list[dict[str, object]]:
-                return []
+                return [{
+                    "account_key": routed.account_key,
+                    "position_id": 901,
+                    "symbol": "XAUUSD",
+                    "lots": 1.0,
+                }]
 
             @staticmethod
             def intraday_net(_start: object) -> dict[str, float]:
@@ -752,6 +769,10 @@ class MultiSourceTests(unittest.TestCase):
             def marked_pnl(_start: object) -> float:
                 return 0.0
 
+            @staticmethod
+            def all_strategy_positions() -> tuple[object, ...]:
+                return ()
+
         with TemporaryDirectory() as temporary:
             state_path = Path(temporary) / "runtime_state_private.json"
             state_path.write_text(json.dumps({
@@ -763,6 +784,7 @@ class MultiSourceTests(unittest.TestCase):
                 "daily_reference_equity": 10_000.0,
                 "daily_hard_stop": False,
                 "cooldown_until": None,
+                "independent_copy": restored_book.to_private(),
                 "sleeve_dynamic": {
                     f"{routed.account_key}|XAUUSD": {
                         "day_start_base_weight": 0.03,
@@ -785,7 +807,7 @@ class MultiSourceTests(unittest.TestCase):
                 "live_base_weight": 0.02,
                 "factor_ready": True,
             }])
-            service.pool_was_rebuilt = True
+            service.pool_was_rebuilt = False
 
             service.bootstrap()
 
@@ -800,6 +822,10 @@ class MultiSourceTests(unittest.TestCase):
                 service.sleeve_states[f"{routed.account_key}|XAUUSD"].tier.value,
                 "execution_suspended",
             )
+            guarded = service.copy_book.positions[restored_position.source_key]
+            self.assertFalse(guarded.copy_eligible)
+            self.assertTrue(guarded.restart_monitor_only)
+            self.assertEqual(guarded.reject_reason, "restart_without_demo_ticket")
 
     def test_hourly_discovery_rotates_subscription_without_chasing_current_positions(self) -> None:
         clients = {
