@@ -63,6 +63,10 @@ def make_snapshot(root: Path) -> Path:
             "db_poll_latency_p95_seconds": 0.4,
             "signal_latency_p95_seconds": 0.8,
             "execution_model": "independent_customer_positions_v2",
+            "demo_fast_activation_requested": True,
+            "demo_fast_activation_enabled": True,
+            "entry_rank_qualifications_required": 1,
+            "entry_shadow_minutes": 2,
             "monitor_sleeves": 1,
             "active_copy_clients": 1,
             "independent_source_positions": 1,
@@ -398,6 +402,10 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert payload["sourceCoverage"]["hourlyDiscovery"]["factorReadySleevesScanned"] == 894
     assert payload["sourceCoverage"]["hourlyDiscovery"]["monitorAccounts"] == 30
     assert payload["status"]["executionModel"] == "independent_customer_positions_v2"
+    assert payload["status"]["demoFastActivationRequested"] is True
+    assert payload["status"]["demoFastActivationEnabled"] is True
+    assert payload["status"]["entryRankQualificationsRequired"] == 1
+    assert payload["status"]["entryShadowMinutes"] == 2
     assert payload["clientRisks"][0]["lossBudgetUsd"] == 4.5
     assert payload["copyPositions"][0]["demoTickets"] == [90001]
     assert payload["ticketMappings"][0]["demoTicket"] == 90001

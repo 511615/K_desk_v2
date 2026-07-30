@@ -64,6 +64,11 @@ seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded
 accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. Hourly discovery
 never repeats the 60-day factor query and cannot promote a historical hard-gate failure. Two
 consecutive active-zone results and ten healthy shadow minutes are required before execution.
+An entry-shadow health failure caused by a transient operational gate, including the first pending
+source-position reconciliation frame, retains the sleeve's two ranking qualifications but restarts
+the full ten-minute continuous-health window. Loss of factor qualification, current comprehensive
+product profit or activity eligibility returns the sleeve to monitor immediately, and no weight
+becomes executable before the restarted window completes.
 Hourly current-position evidence uses collision-free `current` column names, preserving daily
 build-time floating/hedge columns when a product currently has no open position.
 Hourly monitor-only sleeves receive no provisional execution base weight. Producer status and the
@@ -82,6 +87,13 @@ The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGloba
 allocation is smaller, but only while whole-portfolio stress and margin permit it and no copied
 Ticket already occupies that product/direction. It does not bypass quote, spread, database,
 Ticket-ownership, daily-stop, equity-floor or margin hard gates and is never implicit.
+
+The optional `-DemoFastActivation` switch is also effective only for `ACCMGlobal-Demo` in
+`StagedLive`. It changes entry from two consecutive rankings plus ten healthy minutes to one
+qualified ranking plus two continuously healthy minutes. It does not authorize trading, bypass an
+operational or risk gate, chase a position observed during shadow or increase weight while health is
+false. Without the switch, and on every other server or mode, the normal two-plus-ten policy remains
+authoritative.
 
 ## UI and behavior
 
@@ -145,6 +157,9 @@ current measures with coverage; holding exposes overnight/weekend, swap and long
 sanitized `dynamicSleeves` and `scheduler` state. A dynamic sleeve is returned only after its private
 sleeve key matches a current public alias/product route; unknown mappings are omitted. The fields do
 not expose composite account keys, source keys, order comments or arbitrary private reason text.
+Status also projects whether Demo fast activation was requested and effectively enabled, plus the
+effective ranking count and shadow duration, so an ignored server/mode-incompatible request is
+visible without exposing private routing state.
 
 `GET /copy-pool/accounts/{alias}` accepts only `C` plus three digits, resolves the private local
 mapping server-side and returns a 307 redirect to the compatible
@@ -228,6 +243,8 @@ non-empty populations below the monitor target,
 single-consumption discovery scheduling, restart missed-add suppression and daily suspended-state
 preservation. They also require hourly pool persistence, unknown rather than zero restart evidence,
 idle source semantics and the bounded explicit Demo minimum-lot exception.
+Producer and dashboard tests also cover the explicit Demo fast-activation scope, one-ranking/two-
+minute policy, default two-ranking/ten-minute compatibility and effective status projection.
 
 ## Compatibility and deprecation
 

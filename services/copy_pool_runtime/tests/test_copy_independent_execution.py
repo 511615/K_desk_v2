@@ -14,7 +14,7 @@ from copy_independent_execution import (
     slow_weight_increase,
 )
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
-from copy_trading_multi_demo import MultiSourceLiveService
+from copy_trading_multi_demo import MultiSourceLiveService, parse_args
 from copy_pool_multisource import sleeve_key
 from copy_dynamic_pool_domain import PoolTier, SchedulerState, SleeveDynamicState, mark_scheduler_run
 
@@ -330,6 +330,195 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         self.assertAlmostEqual(
             service.sleeve_states["route:2|EURUSD"].effective_weight, 0.09
         )
+
+    def test_demo_fast_rank_enters_two_minute_shadow_after_one_qualification(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
+        service.mt = FakeHedgingMt()
+        service.scheduler_state = mark_scheduler_run(
+            SchedulerState(), NOW, risk=True, discovery=True,
+            daily_rebuild_run=True,
+        )
+        key = "route:1|XAUUSD"
+        service.sleeve_rows = {
+            key: {
+                "account_key": "route:1",
+                "product": "XAUUSD",
+                "factor_ready": True,
+                "hourly_score": 0.9,
+                "daily_activity_eligible": True,
+                "live_base_weight": 0.04,
+            },
+        }
+        service.sleeve_states = {
+            key: SleeveDynamicState(day_start_base_weight=0.04),
+        }
+        service.routed_clients = {
+            "route:1": SimpleNamespace(spec=SimpleNamespace(equity_usd=10_000.0)),
+        }
+        service.portfolio = SimpleNamespace(
+            product_comprehensive_pnl_usd={key: 1.0},
+            intraday_product_net_usd={},
+            floating_product_pnl_usd={},
+        )
+        service._minimum_lot_feasible = lambda _account, _product: True
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
+            service.refresh_dynamic_sleeves()
+
+        shadow = service.sleeve_states[key]
+        self.assertEqual(shadow.tier, PoolTier.ENTRY_SHADOW)
+        self.assertEqual(shadow.consecutive_active_qualifications, 1)
+        self.assertEqual(shadow.shadow_started_at, NOW)
+        self.assertEqual(shadow.shadow_ends_at, NOW + timedelta(minutes=2))
+
+    def test_first_pending_reconcile_frame_restarts_entry_shadow_without_losing_rank(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.args = SimpleNamespace(
+            demo_fast_activation=True,
+            mode="StagedLive",
+        )
+        service.mt = FakeHedgingMt()
+        service.scheduler_state = mark_scheduler_run(
+            SchedulerState(), NOW, risk=True, rank=True, discovery=True,
+            daily_rebuild_run=True,
+        )
+        key = "route:1|XAUUSD"
+        service.sleeve_rows = {
+            key: {
+                "factor_ready": True,
+                "daily_activity_eligible": True,
+                "live_base_weight": 0.04,
+            },
+        }
+        service.sleeve_states = {
+            key: SleeveDynamicState(
+                day_start_base_weight=0.04,
+                tier=PoolTier.ENTRY_SHADOW,
+                consecutive_active_qualifications=2,
+                shadow_started_at=NOW - timedelta(minutes=10),
+                shadow_ends_at=NOW,
+                last_ranked_at=NOW,
+            ),
+        }
+        service.reconcile_streak = 3
+        service.pending_source_snapshot_count = 1
+        service.portfolio = SimpleNamespace(
+            duplicate_events=0,
+            product_comprehensive_pnl_usd={key: 1.0},
+        )
+        service.coverage = {
+            "logical_routes_scanned": 11,
+            "physical_sources_scanned": 9,
+        }
+        service.db = SimpleNamespace(
+            sources={index: object() for index in range(9)},
+            selected_source_staleness=lambda: 0.0,
+        )
+        service.poll_latencies = [0.1] * 120
+
+        pending_at = NOW + timedelta(seconds=10)
+        with patch("copy_trading_multi_demo.utc_now", return_value=pending_at):
+            service.refresh_dynamic_sleeves()
+
+        pending = service.sleeve_states[key]
+        self.assertEqual(pending.tier, PoolTier.ENTRY_SHADOW)
+        self.assertEqual(pending.consecutive_active_qualifications, 2)
+        self.assertEqual(pending.shadow_started_at, pending_at)
+        self.assertEqual(pending.shadow_ends_at, pending_at + timedelta(minutes=2))
+        self.assertEqual(pending.effective_weight, 0)
+
+        service.pending_source_snapshot_count = 0
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=pending_at + timedelta(minutes=1),
+        ):
+            service.refresh_dynamic_sleeves()
+        self.assertEqual(service.sleeve_states[key].tier, PoolTier.ENTRY_SHADOW)
+
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=pending_at + timedelta(minutes=2),
+        ):
+            service.refresh_dynamic_sleeves()
+        self.assertEqual(service.sleeve_states[key].tier, PoolTier.ACTIVE)
+
+    def test_entry_shadow_losing_current_comprehensive_profit_returns_to_monitor(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
+        service.mt = FakeHedgingMt()
+        service.scheduler_state = mark_scheduler_run(
+            SchedulerState(), NOW, rank=True, discovery=True,
+            daily_rebuild_run=True,
+        )
+        key = "route:1|XAUUSD"
+        service.sleeve_rows = {
+            key: {
+                "factor_ready": True,
+                "daily_activity_eligible": True,
+                "live_base_weight": 0.04,
+            },
+        }
+        service.sleeve_states = {
+            key: SleeveDynamicState(
+                day_start_base_weight=0.04,
+                tier=PoolTier.ENTRY_SHADOW,
+                consecutive_active_qualifications=1,
+                shadow_started_at=NOW - timedelta(minutes=1),
+                shadow_ends_at=NOW + timedelta(minutes=1),
+                last_ranked_at=NOW,
+            ),
+        }
+        service.reconcile_streak = 3
+        service.pending_source_snapshot_count = 0
+        service.portfolio = SimpleNamespace(
+            duplicate_events=0,
+            product_comprehensive_pnl_usd={key: -0.01},
+        )
+        service.coverage = {
+            "logical_routes_scanned": 11,
+            "physical_sources_scanned": 9,
+        }
+        service.db = SimpleNamespace(
+            sources={index: object() for index in range(9)},
+            selected_source_staleness=lambda: 0.0,
+        )
+        service.poll_latencies = [0.1] * 120
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
+            service.refresh_dynamic_sleeves()
+
+        state = service.sleeve_states[key]
+        self.assertEqual(state.tier, PoolTier.MONITOR)
+        self.assertEqual(state.consecutive_active_qualifications, 0)
+        self.assertEqual(state.effective_weight, 0.0)
+
+    def test_demo_fast_activation_is_explicit_and_demo_staged_only(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.mt = FakeHedgingMt()
+        service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
+        self.assertTrue(service._demo_fast_activation_enabled())
+        self.assertFalse(
+            service._demo_fast_activation_enabled(
+                SimpleNamespace(server="Another-Demo")
+            )
+        )
+        service.args.mode = "Live"
+        self.assertFalse(service._demo_fast_activation_enabled())
+        service.args.mode = "StagedLive"
+        service.args.demo_fast_activation = False
+        self.assertFalse(service._demo_fast_activation_enabled())
+
+        with patch(
+            "sys.argv",
+            [
+                "copy_trading_multi_demo.py",
+                "--output-dir", "out",
+                "--terminal", "terminal64.exe",
+                "--demo-fast-activation",
+            ],
+        ):
+            self.assertTrue(parse_args().demo_fast_activation)
 
     def test_service_consumes_hourly_discovery_schedule_once(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)

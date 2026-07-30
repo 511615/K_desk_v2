@@ -67,6 +67,12 @@ open at most one minimum copied lot per product/direction when portfolio stress 
 fit. It does not authorize trading by itself: `-EnableLiveTrading`, terminal AutoTrading, healthy
 operational gates and a new post-activation source signal remain mandatory.
 
+`-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
+effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;
+other server/mode combinations retain two rankings plus ten minutes even when the switch is passed.
+The status snapshot records requested and effective state. This option does not imply
+`-EnableLiveTrading` and does not bypass any operational, ownership, risk or terminal gate.
+
 The legacy net-target Live process must remain stopped. Initial deployment may run only `Shadow`
 without `-EnableLiveTrading`; it may start the existing 8777 service but no additional web port.
 Before Demo authorization, offline event replay must prove old-position suppression, exact A/B Ticket isolation,

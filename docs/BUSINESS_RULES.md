@@ -101,6 +101,15 @@
 - Restart and hourly membership changes never authorize missed source increases or reversals.
   Offline reductions and closes may only reduce Demo risk; current positions first seen at restart
   or during entry shadow remain monitor-only until they close.
+- Entry requires two consecutive active-zone rankings followed by ten continuous healthy shadow
+  minutes. A transient operational-gate failure during entry shadow preserves those ranking
+  qualifications but restarts the complete ten-minute health window; a factor-qualification loss,
+  non-positive current comprehensive product profit or activity-eligibility loss returns the sleeve
+  to monitor immediately. No executable weight is granted while health is false.
+  The explicit Demo fast-activation option is effective only for `ACCMGlobal-Demo` in `StagedLive`;
+  there it requires one qualified ranking and two continuous healthy minutes. The same health-reset
+  and factor-disqualification rules apply, and every other server/mode retains the two-plus-ten
+  default.
 
 - Copy origin detection uses explicit source identifiers in comments/magic fields and reports each
   source separately. MT5 reconstructed trades use only the opening deal's CPT comment as the source
