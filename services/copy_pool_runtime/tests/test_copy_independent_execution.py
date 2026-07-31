@@ -985,6 +985,82 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         self.assertEqual(service.copy_book.clients["route:1"].base_weight, 0.30)
         self.assertEqual(service.copy_book.clients["route:1"].loss_budget_usd, 30.0)
 
+    def test_demo_minimum_override_floors_tiny_active_client_budget_to_cap(self) -> None:
+        service = self.sizing_service(FakeHedgingMt())
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="StagedLive",
+        )
+        service.routed_clients["route:1"].products["XAUUSD"].base_weight = 0.0038258
+
+        service._initialize_client_copy_risk(9_863.87)
+
+        risk = service.copy_book.clients["route:1"]
+        self.assertAlmostEqual(risk.loss_budget_usd, 9_863.87 * 0.015 * 0.20)
+
+    def test_tiny_client_budget_remains_weight_proportional_without_override(self) -> None:
+        service = self.sizing_service(FakeHedgingMt())
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=False,
+            mode="StagedLive",
+        )
+        service.routed_clients["route:1"].products["XAUUSD"].base_weight = 0.0038258
+
+        service._initialize_client_copy_risk(9_863.87)
+
+        risk = service.copy_book.clients["route:1"]
+        self.assertAlmostEqual(risk.loss_budget_usd, 9_863.87 * 0.015 * 0.0038258)
+
+    def test_demo_override_budget_does_not_pause_after_point_69_loss(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="StagedLive",
+        )
+        service.routed_clients["route:1"].products["XAUUSD"].base_weight = 0.0038258
+        service._initialize_client_copy_risk(9_863.87)
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 80, 0.0, 0.01, NOW
+        )
+        assert position is not None
+        mt.pnl_rows[position.comment] = {"realized": -0.69, "floating": 0.0}
+
+        service._refresh_independent_client_risk(force=True)
+
+        risk = service.copy_book.clients["route:1"]
+        self.assertLess(risk.loss_usage, 1.0)
+        self.assertEqual(risk.status, "active")
+        self.assertIsNone(risk.pause_until)
+
+    def test_demo_minimum_budget_floor_requires_demo_staged_mode(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="Live",
+        )
+        service.routed_clients["route:1"].products["XAUUSD"].base_weight = 0.0038258
+
+        service._initialize_client_copy_risk(9_863.87)
+
+        expected = 9_863.87 * 0.015 * 0.0038258
+        self.assertAlmostEqual(
+            service.copy_book.clients["route:1"].loss_budget_usd, expected
+        )
+
+        service.args.mode = "StagedLive"
+        mt.account = lambda: SimpleNamespace(
+            equity=10_000.0,
+            balance=10_000.0,
+            margin=mt.margin,
+            server="Another-Demo",
+        )
+        service._initialize_client_copy_risk(9_863.87)
+        self.assertAlmostEqual(
+            service.copy_book.clients["route:1"].loss_budget_usd, expected
+        )
+
     def test_pause_transitions_to_fifteen_minute_recovery_shadow(self) -> None:
         mt = FakeHedgingMt()
         service = self.service(mt)

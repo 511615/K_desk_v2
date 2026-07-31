@@ -74,6 +74,10 @@ the scheduler runs a bounded discovery immediately instead of publishing fabrica
 open at most one minimum copied lot per product/direction when portfolio stress and margin still
 fit. It does not authorize trading by itself: `-EnableLiveTrading`, terminal AutoTrading, healthy
 operational gates and a new post-activation source signal remain mandatory.
+For an active client in this exact mode, initialization floors the client's loss allowance at 20%
+of the 1.5% cycle budget. This prevents a minimum-lot Ticket from being closed by a sub-dollar
+weight-proportional allowance before the source strategy can be evaluated. Zero-weight clients and
+all ordinary modes retain the normal weight-proportional allowance.
 The owning source Position retains that minimum lot across reconciliation. A rolling 60-second guard
 permits at most eight open requests; a ninth request enters execution hard stop and flattens strategy
 Tickets. Investigate and deploy a tested fix before restarting rather than repeatedly relaunching an

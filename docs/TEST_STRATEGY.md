@@ -244,7 +244,11 @@ must still flatten for outage, Friday, daily/equity/margin hard stops. Client te
 20/50/80/100% loss curve, two-hour pause, 15-minute recovery shadow, slow weight recovery, minimum
 risk-lot rejection, 12/24-hour rules, 40% cluster cap and 15%/25% margin gates.
 The Demo minimum-lot regression must keep one source Position's Ticket unchanged across repeated
-reconciliation while a same-direction sibling remains unfilled. A rolling order-storm fixture must
+reconciliation while a same-direction sibling remains unfilled. Budget regressions require a
+tiny-weight active client to receive the 20% cycle-budget floor only for the explicit
+`ACCMGlobal-Demo`/`StagedLive` switch, prove that a 0.69 USD loss does not exhaust that floor, and
+retain weight-proportional behavior without the switch or on another server/mode. A rolling
+order-storm fixture must
 hard-stop before a ninth open request in 60 seconds. MT4 adapter tests attach UTC to a naive raw
 `OPEN_TIME`, and a snapshot observed three seconds later must remain within the five-second budget
 instead of receiving an artificial eight-hour delay.

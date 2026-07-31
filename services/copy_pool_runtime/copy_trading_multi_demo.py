@@ -721,6 +721,7 @@ class MultiSourceLiveService(LiveService):
         prior = self.copy_book.clients
         rebuilt: dict[str, ClientCopyRisk] = {}
         total_budget = max(float(equity_usd), 1.0) * 0.015
+        demo_minimum_lot_override = self._demo_minimum_lot_override_enabled()
         for key, client in self.routed_clients.items():
             base_weight = sum(
                 spec.base_weight
@@ -728,6 +729,14 @@ class MultiSourceLiveService(LiveService):
                 if spec.activity_eligible
             )
             old = prior.get(key)
+            loss_budget_usd = total_budget * min(
+                base_weight, PORTFOLIO_CLIENT_RISK_FRACTION
+            )
+            if demo_minimum_lot_override and base_weight > 0.0:
+                loss_budget_usd = max(
+                    loss_budget_usd,
+                    total_budget * PORTFOLIO_CLIENT_RISK_FRACTION,
+                )
             rebuilt[key] = ClientCopyRisk(
                 account_key=key,
                 client_alias=client.spec.alias,
@@ -736,9 +745,7 @@ class MultiSourceLiveService(LiveService):
                     min(base_weight, max(0.0, old.effective_weight))
                     if old else base_weight
                 ),
-                loss_budget_usd=(
-                    total_budget * min(base_weight, PORTFOLIO_CLIENT_RISK_FRACTION)
-                ),
+                loss_budget_usd=loss_budget_usd,
                 realized_pnl_usd=old.realized_pnl_usd if old else 0.0,
                 floating_pnl_usd=old.floating_pnl_usd if old else 0.0,
                 cycle_baseline_pnl_usd=(

@@ -81,6 +81,10 @@
   follows the 100/70/25/0 reduction curve. Exhaustion closes only that client, pauses two hours and
   requires 15 minutes of recovery shadow. Weight decreases are immediate; recovery increases no
   faster than five percentage points per 15 minutes and ten per hour.
+- When the explicit minimum-lot exception is active on `ACCMGlobal-Demo` in `StagedLive`, an active
+  client's loss allowance is floored at the existing 20% per-client share of the cycle budget. This
+  exception aligns the indivisible 0.01-lot test exposure with its stop budget; it does not increase
+  a zero-weight monitor client, apply on another server/mode or bypass any portfolio hard gate.
 - A 12-hour source position cannot add copied risk. At 24 hours all copies for that client close and
   the client pauses. A product-direction cluster may use at most 40% of combination stress budget.
   Margin/equity at 15% blocks additions and 25% triggers a strategy hard stop. Three seconds of
