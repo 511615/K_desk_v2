@@ -89,6 +89,15 @@
 - MT5 balance, credit and other non-trading ledger actions advance the per-source cursor so polling
   cannot stall, but they contribute no position change, intraday trading P/L, dynamic-weight change
   or executable signal. A duplicate or out-of-order cursor is ignored within that physical source.
+- MT5 market Deals received in one poll are source-ledger authoritative as a batch. Execution occurs
+  once per account/product/Position terminal transition, never once per intermediate Deal. A complete
+  open/close round trip already flat by the end of the batch records evidence and P/L but sends no
+  Demo order. Residual opens and reversals use the first risk-increasing Deal's timestamp; reductions
+  and closes remain immediately risk-reducing. Pure reductions execute before unrelated additions.
+  Each terminal transition is durably pending during the process, so one Position failure cannot lose
+  later Position transitions; later events for the same Position coalesce before retry. Restart
+  resumes only risk reduction, never an unfilled open or opposite reversal leg. Expired residual
+  exposure is `signal_expired_no_copy`, not source-flat.
 - MT4 snapshot signal age attaches UTC to raw `OPEN_TIME` for every physical MT4 source. The database
   session's `+08:00` rendering of Unix timestamps is observation evidence, not the timezone of the
   raw platform datetime.

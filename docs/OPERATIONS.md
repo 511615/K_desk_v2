@@ -78,6 +78,14 @@ The owning source Position retains that minimum lot across reconciliation. A rol
 permits at most eight open requests; a ninth request enters execution hard stop and flattens strategy
 Tickets. Investigate and deploy a tested fix before restarting rather than repeatedly relaunching an
 unchanged Producer.
+MT5 incremental polling coalesces every poll batch to the final source Position before execution. A
+`batch_terminal_flat` event means the source opened and fully closed before the Producer could act;
+no Demo Ticket is expected. If an open and immediate close order pair appears instead, stop the
+Producer, keep 8777 running, verify the Demo is flat and deploy the batch-coalescing fix before retry.
+Pending terminal transitions are private state. A broker/runtime failure leaves the failed Position
+pending while independent sibling transitions continue and later events coalesce. Restart replays
+only reductions/closes; unfilled opens become monitor-only and a reversal keeps only its closing leg.
+Malformed pending state hard-stops startup. Do not delete private state to bypass a failure.
 
 `-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
 effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;

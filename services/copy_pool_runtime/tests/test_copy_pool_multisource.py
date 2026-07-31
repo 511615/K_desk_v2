@@ -34,7 +34,7 @@ from copy_pool_multisource import (
     sleeve_key,
     validate_complete_coverage,
 )
-from copy_trading_live_core import ClientSpec
+from copy_trading_live_core import ClientSpec, datetime_to_filetime
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
 from copy_trading_multi_demo import (
     MULTISOURCE_EVENT_PUBLIC_COLUMNS,
@@ -421,6 +421,363 @@ class MultiSourceTests(unittest.TestCase):
         self.assertFalse(portfolio.apply_event(event_a))
         self.assertEqual(portfolio.cursors[first.physical_key], SourceCursor(100, 10))
         self.assertEqual(portfolio.cursors[second.physical_key], SourceCursor(50, 1))
+
+    @staticmethod
+    def _batch_event_service(routed: RoutedClient):
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.portfolio = MultiSourcePortfolio({routed.account_key: routed})
+        service.routed_clients = {routed.account_key: routed}
+        service.signal_latencies = []
+        service.sleeve_states = {}
+        service.sleeve_rows = {
+            sleeve_key(routed.account_key, "XAUUSD"): {
+                "historical_delay_enabled": False,
+                "hold_p25_seconds": 60.0,
+            }
+        }
+        service.copy_book = IndependentCopyBook()
+        service.pending_coalesced_transitions = []
+        service.phase = "live"
+        service.current_targets = {"XAUUSD": 0.0}
+        service.event_counter = 0
+        service.mt = SimpleNamespace(signed_position=lambda _product: 0.0)
+        service._effective_copy_weight = lambda _account, _product: 0.1
+        service.persist_private_state = lambda: None
+        service._refresh_targets = lambda: (
+            {"XAUUSD": 0.0}, {"XAUUSD": 0.0}, {"XAUUSD": 0.0}, 0.0
+        )
+        return service
+
+    def test_mt5_batch_open_and_close_to_flat_never_reaches_execution(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        handled: list[dict[str, object]] = []
+        rows: list[dict[str, object]] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(kwargs) or ("unexpected", None)
+        )
+        service._append_event_csv = rows.append
+        opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        closed_at = opened_at + timedelta(milliseconds=100)
+        events = [
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                1, datetime_to_filetime(opened_at), 901, 0, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                2, datetime_to_filetime(closed_at), 901, 1, 1,
+                "XAUUSD", 0.01, 0.0, -0.2, 0.0, 0.0, 0.0,
+            ),
+        ]
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=closed_at):
+            service.apply_event_batch(events)
+
+        self.assertEqual(handled, [])
+        self.assertNotIn((routed.account_key, 901, "XAUUSD"), service.portfolio.positions)
+        self.assertEqual(
+            service.portfolio.cursors[routed.physical_key],
+            SourceCursor(datetime_to_filetime(closed_at), 2),
+        )
+        self.assertAlmostEqual(service.portfolio.intraday_net_usd[routed.account_key], -0.2)
+        self.assertEqual(len(rows), 1)
+        self.assertIn(
+            "batch_coalesced_2:batch_terminal_flat:monitor",
+            str(rows[0]["reason"]),
+        )
+
+    def test_mt5_batch_with_terminal_exposure_executes_only_once(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        handled: list[dict[str, object]] = []
+        rows: list[dict[str, object]] = []
+
+        def handle(**kwargs):
+            handled.append(kwargs)
+            return "open", SimpleNamespace(status="active")
+
+        service._handle_source_position_change = handle
+        service._append_event_csv = rows.append
+        opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        added_at = opened_at + timedelta(milliseconds=100)
+        events = [
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                1, datetime_to_filetime(opened_at), 902, 0, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                2, datetime_to_filetime(added_at), 902, 0, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+        ]
+
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=added_at + timedelta(seconds=1),
+        ):
+            service.apply_event_batch(events)
+
+        self.assertEqual(len(handled), 1)
+        self.assertEqual(handled[0]["before_lots"], 0.0)
+        self.assertEqual(handled[0]["after_lots"], 0.02)
+        self.assertEqual(handled[0]["signal_time"], opened_at)
+        self.assertEqual(service.portfolio.positions[(routed.account_key, 902, "XAUUSD")], 0.02)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("batch_coalesced_2:open:active", str(rows[0]["reason"]))
+
+    def test_mt5_batch_reverse_uses_opposite_entry_as_signal_time(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        service.portfolio.replace_positions([{
+            "account_key": routed.account_key,
+            "position_id": 903,
+            "symbol": "XAUUSD",
+            "lots": 0.01,
+        }])
+        handled: list[dict[str, object]] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(kwargs) or ("reverse", SimpleNamespace(status="active"))
+        )
+        service._append_event_csv = lambda _row: None
+        closed_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        reversed_at = closed_at + timedelta(milliseconds=100)
+        events = [
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                1, datetime_to_filetime(closed_at), 903, 1, 1,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                2, datetime_to_filetime(reversed_at), 903, 1, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+        ]
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=reversed_at):
+            service.apply_event_batch(events)
+
+        self.assertEqual(len(handled), 1)
+        self.assertEqual(handled[0]["before_lots"], 0.01)
+        self.assertEqual(handled[0]["after_lots"], -0.01)
+        self.assertEqual(handled[0]["signal_time"], reversed_at)
+
+    def test_mt5_batch_continues_after_one_transition_fails(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        persisted: list[bool] = []
+        handled: list[int] = []
+        service.persist_private_state = lambda: persisted.append(True)
+
+        def handle(**kwargs):
+            position_id = int(kwargs["position_id"])
+            handled.append(position_id)
+            if position_id == 904:
+                raise RuntimeError("first transition failed")
+            return "open", SimpleNamespace(status="active")
+
+        service._handle_source_position_change = handle
+        service._append_event_csv = lambda _row: None
+        opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        events = [
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                1, datetime_to_filetime(opened_at), 904, 0, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                2, datetime_to_filetime(opened_at + timedelta(milliseconds=100)),
+                905, 0, 0, "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+        ]
+
+        with (
+            patch(
+                "copy_trading_multi_demo.utc_now",
+                return_value=opened_at + timedelta(seconds=1),
+            ),
+            self.assertRaisesRegex(RuntimeError, "first transition failed"),
+        ):
+            service.apply_event_batch(events)
+
+        self.assertGreaterEqual(len(persisted), 3)
+        self.assertEqual(handled, [904, 905])
+        self.assertEqual(len(service.pending_coalesced_transitions), 1)
+        self.assertEqual(
+            service.pending_coalesced_transitions[0]["last_event"].position_id,
+            904,
+        )
+        serialized = [
+            service._private_coalesced_transition(
+                service.pending_coalesced_transitions[0]
+            )
+        ]
+        restored = service._load_pending_coalesced_transitions(serialized)
+        self.assertEqual(restored[0]["last_event"].position_id, 904)
+        retained, cancelled = service._sanitize_restarted_pending_transitions(restored)
+        self.assertEqual(retained, [])
+        self.assertEqual(cancelled, 1)
+
+        service.pending_coalesced_transitions = restored
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(int(kwargs["position_id"]))
+            or ("open", SimpleNamespace(status="active"))
+        )
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=opened_at + timedelta(seconds=1),
+        ):
+            service.apply_event_batch([])
+        self.assertEqual(handled, [904, 905, 904])
+        self.assertEqual(service.pending_coalesced_transitions, [])
+        self.assertEqual(
+            service.portfolio.cursors[routed.physical_key],
+            SourceCursor(datetime_to_filetime(opened_at + timedelta(milliseconds=100)), 2),
+        )
+
+    def test_mt5_restart_pending_reverse_keeps_only_risk_release(self) -> None:
+        routed = client(0, 1, "C001")
+        closed_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        reversed_at = closed_at + timedelta(milliseconds=100)
+        close_event = RoutedEvent(
+            routed.physical_key, routed.account_key, routed.account_key,
+            1, datetime_to_filetime(closed_at), 910, 1, 1,
+            "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+        )
+        reverse_event = RoutedEvent(
+            routed.physical_key, routed.account_key, routed.account_key,
+            2, datetime_to_filetime(reversed_at), 910, 1, 0,
+            "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+        )
+        retained, cancelled = MultiSourceLiveService._sanitize_restarted_pending_transitions([{
+            "first_event": close_event,
+            "last_event": reverse_event,
+            "before_lots": 0.01,
+            "after_lots": -0.01,
+            "event_count": 2,
+            "first_risk_event": reverse_event,
+        }])
+
+        self.assertEqual(cancelled, 1)
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(retained[0]["after_lots"], 0.0)
+        self.assertIsNone(retained[0]["first_risk_event"])
+
+    def test_mt5_invalid_pending_journal_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be a list"):
+            MultiSourceLiveService._load_pending_coalesced_transitions({})
+        with self.assertRaisesRegex(ValueError, "transition 0 is invalid"):
+            MultiSourceLiveService._load_pending_coalesced_transitions([{}])
+
+    def test_mt5_batch_executes_pure_reduction_before_new_risk(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        service.portfolio.replace_positions([{
+            "account_key": routed.account_key,
+            "position_id": 906,
+            "symbol": "XAUUSD",
+            "lots": 0.01,
+        }])
+        handled: list[int] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(int(kwargs["position_id"]))
+            or ("handled", SimpleNamespace(status="active"))
+        )
+        service._append_event_csv = lambda _row: None
+        stamp = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        events = [
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                1, datetime_to_filetime(stamp), 907, 0, 0,
+                "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+            RoutedEvent(
+                routed.physical_key, routed.account_key, routed.account_key,
+                2, datetime_to_filetime(stamp + timedelta(milliseconds=100)),
+                906, 1, 1, "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ),
+        ]
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=stamp + timedelta(seconds=1)):
+            service.apply_event_batch(events)
+
+        self.assertEqual(handled, [906, 907])
+
+    def test_mt5_pending_open_and_later_close_coalesce_without_demo_round_trip(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        handled: list[int] = []
+        rows: list[dict[str, object]] = []
+        service._append_event_csv = rows.append
+        opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        open_event = RoutedEvent(
+            routed.physical_key, routed.account_key, routed.account_key,
+            1, datetime_to_filetime(opened_at), 909, 0, 0,
+            "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+        )
+        close_event = RoutedEvent(
+            routed.physical_key, routed.account_key, routed.account_key,
+            2, datetime_to_filetime(opened_at + timedelta(milliseconds=500)),
+            909, 1, 1, "XAUUSD", 0.01, 0.0, -0.2, 0.0, 0.0, 0.0,
+        )
+
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(int(kwargs["position_id"]))
+            or (_ for _ in ()).throw(RuntimeError("open unavailable"))
+        )
+        with (
+            patch(
+                "copy_trading_multi_demo.utc_now",
+                return_value=opened_at + timedelta(milliseconds=100),
+            ),
+            self.assertRaisesRegex(RuntimeError, "open unavailable"),
+        ):
+            service.apply_event_batch([open_event])
+
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(int(kwargs["position_id"]))
+            or ("unexpected", SimpleNamespace(status="active"))
+        )
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=opened_at + timedelta(seconds=1),
+        ):
+            service.apply_event_batch([close_event])
+
+        self.assertEqual(handled, [909])
+        self.assertEqual(service.pending_coalesced_transitions, [])
+        self.assertIn("batch_coalesced_2:batch_terminal_flat", str(rows[-1]["reason"]))
+
+    def test_mt5_expired_terminal_exposure_is_not_reported_as_source_flat(self) -> None:
+        routed = client(0, 1, "C001")
+        service = self._batch_event_service(routed)
+        handled: list[dict[str, object]] = []
+        rows: list[dict[str, object]] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            handled.append(kwargs) or ("unexpected", None)
+        )
+        service._append_event_csv = rows.append
+        opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
+        event = RoutedEvent(
+            routed.physical_key, routed.account_key, routed.account_key,
+            1, datetime_to_filetime(opened_at), 908, 0, 0,
+            "XAUUSD", 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+        )
+
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=opened_at + timedelta(seconds=6),
+        ):
+            service.apply_event_batch([event])
+
+        self.assertEqual(handled, [])
+        self.assertIn("signal_expired_no_copy", str(rows[0]["reason"]))
+        self.assertNotIn("batch_terminal_flat", str(rows[0]["reason"]))
 
     def test_cent_profit_scales_but_position_lots_do_not(self) -> None:
         cent = client(7, 5200101, "C001", money_scale=0.01)

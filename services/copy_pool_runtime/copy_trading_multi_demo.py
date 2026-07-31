@@ -192,6 +192,7 @@ class MultiSourceLiveService(LiveService):
         self.scheduler_state = SchedulerState()
         self.sleeve_rows: dict[str, dict[str, Any]] = {}
         self.pool_was_rebuilt = False
+        self.pending_coalesced_transitions: list[dict[str, Any]] = []
 
     def load_pool(self, force_rebuild: bool = False) -> None:
         pool: pd.DataFrame
@@ -639,6 +640,20 @@ class MultiSourceLiveService(LiveService):
                 self.portfolio.product_realized_delta_usd[key] = float(saved_product_delta.get(key, 0.0))
             for account_key_value in self.routed_clients:
                 self.portfolio._update_weight(account_key_value)
+        self.pending_coalesced_transitions = self._load_pending_coalesced_transitions(
+            saved.get("pending_coalesced_transitions")
+        )
+        (
+            self.pending_coalesced_transitions,
+            cancelled_pending_increases,
+        ) = self._sanitize_restarted_pending_transitions(
+            self.pending_coalesced_transitions
+        )
+        if cancelled_pending_increases:
+            self.log(
+                f"Cancelled {cancelled_pending_increases} pending risk increase(s) "
+                "after restart; source positions remain monitor-only."
+            )
 
         account = self.mt.account()
         if (
@@ -1478,6 +1493,10 @@ class MultiSourceLiveService(LiveService):
                 },
                 "scheduler": self.scheduler_state.to_dict(),
                 "independent_copy": self.copy_book.to_private(),
+                "pending_coalesced_transitions": [
+                    self._private_coalesced_transition(transition)
+                    for transition in getattr(self, "pending_coalesced_transitions", [])
+                ],
                 "risk_profile": self.profile.name,
                 "trading_day": trading_day_key(utc_now()),
                 "cycle_baseline_pnl": self.cycle_baseline_pnl,
@@ -1790,28 +1809,245 @@ class MultiSourceLiveService(LiveService):
         )
 
     def apply_event(self, event: RoutedEvent) -> None:
+        self.apply_event_batch([event])
+
+    def apply_event_batch(self, events: list[RoutedEvent]) -> None:
         assert self.portfolio is not None
-        product = normalize_source_product(event.symbol)
-        before_lots = (
-            self.portfolio.positions.get(
+        transitions: dict[tuple[str, int, str], dict[str, Any]] = {}
+        for event in events:
+            product = normalize_source_product(event.symbol)
+            before_lots = (
+                self.portfolio.positions.get(
+                    (event.account_key, event.position_id, product), 0.0
+                )
+                if product is not None else 0.0
+            )
+            if not self.portfolio.apply_event(event) or product is None:
+                continue
+            after_lots = self.portfolio.positions.get(
                 (event.account_key, event.position_id, product), 0.0
             )
-            if product is not None else 0.0
+            step_risk_increase = (
+                abs(after_lots) > 1e-12
+                and (
+                    abs(before_lots) <= 1e-12
+                    or before_lots * after_lots < 0
+                    or (
+                        before_lots * after_lots > 0
+                        and abs(after_lots) > abs(before_lots) + 1e-12
+                    )
+                )
+            )
+            key = (event.account_key, event.position_id, product)
+            transition = transitions.get(key)
+            if transition is None:
+                transitions[key] = {
+                    "first_event": event,
+                    "last_event": event,
+                    "before_lots": before_lots,
+                    "after_lots": after_lots,
+                    "event_count": 1,
+                    "first_risk_event": event if step_risk_increase else None,
+                }
+            else:
+                transition["last_event"] = event
+                transition["after_lots"] = after_lots
+                transition["event_count"] = int(transition["event_count"]) + 1
+                batch_before = float(transition["before_lots"])
+                final_direction_entry = (
+                    abs(after_lots) > 1e-12
+                    and before_lots * after_lots <= 0
+                )
+                if final_direction_entry:
+                    # A close followed by an opposite entry is one coalesced
+                    # reversal. Its entry-age budget starts at the first Deal
+                    # that establishes the terminal direction, not the close.
+                    transition["first_risk_event"] = event
+                elif (
+                    transition["first_risk_event"] is None
+                    and step_risk_increase
+                    and batch_before * after_lots >= 0
+                ):
+                    transition["first_risk_event"] = event
+
+        if transitions:
+            self.pending_coalesced_transitions.extend(
+                sorted(transitions.values(), key=self._coalesced_transition_order)
+            )
+            self.pending_coalesced_transitions = self._coalesce_pending_transitions(
+                self.pending_coalesced_transitions
+            )
+            # The source ledger, cursors and executable terminal transitions
+            # are durable before any broker action. A failed transition remains
+            # in this journal for retry on the next cycle or after restart.
+            self.persist_private_state()
+        self._drain_pending_coalesced_transitions()
+
+    def _drain_pending_coalesced_transitions(self) -> None:
+        first_error: Exception | None = None
+        pending = getattr(self, "pending_coalesced_transitions", [])
+        attempts = len(pending)
+        for _ in range(attempts):
+            if not pending:
+                break
+            transition = pending.pop(0)
+            try:
+                self._apply_coalesced_event_transition(
+                    first_event=transition["first_event"],
+                    last_event=transition["last_event"],
+                    before_lots=float(transition["before_lots"]),
+                    after_lots=float(transition["after_lots"]),
+                    event_count=int(transition["event_count"]),
+                    first_risk_event=transition["first_risk_event"],
+                )
+                self.persist_private_state()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                pending.append(transition)
+                self.persist_private_state()
+        if first_error is not None:
+            raise first_error
+
+    @classmethod
+    def _coalesce_pending_transitions(
+        cls, transitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        combined: dict[tuple[str, int, str], dict[str, Any]] = {}
+        for transition in transitions:
+            last_event = transition["last_event"]
+            key = (
+                str(last_event.account_key),
+                int(last_event.position_id),
+                str(normalize_source_product(last_event.symbol) or last_event.symbol),
+            )
+            current = combined.get(key)
+            if current is None:
+                combined[key] = dict(transition)
+                continue
+            current["last_event"] = last_event
+            current["after_lots"] = float(transition["after_lots"])
+            current["event_count"] = (
+                int(current["event_count"]) + int(transition["event_count"])
+            )
+            if (
+                float(transition["before_lots"]) * float(transition["after_lots"])
+                <= 0
+                and transition.get("first_risk_event") is not None
+            ):
+                current["first_risk_event"] = transition["first_risk_event"]
+        return sorted(combined.values(), key=cls._coalesced_transition_order)
+
+    @staticmethod
+    def _load_pending_coalesced_transitions(value: Any) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("Pending coalesced transitions must be a list.")
+        loaded: list[dict[str, Any]] = []
+        for index, raw in enumerate(value):
+            if not isinstance(raw, Mapping):
+                raise ValueError(
+                    f"Pending coalesced transition {index} is not an object."
+                )
+            try:
+                def event_from(item: Any) -> RoutedEvent | None:
+                    return RoutedEvent(**dict(item)) if isinstance(item, Mapping) else None
+
+                first_event = event_from(raw.get("first_event"))
+                last_event = event_from(raw.get("last_event"))
+                if first_event is None or last_event is None:
+                    raise ValueError("first_event and last_event are required")
+                loaded.append({
+                    "first_event": first_event,
+                    "last_event": last_event,
+                    "before_lots": float(raw["before_lots"]),
+                    "after_lots": float(raw["after_lots"]),
+                    "event_count": int(raw["event_count"]),
+                    "first_risk_event": event_from(raw.get("first_risk_event")),
+                })
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Pending coalesced transition {index} is invalid: {exc}"
+                ) from exc
+        return loaded
+
+    @staticmethod
+    def _sanitize_restarted_pending_transitions(
+        transitions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], int]:
+        retained: list[dict[str, Any]] = []
+        cancelled = 0
+        for transition in transitions:
+            before_lots = float(transition["before_lots"])
+            after_lots = float(transition["after_lots"])
+            if before_lots * after_lots < 0:
+                # Restore only the risk release of an interrupted reversal.
+                # The opposite entry must never be chased after restart.
+                reduction = dict(transition)
+                reduction["after_lots"] = 0.0
+                reduction["first_risk_event"] = None
+                retained.append(reduction)
+                cancelled += 1
+            elif (
+                abs(after_lots) > abs(before_lots) + 1e-12
+                and (abs(before_lots) <= 1e-12 or before_lots * after_lots > 0)
+            ):
+                cancelled += 1
+            else:
+                retained.append(transition)
+        return retained, cancelled
+
+    @staticmethod
+    def _private_coalesced_transition(transition: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "first_event": asdict(transition["first_event"]),
+            "last_event": asdict(transition["last_event"]),
+            "before_lots": float(transition["before_lots"]),
+            "after_lots": float(transition["after_lots"]),
+            "event_count": int(transition["event_count"]),
+            "first_risk_event": (
+                asdict(transition["first_risk_event"])
+                if transition.get("first_risk_event") is not None
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _coalesced_transition_order(transition: Mapping[str, Any]) -> tuple[Any, ...]:
+        before_lots = float(transition["before_lots"])
+        after_lots = float(transition["after_lots"])
+        pure_reduction = (
+            abs(after_lots) <= 1e-12
+            or (
+                before_lots * after_lots > 0
+                and abs(after_lots) < abs(before_lots) - 1e-12
+            )
         )
-        if not self.portfolio.apply_event(event):
-            return
-        latency = max(0.0, (utc_now() - filetime_to_datetime(event.timestamp)).total_seconds())
-        self.signal_latencies.append(latency)
-        client = self.routed_clients[event.account_key]
+        signal_event = transition["first_risk_event"] or transition["last_event"]
+        last_event = transition["last_event"]
+        return (
+            0 if pure_reduction else 1,
+            int(signal_event.timestamp),
+            str(last_event.account_key),
+            str(last_event.symbol),
+            int(last_event.position_id),
+        )
+
+    def _apply_coalesced_event_transition(
+        self,
+        *,
+        first_event: RoutedEvent,
+        last_event: RoutedEvent,
+        before_lots: float,
+        after_lots: float,
+        event_count: int,
+        first_risk_event: RoutedEvent | None,
+    ) -> None:
+        assert self.portfolio is not None
+        product = normalize_source_product(last_event.symbol)
         if product is None:
             return
-        after_lots = self.portfolio.positions.get(
-            (event.account_key, event.position_id, product), 0.0
-        )
-        dynamic_key = sleeve_key(event.account_key, product)
-        state = self.sleeve_states.get(dynamic_key)
-        row = self.sleeve_rows.get(dynamic_key, {})
-        allowed_delay = self._signal_delay_budget(row)
         risk_increase = (
             abs(after_lots) > 1e-12
             and (
@@ -1823,6 +2059,17 @@ class MultiSourceLiveService(LiveService):
                 )
             )
         )
+        signal_event = (first_risk_event or first_event) if risk_increase else last_event
+        latency = max(
+            0.0,
+            (utc_now() - filetime_to_datetime(signal_event.timestamp)).total_seconds(),
+        )
+        self.signal_latencies.append(latency)
+        client = self.routed_clients[last_event.account_key]
+        dynamic_key = sleeve_key(last_event.account_key, product)
+        state = self.sleeve_states.get(dynamic_key)
+        row = self.sleeve_rows.get(dynamic_key, {})
+        allowed_delay = self._signal_delay_budget(row)
         expired = is_signal_expired(latency, allowed_delay)
         entry_timely = not (risk_increase and expired)
         if state is not None and expired:
@@ -1830,22 +2077,41 @@ class MultiSourceLiveService(LiveService):
                 state, "entry" if risk_increase else "exit", utc_now()
             )
         approved_after = self._approved_source_after(
-            event.account_key,
-            event.position_id,
+            last_event.account_key,
+            last_event.position_id,
             product,
             before_lots,
             after_lots,
             entry_timely=entry_timely,
         )
-        copy_action, copy_position = self._handle_source_position_change(
-            account_key=event.account_key,
-            product=product,
-            position_id=event.position_id,
-            before_lots=before_lots,
-            after_lots=approved_after,
-            signal_time=filetime_to_datetime(event.timestamp),
-            reason=f"SOURCE:{client.spec.alias}:{client.route_key}",
+        source_key_value = source_position_key(
+            last_event.account_key, last_event.position_id, product
         )
+        existing_copy = self.copy_book.positions.get(source_key_value)
+        terminal_flat = (
+            abs(before_lots) < 1e-12
+            and abs(after_lots) < 1e-12
+            and existing_copy is None
+        )
+        if terminal_flat:
+            copy_action, copy_position = "batch_terminal_flat", None
+        elif (
+            abs(before_lots) < 1e-12
+            and abs(after_lots) >= 1e-12
+            and abs(approved_after) < 1e-12
+            and existing_copy is None
+        ):
+            copy_action, copy_position = "signal_expired_no_copy", None
+        else:
+            copy_action, copy_position = self._handle_source_position_change(
+                account_key=last_event.account_key,
+                product=product,
+                position_id=last_event.position_id,
+                before_lots=before_lots,
+                after_lots=approved_after,
+                signal_time=filetime_to_datetime(signal_event.timestamp),
+                reason=f"SOURCE:{client.spec.alias}:{client.route_key}",
+            )
         raw_targets, gross_longs, gross_shorts, _cycle = self._refresh_targets()
         raw = raw_targets.get(product, 0.0)
         gross_long = gross_longs.get(product, 0.0)
@@ -1855,17 +2121,17 @@ class MultiSourceLiveService(LiveService):
         self._append_event_csv(
             {
                 "event_id": f"E{self.event_counter:07d}",
-                "time_beijing": filetime_to_datetime(event.timestamp).astimezone(BEIJING).isoformat(),
+                "time_beijing": filetime_to_datetime(signal_event.timestamp).astimezone(BEIJING).isoformat(),
                 "client_alias": client.spec.alias,
                 "source_route": client.route_key,
                 "source_server": client.server,
                 "source_platform": client.platform,
-                "source_side": "BUY" if event.action == 0 else "SELL",
-                "source_entry": event.entry,
-                "source_lots": event.lots,
+                "source_side": "BUY" if signal_event.action == 0 else "SELL",
+                "source_entry": signal_event.entry,
+                "source_lots": signal_event.lots,
                 "product": product,
                 "effective_weight": self._effective_copy_weight(
-                    event.account_key, product
+                    last_event.account_key, product
                 ),
                 "raw_target_lots": raw,
                 "desired_target_lots": desired,
@@ -1878,6 +2144,7 @@ class MultiSourceLiveService(LiveService):
                 "phase": self.phase,
                 "reason": (
                     ("signal_expired:" if expired else "")
+                    + (f"batch_coalesced_{event_count}:" if event_count > 1 else "")
                     + f"{copy_action}:"
                     f"{copy_position.status if copy_position is not None else 'monitor'}"
                 ),
@@ -2339,8 +2606,7 @@ class MultiSourceLiveService(LiveService):
                     assert self.portfolio is not None
                     events, mt5_errors = self.db.poll_mt5_events(self.portfolio.cursors)
                     snapshots, mt4_errors = self.db.poll_mt4_positions()
-                    for event in events:
-                        self.apply_event(event)
+                    self.apply_event_batch(events)
                     for source_key, rows in snapshots.items():
                         self.apply_mt4_snapshot(source_key, rows)
                     self.poll_latencies.append(time.monotonic() - loop_started)

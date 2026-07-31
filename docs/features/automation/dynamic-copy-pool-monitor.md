@@ -204,7 +204,17 @@ The accepted same-day pool cache is valid only when its metadata and coverage fi
 exact configured eleven-route and nine-source sets and every source completed successfully. MT5
 polling intentionally reads non-trading ledger actions so each physical cursor can advance past
 them; those actions never change virtual positions, intraday trading P/L, dynamic weights or source
-signals. MT4 remains snapshot-authoritative. The producer persists effective weights by composite
+signals. All MT5 Deals returned in one polling cycle are first applied to the source ledger and then
+coalesced by account, product and Position to one terminal transition. An opening and complete close
+already present in the same batch advances cursor/P&L and emits `batch_terminal_flat` evidence but
+never opens a Demo Ticket; a batch with residual or reversed exposure executes only its terminal
+state once. Terminal transitions are durably journaled before broker execution, pure reductions
+run before new risk, one Position failure does not discard its siblings, and incomplete entries are
+retried during the same process. On restart only pending reductions/closes resume; pending opens are
+cancelled to monitor-only and a pending reversal resumes only its old-direction close, preserving the
+no-chase rule. Invalid pending state fails startup instead of being silently discarded. An expired residual source position is reported as
+`signal_expired_no_copy`, not as source-flat. Existing copied exposure still follows reductions and closes. MT4 remains
+snapshot-authoritative. The producer persists effective weights by composite
 account key; the dashboard prefers that current mapping over historical event rows and clamps any
 legacy fallback to zero through the accepted pool's base weight.
 Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
@@ -285,6 +295,11 @@ minute policy, default two-ranking/ten-minute compatibility and effective status
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
 MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
 file, preventing DictReader field shifts after a producer schema upgrade.
+MT5 batch tests cover a complete open/close round trip with no execution, a multi-Deal residual open
+with one execution, and a close-plus-opposite-open reversal whose latency starts at the opposite
+entry rather than the earlier close. They also require risk reductions before additions, durable
+pending serialization, restart cancellation of new risk, restart retention of risk release and
+continuation of independent sibling transitions after one execution failure.
 Restart ownership regressions require an open persisted source Position without a real Demo child
 to remain monitor-only even in live reconciliation, retain a uniquely recoverable real Ticket, and
 remove the monitor-only mapping after its source close without sending a Demo order.

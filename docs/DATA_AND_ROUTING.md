@@ -84,6 +84,16 @@ reconciliation; the mapping is deleted only when the source closes. A uniquely r
 Ticket is not marked and remains under exact ownership management.
 MT5 execution increments and MT4 authoritative snapshots use the same position-difference contract,
 so one account cannot modify another account's children.
+MT5 polling applies every returned Deal to cursor, position and P&L state before invoking execution.
+The resulting changes are grouped by composite account, Position and normalized product. A batch
+whose pre-batch and post-batch quantities are both zero is terminally flat and must not create a Demo
+Ticket even when the batch contains a complete opening and close. A non-flat batch executes one
+coalesced terminal transition; an opposite entry supplies reversal signal time. Before broker
+execution, the Producer persists the source ledger, cursors and pending terminal transitions in the
+private state. Successful transitions are removed individually. Within one process, failed items
+remain pending and coalesce with later source events. On restart, only reductions/closes remain
+executable; opens are cancelled and reversals retain only the old-direction close. Invalid journal
+records fail startup so a possible risk-release instruction is never silently lost.
 Closed mappings remain through the current trading day so comment-attributed realized Demo P/L stays
 assigned to its client loss budget. They are pruned only after the trading day changes and only when
 no Demo child Ticket or source exposure remains. Emergency flatten acceptance is based on the actual
