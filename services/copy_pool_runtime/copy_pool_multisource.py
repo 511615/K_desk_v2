@@ -1517,33 +1517,41 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             holds: dict[tuple[int, str], list[float]] = defaultdict(list)
 
             def query_mt5_window(
-                login: int, window_start: datetime, window_end: datetime
+                batch: Sequence[int], window_start: datetime, window_end: datetime
             ) -> list[dict[str, Any]]:
+                placeholders = self._placeholders(len(batch))
                 try:
                     return source.query(
                         f"SELECT Login, PositionID, Symbol, "
                         f"MIN(CASE WHEN Entry=0 THEN TimeMsc END) AS opened_at, "
                         f"MAX(CASE WHEN Entry IN (1,2,3) THEN TimeMsc END) AS closed_at "
-                        f"FROM {source.schema}.mt5_deals WHERE Login = %s "
+                        f"FROM {source.schema}.mt5_deals WHERE Login IN ({placeholders}) "
                         f"AND Time >= %s AND Time < %s AND Action IN (0,1) "
                         f"AND Symbol <> '' GROUP BY Login, PositionID, Symbol",
-                        (login, window_start, window_end),
+                        (*batch, window_start, window_end),
                     )
                 except Exception:
+                    if len(batch) > 1:
+                        midpoint = len(batch) // 2
+                        return query_mt5_window(
+                            batch[:midpoint], window_start, window_end
+                        ) + query_mt5_window(
+                            batch[midpoint:], window_start, window_end
+                        )
                     if window_end - window_start <= timedelta(hours=6):
                         raise
                     midpoint = window_start + (window_end - window_start) / 2
-                    return query_mt5_window(login, window_start, midpoint) + query_mt5_window(
-                        login, midpoint, window_end
+                    return query_mt5_window(batch, window_start, midpoint) + query_mt5_window(
+                        batch, midpoint, window_end
                     )
 
-            def query_single_mt5(login: int) -> list[dict[str, Any]]:
+            def query_mt5_sharded(batch: Sequence[int]) -> list[dict[str, Any]]:
                 positions: dict[tuple[int, int, str], dict[str, Any]] = {}
                 window_start = start
                 end = as_of.astimezone(BEIJING).replace(tzinfo=None)
                 while window_start < end:
                     window_end = min(end, window_start + timedelta(days=5))
-                    for item in query_mt5_window(login, window_start, window_end):
+                    for item in query_mt5_window(batch, window_start, window_end):
                         key = (
                             int(item["Login"]),
                             int(item["PositionID"]),
@@ -1613,16 +1621,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
 
             def query_batch(batch: Sequence[int]) -> list[dict[str, Any]]:
                 placeholders = self._placeholders(len(batch))
+                if source.platform == "MT5":
+                    return query_mt5_sharded(batch)
                 try:
-                    if source.platform == "MT5":
-                        return source.query(
-                            f"SELECT Login, PositionID, Symbol, TIMESTAMPDIFF(MICROSECOND, MIN(CASE WHEN Entry=0 THEN TimeMsc END), "
-                            f"MAX(CASE WHEN Entry IN (1,2,3) THEN TimeMsc END)) / 1000000.0 AS hold_seconds "
-                            f"FROM {source.schema}.mt5_deals WHERE Login IN ({placeholders}) AND Time >= %s "
-                            f"AND Action IN (0,1) AND Symbol <> '' GROUP BY Login, PositionID, Symbol "
-                            f"HAVING hold_seconds IS NOT NULL AND hold_seconds >= 0",
-                            (*batch, start),
-                        )
                     return source.query(
                         f"SELECT LOGIN AS Login, TICKET AS PositionID, SYMBOL AS Symbol, TIMESTAMPDIFF(MICROSECOND, OPEN_TIME, CLOSE_TIME) / 1000000.0 AS hold_seconds "
                         f"FROM {source.schema}.mt4_trades WHERE LOGIN IN ({placeholders}) AND CLOSE_TIME >= %s "
@@ -1634,7 +1635,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         midpoint = len(batch) // 2
                         return query_batch(batch[:midpoint]) + query_batch(batch[midpoint:])
                     login = int(batch[0])
-                    return query_single_mt5(login) if source.platform == "MT5" else query_single_mt4(login)
+                    return query_single_mt4(login)
 
             for batch in _chunks(sorted(route_by_login), size=10 if source.platform == "MT5" else 50):
                 result = query_batch(batch)

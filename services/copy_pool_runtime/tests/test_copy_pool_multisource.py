@@ -107,7 +107,7 @@ class MultiSourceTests(unittest.TestCase):
         row.update(overrides)
         return row
 
-    def test_holding_statistics_time_shards_single_mt5_account_after_timeout(self) -> None:
+    def test_holding_statistics_splits_mt5_logins_and_time_windows(self) -> None:
         as_of = datetime(2026, 7, 31, 5, 0, tzinfo=timezone.utc)
         start = as_of.astimezone(timezone(timedelta(hours=8))).replace(
             tzinfo=None
@@ -118,9 +118,14 @@ class MultiSourceTests(unittest.TestCase):
 
         def query(sql: str, params: tuple[object, ...] = ()):
             calls.append(params)
-            if " AS opened_at" not in sql:
-                raise TimeoutError("20-day aggregation timed out")
-            login, window_start, window_end = params
+            self.assertIn(" AS opened_at", sql)
+            logins = params[:-2]
+            window_start, window_end = params[-2:]
+            if len(logins) > 1 or window_end - window_start > timedelta(days=3):
+                raise TimeoutError("holding shard timed out")
+            login = int(logins[0])
+            if login != 123:
+                return []
             row = {
                 "Login": login,
                 "PositionID": 77,
@@ -141,13 +146,17 @@ class MultiSourceTests(unittest.TestCase):
             "physical_key": "test-source",
             "Login": 123,
             "account_key": "test-route:123",
+        }, {
+            "physical_key": "test-source",
+            "Login": 124,
+            "account_key": "test-route:124",
         }])
 
         result = database.holding_statistics(frame, as_of)
 
         self.assertEqual(result["test-route:123|XAUUSD"]["holding_samples"], 1.0)
         self.assertEqual(result["test-route:123|XAUUSD"]["median_hold_seconds"], 7200.0)
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 28)
 
     def test_multisource_schema_is_used_for_restart_validation(self) -> None:
         with TemporaryDirectory() as temporary:
