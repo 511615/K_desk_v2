@@ -97,6 +97,10 @@ The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGloba
 allocation is smaller, but only while whole-portfolio stress and margin permit it and no copied
 Ticket already occupies that product/direction. It does not bypass quote, spread, database,
 Ticket-ownership, daily-stop, equity-floor or margin hard gates and is never implicit.
+For an active client under that exact Demo-only switch, the client loss budget is floored at the
+existing 20% per-client share of the 1.5% cycle budget. This keeps the risk allowance consistent
+with the indivisible 0.01-lot test exposure. Clients with zero activity weight receive no floor, and
+all default, non-Demo and non-`StagedLive` execution keeps the weight-proportional budget.
 Once a source Position owns that minimum lot, normal reconciliation preserves the same Ticket while
 the source, weight and gates remain eligible; another same-direction Position cannot displace it.
 More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
@@ -295,6 +299,9 @@ non-empty populations below the monitor target,
 single-consumption discovery scheduling, restart missed-add suppression and daily suspended-state
 preservation. They also require hourly pool persistence, unknown rather than zero restart evidence,
 idle source semantics and the bounded explicit Demo minimum-lot exception.
+The minimum-lot budget regression also requires a tiny-weight active client to receive the 20%
+cycle-budget floor only under the explicit Demo switch, proves that a 0.69 USD copied loss does not
+exhaust that floor and preserves weight-proportional budgets elsewhere.
 Producer and dashboard tests also cover the explicit Demo fast-activation scope, one-ranking/two-
 minute policy, default two-ranking/ten-minute compatibility and effective status projection.
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
