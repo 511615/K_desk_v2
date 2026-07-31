@@ -252,6 +252,12 @@ Producer regressions also pin the broker-retained 16-character independent comme
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched
 Tickets rejected.
+MT5 polling regressions apply a same-batch complete open/close round trip to cursor and realized P/L
+without invoking independent execution, coalesce multiple opening Deals to one residual target and
+use the opposite entry timestamp for a same-batch reversal. They also pin reduction-before-addition
+ordering, durable pending serialization, sibling continuation after one failure and the distinct
+`signal_expired_no_copy` disposition. Restart fixtures cancel pending additions, retain only the
+risk-release side of pending reversals and reject malformed journals.
 Restart no-chase regressions also persist an eligible open source Position without a Demo child,
 prove live reconciliation sends no replacement order and preserves the explicit monitor reason,
 retain and close a uniquely recovered real Ticket, and remove a monitor-only mapping when its source
