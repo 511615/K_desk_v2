@@ -945,8 +945,9 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(portfolio.client_product_position(mt5.account_key, "XAUUSD"), 0.25)
 
     def test_mt4_current_position_open_time_is_interpreted_as_utc(self) -> None:
-        routed = client(3, 6002426, "C001")
+        routed = client(3, 6002426, "C001", money_scale=0.01)
         database = MultiSourceDatabase()
+        database.clients = {routed.account_key: routed}
         database.clients_by_source_login = {
             routed.physical_key: {routed.login: routed.account_key}
         }
@@ -964,6 +965,9 @@ class MultiSourceTests(unittest.TestCase):
                     "CMD": 0,
                     "lots": 0.01,
                     "OPEN_TIME": datetime(2026, 7, 30, 14, 59, 55),
+                    "OPEN_PRICE": 4010.5,
+                    "CLOSE_PRICE": 4012.0,
+                    "floating_pnl": 123.45,
                 }]
 
         database.sources = {routed.physical_key: FakeSource()}
@@ -971,6 +975,9 @@ class MultiSourceTests(unittest.TestCase):
         rows = database.positions_for_source(routed.physical_key)
 
         self.assertEqual(rows[0]["source_opened_at"], "2026-07-30T14:59:55+00:00")
+        self.assertEqual(rows[0]["source_open_price"], 4010.5)
+        self.assertEqual(rows[0]["source_current_price"], 4012.0)
+        self.assertAlmostEqual(rows[0]["source_floating_pnl_usd"], 1.2345)
 
     def test_mt4_physical_source_offsets_are_explicit_and_keep_live3_routed(self) -> None:
         self.assertEqual(

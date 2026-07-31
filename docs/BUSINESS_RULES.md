@@ -109,6 +109,10 @@
 - An eligible source Position without a Demo child must pass its original entry-delay budget on every
   retry. After expiry it remains `signal_expired_no_copy` and cannot be chased when a prior rejection
   clears. Existing owned children remain subject to reductions, closes and emergency risk release.
+- Every risk-increasing order uses the most recent opening, increase or reversal signal timestamp;
+  reductions and closes never refresh that deadline. The deadline is checked before execution gates
+  and again immediately before the broker open request. An expired addition is ignored, while an
+  expired reversal closes the old owned Ticket but cannot open its opposite leg.
 - Pool quality uses same-product closed trading net plus current same-product floating P/L for the
   strict positive candidate gate. Current floating profit cannot hide later account-risk failures or
   increase a dynamic weight. Current floating loss at or above 10% of equity or margin usage at or

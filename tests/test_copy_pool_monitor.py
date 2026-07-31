@@ -421,6 +421,95 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert "private-unmapped-account" not in json.dumps(payload)
 
 
+def test_copy_pool_projects_only_current_child_tickets_with_exact_pnl_evidence(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    state_path = output / "runtime_state_private.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    position = state["independent_copy"]["positions"]["private-source-key"]
+    position.update({
+        "source_open_price": 4000.1,
+        "source_opened_at": "2026-07-28T20:42:42+08:00",
+        "source_realized_pnl_usd": 1.25,
+        "source_floating_pnl_usd": -0.75,
+        "source_total_pnl_usd": 0.5,
+        "demo_realized_pnl_usd": 0.1,
+        "demo_floating_pnl_usd": 0.2,
+        "demo_total_pnl_usd": 0.3,
+        "comment": "CPV2:C001:SECRET",
+        "source_key": "must-not-leak",
+    })
+    state["independent_copy"]["positions"]["closed-private-position"] = {
+        "account_key": "dbg_gb_mt5_live2:5200101",
+        "product": "XAUUSD",
+        "source_position_id": 8,
+        "source_lots": 0.1,
+        "status": "closed",
+        "children": [],
+        "comment": "CPV2:C001:CLOSED",
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    payload = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=30,
+        event_limit=10,
+        order_limit=10,
+    )
+
+    assert len(payload["currentCopies"]) == 1
+    row = payload["currentCopies"][0]
+    assert row["accountLogin"] == "5200101"
+    assert row["accountPlatform"] == "MT5"
+    assert row["accountServer"] == "DBG GB MT5 Live2"
+    assert row["product"] == "XAUUSD"
+    assert row["sourceDirection"] == "BUY"
+    assert row["sourcePositionId"] == 7
+    assert row["sourceLots"] == 0.2
+    assert row["sourceOpenPrice"] == 4000.1
+    assert row["sourceOpenedAt"] == "2026-07-28T12:42:42+00:00"
+    assert row["sourceHoldingSeconds"] is not None
+    assert row["demoTicket"] == 90001
+    assert row["demoDirection"] == "BUY"
+    assert row["demoLots"] == 0.01
+    assert row["demoOpenPrice"] == 4000.36
+    assert row["demoOpenedAt"] == "2026-07-28T12:42:43+00:00"
+    assert row["demoHoldingSeconds"] is not None
+    assert row["sourceRealizedPnlUsd"] == 1.25
+    assert row["sourceFloatingPnlUsd"] == -0.75
+    assert row["sourceTotalPnlUsd"] == 0.5
+    assert row["sourcePnlBasis"] == "source_position_realized_plus_floating"
+    assert row["demoRealizedPnlUsd"] == 0.1
+    assert row["demoFloatingPnlUsd"] == 0.2
+    assert row["demoTotalPnlUsd"] == pytest.approx(0.3)
+    assert row["demoPnlBasis"] == "demo_source_position_comment_realized_plus_floating"
+    assert row["copyStatus"] == "active"
+    assert row["detailPath"] == "/copy-pool/accounts/C001"
+    assert "clientAlias" not in row
+    serialized = json.dumps(payload["currentCopies"])
+    assert "CPV2" not in serialized
+    assert "must-not-leak" not in serialized
+
+
+def test_copy_pool_current_copies_keep_legacy_snapshot_values_unknown(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+
+    payload = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=30,
+        event_limit=10,
+        order_limit=10,
+    )
+
+    row = payload["currentCopies"][0]
+    assert row["sourceOpenPrice"] is None
+    assert row["sourceRealizedPnlUsd"] is None
+    assert row["sourceFloatingPnlUsd"] is None
+    assert row["sourceTotalPnlUsd"] is None
+    assert row["sourcePnlBasis"] == "unavailable"
+    assert row["demoRealizedPnlUsd"] is None
+    assert row["demoFloatingPnlUsd"] is None
+    assert row["demoTotalPnlUsd"] is None
+    assert row["demoPnlBasis"] == "unavailable"
+
+
 def test_copy_pool_keeps_missing_hourly_evidence_unknown_and_uses_daily_value(tmp_path: Path) -> None:
     output = make_snapshot(tmp_path)
     pool_path = output / "pool_public.csv"
@@ -561,6 +650,7 @@ def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
         "clientRisks": [],
         "copyPositions": [],
         "ticketMappings": [],
+        "currentCopies": [],
         "exposures": [],
         "dynamicSleeves": [],
         "scheduler": {},

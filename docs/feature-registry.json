@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "df7f7479a507",
+  "registryVersion": "77defc2b5490",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -218,6 +218,7 @@
         "tests/test_copy_pool_monitor.py",
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/src/copyPool.spec.ts",
+        "frontend/src/pages/CopyPoolPage.spec.ts",
         "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py",
         "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py",
         "services/copy_pool_runtime/tests/test_copy_independent_execution.py",

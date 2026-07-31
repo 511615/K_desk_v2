@@ -88,6 +88,14 @@ For a live eligible source Position without a Demo child, every reconciliation r
 the original source-open/first-signal time with the sleeve entry budget. Once expired, its target is
 zero for that Position with reason `signal_expired_no_copy`; this does not block reductions or closes
 of an existing owned child Ticket.
+Every Position also persists `risk_signal_at`, updated only by an opening, same-direction increase
+or reversal. The executor checks this timestamp again in the central risk-increase path and once
+more immediately before the broker open call. This applies to first entries, additions and the new
+leg of reversals; expiration may close the prior reversal leg but can never open the opposite leg.
+Missing or malformed risk-signal time fails closed for new risk.
+Current source-position snapshots retain open/current price and normalized floating P/L. Demo
+realized and floating P/L are persisted by the deterministic source-Position comment. These values
+feed the sanitized `currentCopies` projection; account-level P/L is not divided among Positions.
 MT5 execution increments and MT4 authoritative snapshots use the same position-difference contract,
 so one account cannot modify another account's children.
 MT5 polling applies every returned Deal to cursor, position and P&L state before invoking execution.

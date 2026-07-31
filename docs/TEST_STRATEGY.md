@@ -254,6 +254,12 @@ physical-route set under its provisional UTC+3 convention. A normalized snapshot
 three seconds later remains within the five-second budget. A risk-rejected source Position without
 a Demo child cannot open on a 40-second retry, while an expired Position with an owned child can
 still reduce or close.
+Risk-deadline regressions additionally require an expired same-direction addition to keep the
+existing Ticket unchanged, an expired reversal to close the old Ticket without opening its opposite
+leg, and a final deadline check immediately before the broker call. Persistence tests require only
+open/increase/reversal events to refresh `risk_signal_at`. Current-copy contracts require one row
+per actual Demo Ticket, real Login identity, exact source floating P/L, exact Demo comment P/L,
+Cent money normalization and `null` rather than allocated account P/L when evidence is unavailable.
 Producer regressions also pin the broker-retained 16-character independent comment, migrate older
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched

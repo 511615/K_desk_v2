@@ -2,7 +2,7 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
 import type { PoolTierTab } from '../copyPool'
 import { startFrontendUpdateMonitor } from '../frontendUpdate'
 
@@ -28,6 +28,7 @@ const timeline = computed<any[]>(() => payload.value.timeline || [])
 const clientRisks = computed<any[]>(() => payload.value.clientRisks || [])
 const copyPositions = computed<any[]>(() => payload.value.copyPositions || [])
 const ticketMappings = computed<any[]>(() => payload.value.ticketMappings || [])
+const currentCopies = computed<any[]>(() => payload.value.currentCopies || [])
 const exposures = computed<any[]>(() => payload.value.exposures || [])
 const productQuotes = computed<any[]>(() => status.value.products || [])
 const dynamicSleeves = computed<any[]>(() => payload.value.dynamicSleeves || status.value.dynamicSleeves || [])
@@ -99,7 +100,12 @@ const demoExposure = computed(() => exposures.value.reduce((summary, row) => ({
 const clientRiskRows = computed(() => [...clientRisks.value]
   .sort((left, right) => Number(right.lossUsage) - Number(left.lossUsage)))
 const activeCopyPositions = computed(() => copyPositions.value
-  .filter(row => Number(row.copiedLots) > 0 || row.status !== 'closed'))
+  .filter(row => Number(row.copiedLots) > 0 || Number(row.copiedSignedLots) !== 0 || (row.demoTickets || []).length > 0))
+const currentCopyRowsForDisplay = computed(() => currentCopyRows(
+  activeCopyPositions.value,
+  ticketMappings.value,
+  currentCopies.value,
+))
 const tierRows = computed(() => resolvePoolTierRows(pool.value, dynamicSleeves.value, clientRisks.value))
 const tierSummary = computed(() => tierRows.value.reduce((summary, row) => {
   const tier = row.currentTier
@@ -218,6 +224,12 @@ function thresholdWidth(value: unknown, threshold: number): string {
 
 function delayValue(row: any, phase: 'entry' | 'exit' | 'combined'): unknown {
   return row[`${phase}DelayScore`] ?? row[`${phase}_delay_score`] ?? (phase === 'combined' ? row.delay?.score ?? row.delayScore ?? row.factorDelayScore : undefined)
+}
+
+function currentHoldingDuration(row: any): string {
+  if (row.holdingSeconds != null) return formatDuration(row.holdingSeconds)
+  const openedAt = Date.parse(String(row.sourceOpenedAt || ''))
+  return Number.isFinite(openedAt) ? formatDuration((Date.now() - openedAt) / 1000) : '-'
 }
 
 function shadowProgress(row: any): string {
@@ -407,8 +419,9 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
       </section>
 
       <section class="copy-panel independent-panel">
-        <div class="copy-panel-head"><div><h2>客户独立策略仓</h2><small>来源 Position 与 Demo Ticket 一一归属；A 客户事件不会修改 B 客户仓位</small></div><span>{{ activeCopyPositions.length }} 个来源仓 · {{ ticketMappings.length }} 个 Demo Ticket</span></div>
-        <div class="table-wrap"><table><thead><tr><th>交易账号</th><th>产品</th><th>来源 Position</th><th>来源手数</th><th>复制手数</th><th>Demo Ticket</th><th>来源持仓时间</th><th>最近动作</th><th>执行状态 / 原因</th></tr></thead><tbody><tr v-for="row in activeCopyPositions" :key="`${row.clientAlias}-${row.product}-${row.sourcePositionId}`"><td><a :href="row.detailPath">{{ accountPrimaryLabel(row) }} ↗</a></td><td><b>{{ row.product }}</b></td><td>{{ row.sourcePositionId }}</td><td :class="Number(row.sourceLots) >= 0 ? 'positive' : 'negative'">{{ signedLots(row.sourceLots) }}</td><td :class="Number(row.copiedSignedLots) >= 0 ? 'positive' : 'negative'">{{ signedLots(row.copiedSignedLots) }}</td><td>{{ row.demoTickets?.join('、') || '-' }}</td><td>{{ formatDuration((Date.now() - Date.parse(row.sourceOpenedAt || row.firstSignalAt)) / 1000) }}</td><td>{{ sourceActionLabel(row.lastAction) }}</td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ copyReasonLabel(row.rejectReason) }}</small></td></tr><tr v-if="!activeCopyPositions.length"><td colspan="9" class="empty-cell">当前没有可显示的独立来源仓</td></tr></tbody></table></div>
+        <div class="copy-panel-head"><div><h2>当前跟单</h2><small>每行对应一个来源 Position 到 Demo Ticket 的独立关系；客户之间不相互对冲或平仓</small></div><span>{{ activeCopyPositions.length }} 个来源仓 · {{ currentCopyRowsForDisplay.filter(row => row.demoTicket != null).length }} 个 Demo Ticket</span></div>
+        <div v-if="dashboard.isLoading.value" class="empty-inline">正在读取当前跟单状态...</div>
+        <div v-else class="table-wrap current-copy-table"><table><thead><tr><th>单主账号</th><th>服务器 / 平台</th><th>产品 / 方向</th><th>来源 Position / 手数</th><th>Demo Ticket / 手数</th><th>来源开仓</th><th>单主浮盈亏</th><th>我们的收益</th><th>入场延迟</th><th>持仓时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in currentCopyRowsForDisplay" :key="row.currentCopyKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ row.accountLogin || '-' }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ row.accountLogin || '-' }}</b></td><td><b>{{ row.accountServer || '-' }}</b><small class="cell-note">{{ row.accountPlatform || '平台未提供' }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.signedLots > 0 ? '买入' : row.signedLots < 0 ? '卖出' : '方向未提供' }}</small></td><td><b>{{ row.sourcePositionId || '-' }}</b><small class="cell-note">{{ lots(row.sourceLots) }} 手</small></td><td><b>{{ row.demoTicket ?? '尚未复制' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.demoTicket == null ? '-' : `${signedLots(row.signedLots)} 手` }}</small></td><td><b>{{ dateTime(row.sourceOpenedAt) }}</b><small class="cell-note">{{ row.sourceOpenPrice == null ? '开仓价未提供' : `价格 ${number(row.sourceOpenPrice, 5)}` }}</small></td><td :class="{ positive: Number(row.sourcePnlUsd) >= 0, negative: Number(row.sourcePnlUsd) < 0 }"><b>{{ row.sourcePnlUsd == null ? '未提供' : money(row.sourcePnlUsd) }}</b><small class="cell-note">{{ row.sourcePnlUsd == null ? '待运行时投影' : '当前来源仓 · USD' }}</small></td><td :class="{ positive: Number(row.demoPnlUsd) >= 0, negative: Number(row.demoPnlUsd) < 0 }"><b>{{ row.demoPnlUsd == null ? '未提供' : money(row.demoPnlUsd) }}</b><small class="cell-note">{{ row.demoPnlUsd == null ? '待运行时投影' : '已实现 + 浮动 · USD' }}</small></td><td><b>{{ row.entryDelaySeconds == null ? '-' : `${number(row.entryDelaySeconds, 2)}秒` }}</b><small class="cell-note">{{ row.entryDelaySeconds == null ? '等待运行时记录' : '来源到Demo开仓' }}</small></td><td><b>{{ currentHoldingDuration(row) }}</b><small class="cell-note">来源仓</small></td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ row.rejectReason ? copyReasonLabel(row.rejectReason) : '正常跟踪' }}</small></td></tr><tr v-if="!currentCopyRowsForDisplay.length"><td colspan="11" class="empty-cell">当前没有正在复制的来源仓和 Demo Ticket</td></tr></tbody></table></div>
       </section>
 
       <section class="copy-panel pool-panel">
@@ -556,6 +569,10 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 .budget-meter>i>i.warning { background: var(--kdesk-warning); }
 .budget-meter>i>i.danger { background: var(--kdesk-danger); }
 .independent-panel table { min-width: 1180px; }
+.current-copy-table { max-height: 420px; }
+.current-copy-table table { min-width: 1760px; }
+.current-copy-table th { white-space: nowrap; }
+.current-copy-table td { vertical-align: top; }
 .pool-panel { margin-top: 14px; }
 .pool-heading { align-items: flex-end; }
 .pool-controls { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }

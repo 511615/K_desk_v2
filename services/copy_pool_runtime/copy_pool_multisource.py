@@ -2108,21 +2108,30 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             placeholders = self._placeholders(len(batch))
             if source.platform == "MT5":
                 raw = source.query(
-                    f"SELECT Position, Login, Symbol, Action, VolumeExt / 100000000.0 AS lots, ContractSize "
+                    f"SELECT Position, Login, Symbol, Action, VolumeExt / 100000000.0 AS lots, "
+                    f"ContractSize, PriceOpen, PriceCurrent, Profit + Storage AS floating_pnl "
                     f"FROM {source.schema}.mt5_positions WHERE Login IN ({placeholders})",
                     batch,
                 )
                 for item in raw:
                     if normalize_source_product(item["Symbol"]) is None:
                         continue
+                    account_key = mapping[int(item["Login"])]
+                    client = self.clients.get(account_key)
+                    money_scale = client.spec.money_scale if client is not None else 1.0
                     rows.append({
-                        "account_key": mapping[int(item["Login"])], "position_id": int(item["Position"]),
+                        "account_key": account_key, "position_id": int(item["Position"]),
                         "symbol": item["Symbol"], "lots": float(item["lots"]) * (1 if int(item["Action"]) == 0 else -1),
                         "contract_size": float(item.get("ContractSize") or 0.0),
+                        "source_open_price": float(item.get("PriceOpen") or 0.0),
+                        "source_current_price": float(item.get("PriceCurrent") or 0.0),
+                        "source_floating_pnl_usd": float(item.get("floating_pnl") or 0.0)
+                        * money_scale,
                     })
             else:
                 raw = source.query(
-                    f"SELECT TICKET, LOGIN, SYMBOL, CMD, VOLUME / 100.0 AS lots, OPEN_TIME "
+                    f"SELECT TICKET, LOGIN, SYMBOL, CMD, VOLUME / 100.0 AS lots, OPEN_TIME, "
+                    f"OPEN_PRICE, CLOSE_PRICE, PROFIT + COMMISSION + SWAPS + TAXES AS floating_pnl "
                     f"FROM {source.schema}.mt4_trades WHERE LOGIN IN ({placeholders}) AND CMD IN (0,1) "
                     f"AND CLOSE_TIME = '1970-01-01 00:00:00'",
                     batch,
@@ -2130,10 +2139,17 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 for item in raw:
                     if normalize_source_product(item["SYMBOL"]) is None:
                         continue
+                    account_key = mapping[int(item["LOGIN"])]
+                    client = self.clients.get(account_key)
+                    money_scale = client.spec.money_scale if client is not None else 1.0
                     rows.append({
-                        "account_key": mapping[int(item["LOGIN"])], "position_id": int(item["TICKET"]),
+                        "account_key": account_key, "position_id": int(item["TICKET"]),
                         "symbol": item["SYMBOL"], "lots": float(item["lots"]) * (1 if int(item["CMD"]) == 0 else -1),
                         "contract_size": 0.0,
+                        "source_open_price": float(item.get("OPEN_PRICE") or 0.0),
+                        "source_current_price": float(item.get("CLOSE_PRICE") or 0.0),
+                        "source_floating_pnl_usd": float(item.get("floating_pnl") or 0.0)
+                        * money_scale,
                         "source_opened_at": (
                             mt4_source_time_to_utc(source_key, item["OPEN_TIME"]).isoformat()
                             if isinstance(item.get("OPEN_TIME"), datetime)

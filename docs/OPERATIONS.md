@@ -94,6 +94,11 @@ If an MT4 order appears materially later than the five-second/P25 entry budget, 
 Producer after the Demo is flat, preserve private state and inspect the physical source-time mapping
 plus original entry timestamp. Reconciliation must report `signal_expired_no_copy` and must not
 reopen that Position after the entry deadline. Keep 8777 running during repair.
+After deploying an entry-deadline repair, reject the release if any first entry, addition or
+opposite reversal leg is opened after its persisted risk-signal deadline. Verify that an expired
+reversal may close old risk without creating the new leg. The dashboard `currentCopies` table must
+show only actual owned Demo Tickets; source-position and Demo-comment P/L refresh on the existing
+ten-second risk cycle and legacy unavailable values remain explicit rather than zero.
 Daily MT5 holding history starts in five-day windows so routine startup does not repeatedly pay a
 30-second timeout before subdividing. A slow window reconnects and splits Login, then time for a
 remaining singleton. The build must produce complete evidence or fail explicitly; do not reuse

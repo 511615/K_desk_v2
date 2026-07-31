@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, delayGateLabel, formatDuration, linePath, orderActionLabel, phaseLabel, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, delayGateLabel, formatDuration, linePath, orderActionLabel, phaseLabel, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
 
 describe('copy pool presentation helpers', () => {
   it('localizes operational states and events', () => {
@@ -53,5 +53,16 @@ describe('copy pool presentation helpers', () => {
     expect(rows[0].accountLogin).toBe('3054777')
     expect(poolTierReason(rows[0])).toBe('等待影子观察连续健康通过')
     expect(poolTierReason(rows[1])).toBe('客户亏损额度冷却中')
+  })
+
+  it('joins independent source positions to Demo tickets without exposing aliases', () => {
+    const rows = currentCopyRows(
+      [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG CN MT4 Live2', accountPlatform: 'MT4', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedSignedLots: -0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', detailPath: '/copy-pool/accounts/C001', status: 'active' }],
+      [{ clientAlias: 'C001', accountLogin: '3054777', product: 'XAUUSD', sourcePositionId: 135826468, demoTicket: 90001, lots: 0.01, side: -1, openTime: '2026-07-31T15:12:08+08:00' }],
+    )
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ accountLogin: '3054777', sourcePositionId: 135826468, demoTicket: 90001, signedLots: -0.01, entryDelaySeconds: 1 })
+    expect(rows[0]).not.toHaveProperty('clientAlias')
   })
 })

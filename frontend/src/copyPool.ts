@@ -17,6 +17,125 @@ export type PoolTierRow = Record<string, unknown> & {
   clientRisk: Record<string, unknown> | null
 }
 
+export type CurrentCopyRow = Record<string, unknown> & {
+  currentCopyKey: string
+  accountLogin: string
+  accountPlatform: string
+  accountServer: string
+  product: string
+  sourcePositionId: string | number
+  demoTicket: string | number | null
+  sourceLots: unknown
+  demoLots: unknown
+  signedLots: number
+  sourceOpenedAt: unknown
+  sourceOpenPrice: unknown
+  sourcePnlUsd: unknown
+  demoPnlUsd: unknown
+  entryDelaySeconds: unknown
+  holdingSeconds: unknown
+  status: unknown
+  rejectReason: unknown
+  detailPath: string
+}
+
+function firstPresent(row: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    const value = row[key]
+    if (value !== undefined && value !== null && value !== '') return value
+  }
+  return undefined
+}
+
+function copyPositionKey(row: Record<string, unknown>): string {
+  return [
+    String(row.accountLogin || ''),
+    String(row.product || '').toUpperCase(),
+    String(row.sourcePositionId ?? ''),
+  ].join('|')
+}
+
+function copyRow(source: Record<string, unknown>, ticket: Record<string, unknown> | undefined): CurrentCopyRow {
+  const ticketRow = ticket ?? {}
+  const { clientAlias: _sourceAlias, ...publicSource } = source
+  const { clientAlias: _ticketAlias, ...publicTicket } = ticketRow
+  const sourceOpenedAt = firstPresent(source, ['sourceOpenedAt', 'source_opened_at', 'firstSignalAt', 'first_signal_at'])
+  const demoOpenedAt = firstPresent(ticketRow, ['openTime', 'open_time', 'demoOpenedAt', 'demo_opened_at'])
+  const explicitDelay = firstPresent(source, ['entryDelaySeconds', 'entry_delay_seconds'])
+    ?? firstPresent(ticketRow, ['entryDelaySeconds', 'entry_delay_seconds'])
+  const sourceOpenMs = Date.parse(String(sourceOpenedAt || ''))
+  const demoOpenMs = Date.parse(String(demoOpenedAt || ''))
+  const inferredDelay = Number.isFinite(sourceOpenMs) && Number.isFinite(demoOpenMs)
+    ? Math.max(0, (demoOpenMs - sourceOpenMs) / 1000)
+    : undefined
+  const ticketLots = firstPresent(ticketRow, ['lots', 'demoLots', 'demo_lots'])
+  const signedLots = Number(firstPresent(source, ['copiedSignedLots', 'copied_signed_lots']))
+  const ticketSide = Number(ticket?.side)
+  const direction = String(
+    firstPresent(ticketRow, ['demoDirection', 'demo_direction'])
+    ?? firstPresent(source, ['sourceDirection', 'source_direction'])
+    ?? '',
+  ).toUpperCase()
+  const sign = Number.isFinite(signedLots) && signedLots !== 0
+    ? Math.sign(signedLots)
+    : ticketSide < 0 || direction === 'SELL' ? -1 : 1
+  const sourcePositionId = firstPresent(source, ['sourcePositionId', 'source_position_id']) ?? ''
+  const demoTicket = firstPresent(ticket || {}, ['demoTicket', 'demo_ticket', 'ticket'])
+  return {
+    ...publicSource,
+    ...publicTicket,
+    currentCopyKey: `${copyPositionKey(source)}|${String(demoTicket ?? 'source-only')}`,
+    accountLogin: String(firstPresent(source, ['accountLogin']) ?? firstPresent(ticketRow, ['accountLogin']) ?? ''),
+    accountPlatform: String(firstPresent(source, ['accountPlatform']) ?? firstPresent(ticketRow, ['accountPlatform']) ?? ''),
+    accountServer: String(firstPresent(source, ['accountServer']) ?? firstPresent(ticketRow, ['accountServer']) ?? ''),
+    product: String(firstPresent(source, ['product']) ?? firstPresent(ticketRow, ['product']) ?? ''),
+    sourcePositionId: sourcePositionId as string | number,
+    demoTicket: demoTicket == null || demoTicket === '' ? null : demoTicket as string | number,
+    sourceLots: firstPresent(source, ['sourceLots', 'source_lots']),
+    demoLots: firstPresent(source, ['copiedLots', 'copied_lots']) ?? ticketLots,
+    signedLots: sign * Math.abs(Number(ticketLots ?? firstPresent(source, ['copiedLots', 'copied_lots'])) || 0),
+    sourceOpenedAt,
+    sourceOpenPrice: firstPresent(source, ['sourceOpenPrice', 'source_open_price']),
+    sourcePnlUsd: firstPresent(source, ['sourceTotalPnlUsd', 'source_total_pnl_usd', 'sourceFloatingPnlUsd', 'source_floating_pnl_usd', 'sourcePnlUsd', 'source_pnl_usd', 'sourceProfitUsd', 'source_profit_usd', 'currentSourcePnlUsd']),
+    demoPnlUsd: firstPresent(ticketRow, ['demoTotalPnlUsd', 'demo_total_pnl_usd', 'demoPnlUsd', 'demo_pnl_usd', 'profitUsd', 'profit_usd', 'currentDemoPnlUsd'])
+      ?? firstPresent(source, ['demoTotalPnlUsd', 'demo_total_pnl_usd', 'demoPnlUsd', 'demo_pnl_usd', 'copiedPnlUsd', 'copied_pnl_usd']),
+    entryDelaySeconds: explicitDelay ?? inferredDelay,
+    holdingSeconds: firstPresent(source, ['sourceHoldingSeconds', 'source_holding_seconds', 'holdingSeconds', 'holding_seconds']),
+    status: firstPresent(source, ['copyStatus', 'copy_status', 'status']) ?? firstPresent(ticketRow, ['status']) ?? 'monitor',
+    rejectReason: firstPresent(source, ['rejectReason', 'reject_reason']) ?? '',
+    detailPath: String(firstPresent(source, ['detailPath']) ?? firstPresent(ticket || {}, ['detailPath']) ?? ''),
+  }
+}
+
+/**
+ * The runtime's public contract currently exposes source positions and Demo-ticket mappings
+ * separately. Keep rows at ticket granularity so independent ownership is visible to operators.
+ * `currentCopies` is accepted additively for a future producer snapshot without changing the UI.
+ */
+export function currentCopyRows(
+  copyPositions: Record<string, unknown>[],
+  ticketMappings: Record<string, unknown>[],
+  currentCopies: Record<string, unknown>[] = [],
+): CurrentCopyRow[] {
+  if (currentCopies.length) return currentCopies.map(row => copyRow(row, row))
+  const mappingsByPosition = new Map<string, Record<string, unknown>[]>()
+  ticketMappings.forEach(mapping => {
+    const key = copyPositionKey(mapping)
+    const rows = mappingsByPosition.get(key) || []
+    rows.push(mapping)
+    mappingsByPosition.set(key, rows)
+  })
+  return copyPositions.flatMap(position => {
+    const mappings = mappingsByPosition.get(copyPositionKey(position)) || []
+    return mappings.length ? mappings.map(mapping => copyRow(position, mapping)) : [copyRow(position, undefined)]
+  }).sort((left, right) => {
+    const account = left.accountLogin.localeCompare(right.accountLogin)
+    if (account) return account
+    return String(left.sourcePositionId).localeCompare(String(right.sourcePositionId))
+      || Number(left.demoTicket || 0) - Number(right.demoTicket || 0)
+  })
+}
+
 export function accountPrimaryLabel(row: Record<string, unknown>): string {
   return String(row.accountLogin || '-')
 }
