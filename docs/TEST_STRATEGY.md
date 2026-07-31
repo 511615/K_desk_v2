@@ -248,10 +248,12 @@ reconciliation while a same-direction sibling remains unfilled. Budget regressio
 tiny-weight active client to receive the 20% cycle-budget floor only for the explicit
 `ACCMGlobal-Demo`/`StagedLive` switch, prove that a 0.69 USD loss does not exhaust that floor, and
 retain weight-proportional behavior without the switch or on another server/mode. A rolling
-order-storm fixture must
-hard-stop before a ninth open request in 60 seconds. MT4 adapter tests attach UTC to a naive raw
-`OPEN_TIME`, and a snapshot observed three seconds later must remain within the five-second budget
-instead of receiving an artificial eight-hour delay.
+order-storm fixture must hard-stop before a ninth open request in 60 seconds. MT4 adapter tests
+preserve AC raw UTC and convert DBG CN Live1/Live2 raw UTC+3 to UTC; Live3 remains in the complete
+physical-route set under its provisional UTC+3 convention. A normalized snapshot observed two or
+three seconds later remains within the five-second budget. A risk-rejected source Position without
+a Demo child cannot open on a 40-second retry, while an expired Position with an owned child can
+still reduce or close.
 Producer regressions also pin the broker-retained 16-character independent comment, migrate older
 overlong persisted comments, persist source ownership on both sides of execution, recover exactly
 one comment-plus-product owner after an interrupted post-fill write, and keep ambiguous/unmatched

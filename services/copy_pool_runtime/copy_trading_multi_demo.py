@@ -1226,6 +1226,23 @@ class MultiSourceLiveService(LiveService):
         if not position.copy_eligible:
             return 0.0, "old_or_shadow_position"
         now = utc_now()
+        if not position.children:
+            signal_timestamp = position.source_opened_at or position.first_signal_at
+            try:
+                signal_started_at = datetime.fromisoformat(signal_timestamp)
+            except (TypeError, ValueError):
+                signal_started_at = None
+            if signal_started_at is not None:
+                if signal_started_at.tzinfo is None:
+                    signal_started_at = signal_started_at.replace(tzinfo=timezone.utc)
+                signal_age = max(0.0, (now - signal_started_at).total_seconds())
+                sleeve = getattr(self, "sleeve_rows", {}).get(
+                    sleeve_key(position.account_key, position.product), {}
+                )
+                if is_signal_expired(
+                    signal_age, self._signal_delay_budget(sleeve)
+                ):
+                    return 0.0, "signal_expired_no_copy"
         if risk.is_paused(now):
             return 0.0, "client_loss_pause"
         if risk.is_recovery_shadow(now):

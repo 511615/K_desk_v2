@@ -102,9 +102,13 @@
   later Position transitions; later events for the same Position coalesce before retry. Restart
   resumes only risk reduction, never an unfilled open or opposite reversal leg. Expired residual
   exposure is `signal_expired_no_copy`, not source-flat.
-- MT4 snapshot signal age attaches UTC to raw `OPEN_TIME` for every physical MT4 source. The database
-  session's `+08:00` rendering of Unix timestamps is observation evidence, not the timezone of the
-  raw platform datetime.
+- MT4 snapshot signal age normalizes raw `OPEN_TIME` by physical source: AC `mt4_export_syc` is UTC;
+  DBG CN Live1/Live2 are UTC+3; DBG VN Live3 remains fully routed with a provisional UTC+3 mapping
+  pending fresh runtime confirmation. The database session's `+08:00` rendering is not the raw
+  platform datetime's timezone.
+- An eligible source Position without a Demo child must pass its original entry-delay budget on every
+  retry. After expiry it remains `signal_expired_no_copy` and cannot be chased when a prior rejection
+  clears. Existing owned children remain subject to reductions, closes and emergency risk release.
 - Pool quality uses same-product closed trading net plus current same-product floating P/L for the
   strict positive candidate gate. Current floating profit cannot hide later account-risk failures or
   increase a dynamic weight. Current floating loss at or above 10% of equity or margin usage at or

@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-30
+last_verified_date: 2026-07-31
 ---
 
 # Dynamic copy-pool monitor
@@ -217,13 +217,16 @@ run before new risk, one Position failure does not discard its siblings, and inc
 retried during the same process. On restart only pending reductions/closes resume; pending opens are
 cancelled to monitor-only and a pending reversal resumes only its old-direction close, preserving the
 no-chase rule. Invalid pending state fails startup instead of being silently discarded. An expired residual source position is reported as
-`signal_expired_no_copy`, not as source-flat. Existing copied exposure still follows reductions and closes. MT4 remains
+`signal_expired_no_copy`, not as source-flat. Reconciliation rechecks the entry deadline whenever an
+eligible source Position has no Demo child, so a prior rejection cannot be chased after its signal
+budget expires. Existing copied exposure still follows reductions and closes. MT4 remains
 snapshot-authoritative. The producer persists effective weights by composite
 account key; the dashboard prefers that current mapping over historical event rows and clamps any
 legacy fallback to zero through the accepted pool's base weight.
-Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
-render at `+08:00`; the producer attaches UTC before calculating signal age. This prevents a timely
-snapshot position from acquiring an artificial eight-hour delay.
+Replicated MT4 `OPEN_TIME` is normalized by physical source before signal-age calculation: AC
+`mt4_export_syc` uses UTC, while DBG CN Live1/Live2 use MT4 server time UTC+3. DBG VN Live3 remains
+fully routed and provisionally follows UTC+3 until a fresh runtime event reconfirms it. This prevents
+a timely snapshot position from appearing hours early or late.
 Daily holding-period reconstruction keeps the complete 20-day evidence requirement while avoiding
 one unbounded MT5 aggregate. MT5 reads start as five-day Login-batch windows; a slow window splits
 Logins first and then time down to six hours. Position openings and closes are merged across window

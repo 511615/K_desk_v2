@@ -865,28 +865,89 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         position.copy_eligible = True
 
         service.copy_book.clients["route:1"].loss_budget_usd = 5.0
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
 
         service.copy_book.clients["route:1"].loss_budget_usd = 30.0
         mt.margin = 1_500.0
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
 
         mt.margin = 0.0
         mt.add(201, "CPV2:C002:CLUSTER", 1, 0.06)
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
         mt.positions.clear()
 
         mt.add(301, position.comment, 1, 0.01)
         service._sync_book_children(position)
-        with patch.object(service, "_position_hold_seconds", return_value=12 * 60 * 60):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=12 * 60 * 60
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.01, "risk_allowed"))
+
+    def test_expired_no_child_retry_never_opens(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.sleeve_rows = {
+            sleeve_key("route:1", "XAUUSD"): {
+                "historical_delay_enabled": False,
+                "hold_p25_seconds": 30.0,
+            },
+        }
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 771, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        position.source_opened_at = (NOW - timedelta(seconds=40)).isoformat()
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
+            service._sync_independent_position(
+                position, "delayed_retry", allow_increase=True
+            )
+            service.reconcile_independent_copies(allow_increase=True)
+
+        self.assertEqual(mt.actions, [])
+        self.assertEqual(position.copied_signed_lots, 0.0)
+        self.assertEqual(position.reject_reason, "signal_expired_no_copy")
+
+    def test_expired_signal_with_child_remains_managed(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.sleeve_rows = {
+            sleeve_key("route:1", "XAUUSD"): {
+                "historical_delay_enabled": False,
+                "hold_p25_seconds": 30.0,
+            },
+        }
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 772, 0.0, 0.01, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        position.source_opened_at = (NOW - timedelta(seconds=6)).isoformat()
+        mt.add(772, position.comment, 1, 0.01)
+        service._sync_book_children(position)
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
+            target, reason = service._desired_copy_lots(position, allow_increase=True)
+            service._sync_independent_position(
+                position, "risk_reduction", allow_increase=True
+            )
+
+        self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
+        self.assertEqual(mt.actions, [("close", 772, 0.01)])
 
     def test_explicit_demo_override_allows_one_minimum_lot_per_direction(self) -> None:
         mt = FakeHedgingMt()
@@ -903,12 +964,16 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         service.copy_book.clients["route:1"].loss_budget_usd = 5.0
 
         self.assertTrue(service._minimum_lot_feasible("route:1", "XAUUSD"))
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.01, "risk_allowed_demo_minimum"))
 
         mt.add(202, "CPV2:C002:SAME-SIDE", 1, 0.01)
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
 
@@ -930,7 +995,9 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         first.copy_eligible = True
         second.copy_eligible = True
 
-        with patch.object(service, "_position_hold_seconds", return_value=0.0):
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
             service._sync_independent_position(first, "first", allow_increase=True)
             service._sync_independent_position(second, "second", allow_increase=True)
             service.reconcile_independent_copies(allow_increase=True)

@@ -81,6 +81,7 @@ class LogicalRoute:
     schema: str
     platform: str
     server: str
+    mt4_utc_offset_hours: int | None = None
 
     @property
     def physical_key(self) -> str:
@@ -91,14 +92,15 @@ ROUTES: tuple[LogicalRoute, ...] = (
     LogicalRoute("ac_gb_mt5", "AC", "int_sass_crm_ac", 1, "int_sass_crm_ac_mt5_live_new", "MT5", "AC GB MT5"),
     LogicalRoute("ac_cn_mt5", "AC", "sass_crm_ac", 1, "sass_crm_ac_mt5_live", "MT5", "AC CN MT5"),
     LogicalRoute("ac_cn_mt5_live3", "AC", "sass_crm_ac", 3, "sass_crm_ac_mt5_live3", "MT5", "AC CN MT5 Live3"),
-    LogicalRoute("ac_cn_mt4", "AC", "sass_crm_ac", 2, "mt4_export_syc", "MT4", "AC CN MT4"),
-    LogicalRoute("ac_gb_mt4", "AC", "int_sass_crm_ac", 2, "mt4_export_syc", "MT4", "AC GB MT4"),
+    LogicalRoute("ac_cn_mt4", "AC", "sass_crm_ac", 2, "mt4_export_syc", "MT4", "AC CN MT4", 0),
+    LogicalRoute("ac_gb_mt4", "AC", "int_sass_crm_ac", 2, "mt4_export_syc", "MT4", "AC GB MT4", 0),
     LogicalRoute("dbg_cn_mt5", "DBG", "crm_cn", 4, "mt5_export_new", "MT5", "DBG CN MT5"),
     LogicalRoute("dbg_gb_mt5", "DBG", "crm_vn", 2, "mt5_export_new", "MT5", "DBG GB MT5"),
     LogicalRoute("dbg_gb_mt5_live2", "DBG", "crm_vn", 5, "crm_vn_mt5_live2", "MT5", "DBG GB MT5 Live2"),
-    LogicalRoute("dbg_cn_mt4_live1", "DBG", "crm_cn", 1, "crm_cn_mt4_live1", "MT4", "DBG CN MT4 Live1"),
-    LogicalRoute("dbg_cn_mt4_live2", "DBG", "crm_cn", 3, "crm_cn_mt4_live2", "MT4", "DBG CN MT4 Live2"),
-    LogicalRoute("dbg_vn_mt4_live3", "DBG", "crm_vn", 1, "crm_vn_mt4_live3", "MT4", "DBG VN MT4 Live3"),
+    LogicalRoute("dbg_cn_mt4_live1", "DBG", "crm_cn", 1, "crm_cn_mt4_live1", "MT4", "DBG CN MT4 Live1", 3),
+    LogicalRoute("dbg_cn_mt4_live2", "DBG", "crm_cn", 3, "crm_cn_mt4_live2", "MT4", "DBG CN MT4 Live2", 3),
+    # Live3 follows the current DBG MT4 +03:00 convention until a fresh runtime event audit reconfirms it.
+    LogicalRoute("dbg_vn_mt4_live3", "DBG", "crm_vn", 1, "crm_vn_mt4_live3", "MT4", "DBG VN MT4 Live3", 3),
 )
 
 
@@ -107,6 +109,27 @@ def physical_routes() -> dict[str, tuple[LogicalRoute, ...]]:
     for route in ROUTES:
         grouped[route.physical_key].append(route)
     return {key: tuple(value) for key, value in grouped.items()}
+
+
+def mt4_source_utc_offset_hours(source_key: str) -> int:
+    """Return the audited source-local UTC offset for one physical MT4 source."""
+    routes = physical_routes().get(source_key)
+    if not routes:
+        raise ValueError(f"Unknown physical source {source_key!r}.")
+    if routes[0].platform != "MT4":
+        raise ValueError(f"Physical source {source_key!r} is not MT4.")
+    offsets = {route.mt4_utc_offset_hours for route in routes}
+    if len(offsets) != 1 or None in offsets:
+        raise ValueError(f"MT4 source {source_key!r} has no unambiguous UTC offset.")
+    return int(offsets.pop())
+
+
+def mt4_source_time_to_utc(source_key: str, value: datetime) -> datetime:
+    """Normalize a raw MT4 server datetime to an aware UTC instant."""
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc)
+    offset = timezone(timedelta(hours=mt4_source_utc_offset_hours(source_key)))
+    return value.replace(tzinfo=offset).astimezone(timezone.utc)
 
 
 def account_key(route_key: str, login: int) -> str:
@@ -2112,7 +2135,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         "symbol": item["SYMBOL"], "lots": float(item["lots"]) * (1 if int(item["CMD"]) == 0 else -1),
                         "contract_size": 0.0,
                         "source_opened_at": (
-                            item["OPEN_TIME"].replace(tzinfo=timezone.utc).isoformat()
+                            mt4_source_time_to_utc(source_key, item["OPEN_TIME"]).isoformat()
                             if isinstance(item.get("OPEN_TIME"), datetime)
                             else ""
                         ),

@@ -90,6 +90,10 @@ Pending terminal transitions are private state. A broker/runtime failure leaves 
 pending while independent sibling transitions continue and later events coalesce. Restart replays
 only reductions/closes; unfilled opens become monitor-only and a reversal keeps only its closing leg.
 Malformed pending state hard-stops startup. Do not delete private state to bypass a failure.
+If an MT4 order appears materially later than the five-second/P25 entry budget, stop only the
+Producer after the Demo is flat, preserve private state and inspect the physical source-time mapping
+plus original entry timestamp. Reconciliation must report `signal_expired_no_copy` and must not
+reopen that Position after the entry deadline. Keep 8777 running during repair.
 Daily MT5 holding history starts in five-day windows so routine startup does not repeatedly pay a
 30-second timeout before subdividing. A slow window reconnects and splits Login, then time for a
 remaining singleton. The build must produce complete evidence or fail explicitly; do not reuse
