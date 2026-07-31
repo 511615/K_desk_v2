@@ -258,8 +258,8 @@ use the opposite entry timestamp for a same-batch reversal. They also pin reduct
 ordering, durable pending serialization, sibling continuation after one failure and the distinct
 `signal_expired_no_copy` disposition. Restart fixtures cancel pending additions, retain only the
 risk-release side of pending reversals and reject malformed journals.
-Daily-build holding regressions force a 20-day aggregate timeout and require adaptive Login/time
-subdivision to merge an MT5 Position across adjacent windows with its exact duration. Minimum-window
+Daily-build holding regressions require proactive five-day MT5 reads, then force both Login and time
+subdivision to merge a Position across adjacent windows with its exact duration. Minimum-window
 failure remains explicit and cannot silently remove an account or sample.
 Restart no-chase regressions also persist an eligible open source Position without a Demo child,
 prove live reconciliation sends no replacement order and preserves the explicit monitor reason,
