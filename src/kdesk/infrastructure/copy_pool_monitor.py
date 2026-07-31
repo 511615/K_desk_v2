@@ -43,6 +43,15 @@ def _nullable_float(value: object) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _nullable_int(value: object) -> int | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _int(value: object, default: int = 0) -> int:
     try:
         return int(float(value))
@@ -83,6 +92,11 @@ def _reason_codes(value: object) -> list[str]:
 def _timestamp(value: object) -> str:
     parsed = _iso_datetime(value)
     return parsed.astimezone(UTC).isoformat() if parsed else ""
+
+
+def _nullable_timestamp(value: object) -> str | None:
+    timestamp = _timestamp(value)
+    return timestamp or None
 
 
 def _iso_datetime(value: object) -> datetime | None:
@@ -196,6 +210,7 @@ class CopyPoolFileSnapshotRepository:
                 "clientRisks": [],
                 "copyPositions": [],
                 "ticketMappings": [],
+                "currentCopies": [],
                 "exposures": [],
                 "dynamicSleeves": [],
                 "scheduler": {},
@@ -433,6 +448,7 @@ class CopyPoolFileSnapshotRepository:
         copy_positions, ticket_mappings, exposures = self._independent_positions(
             independent_positions, routes
         )
+        current_copies = self._current_copies(independent_positions, routes)
 
         return {
             "ok": True,
@@ -460,6 +476,7 @@ class CopyPoolFileSnapshotRepository:
             "clientRisks": client_risks,
             "copyPositions": copy_positions,
             "ticketMappings": ticket_mappings,
+            "currentCopies": current_copies,
             "exposures": exposures,
             "dynamicSleeves": dynamic_sleeves,
             "scheduler": self._scheduler(status.get("scheduler")),
@@ -658,6 +675,151 @@ class CopyPoolFileSnapshotRepository:
             sorted(mappings, key=lambda item: item["demoTicket"]),
             exposures,
         )
+
+    @staticmethod
+    def _current_copies(
+        rows: dict[str, Any], routes: dict[str, dict[str, str]]
+    ) -> list[dict[str, Any]]:
+        """Project only owned, currently persisted Demo child Tickets.
+
+        The local monitor cannot safely apportion account-level source or Demo P/L to an
+        individual Position.  It therefore reads only optional Position/Ticket-level values
+        when the producer persists them, and returns null while that evidence is unavailable.
+        """
+        alias_by_identity = {
+            item["account_key"]: alias for alias, item in routes.items()
+        }
+        output: list[dict[str, Any]] = []
+        now = datetime.now(UTC)
+        for raw in rows.values():
+            if not isinstance(raw, dict):
+                continue
+            alias = alias_by_identity.get(str(raw.get("account_key") or ""))
+            if not alias:
+                continue
+            source_lots = _nullable_float(raw.get("source_lots"))
+            source_opened_at = _nullable_timestamp(raw.get("source_opened_at"))
+            source_opened = _iso_datetime(source_opened_at)
+            source_holding_seconds = (
+                max(0.0, (now - source_opened.astimezone(UTC)).total_seconds())
+                if source_opened
+                else None
+            )
+            source_pnl = CopyPoolFileSnapshotRepository._position_pnl(raw, "source")
+            children = raw.get("children", [])
+            if not isinstance(children, list):
+                continue
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                ticket = _nullable_int(child.get("ticket"))
+                if ticket is None or ticket <= 0:
+                    continue
+                child_lots = _nullable_float(child.get("lots"))
+                child_side = _nullable_int(child.get("side"))
+                demo_opened_at = _nullable_timestamp(child.get("open_time"))
+                demo_opened = _iso_datetime(demo_opened_at)
+                demo_holding_seconds = (
+                    max(0.0, (now - demo_opened.astimezone(UTC)).total_seconds())
+                    if demo_opened
+                    else None
+                )
+                # The Demo executor's comment identifies one source Position.  Its P/L is
+                # therefore Position-level evidence even when a source Position owns more
+                # than one current child Ticket.
+                demo_pnl = CopyPoolFileSnapshotRepository._position_pnl(raw, "demo")
+                output.append({
+                    "accountLogin": routes[alias]["login"],
+                    "accountPlatform": routes[alias]["platform"],
+                    "accountServer": routes[alias]["server"],
+                    "product": str(raw.get("product") or "") or None,
+                    "sourceDirection": CopyPoolFileSnapshotRepository._side_label(source_lots),
+                    "sourcePositionId": _nullable_int(raw.get("source_position_id")),
+                    "sourceLots": abs(source_lots) if source_lots is not None else None,
+                    "sourceOpenPrice": _nullable_float(raw.get("source_open_price")),
+                    "sourceOpenedAt": source_opened_at,
+                    "sourceHoldingSeconds": source_holding_seconds,
+                    "demoTicket": ticket,
+                    "demoDirection": CopyPoolFileSnapshotRepository._side_label(child_side),
+                    "demoLots": abs(child_lots) if child_lots is not None else None,
+                    "demoOpenPrice": _nullable_float(child.get("open_price")),
+                    "demoOpenedAt": demo_opened_at,
+                    "demoHoldingSeconds": demo_holding_seconds,
+                    "sourceRealizedPnlUsd": source_pnl["realizedUsd"],
+                    "sourceFloatingPnlUsd": source_pnl["floatingUsd"],
+                    "sourceTotalPnlUsd": source_pnl["totalUsd"],
+                    "sourcePnlBasis": source_pnl["basis"],
+                    "demoRealizedPnlUsd": demo_pnl["realizedUsd"],
+                    "demoFloatingPnlUsd": demo_pnl["floatingUsd"],
+                    "demoTotalPnlUsd": demo_pnl["totalUsd"],
+                    "demoPnlBasis": demo_pnl["basis"],
+                    "copyStatus": str(raw.get("status") or "") or None,
+                    "detailPath": f"/copy-pool/accounts/{alias}",
+                })
+        return sorted(
+            output,
+            key=lambda item: (
+                item["accountLogin"],
+                item["product"] or "",
+                item["sourcePositionId"] if item["sourcePositionId"] is not None else -1,
+                item["demoTicket"],
+            ),
+        )
+
+    @staticmethod
+    def _position_pnl(raw: dict[str, Any], prefix: str) -> dict[str, Any]:
+        """Return only exact Position/Ticket P/L evidence, never a client aggregate."""
+        nested = raw.get(f"{prefix}_pnl")
+        values = nested if isinstance(nested, dict) else raw
+
+        def value(*names: str) -> float | None:
+            for name in names:
+                parsed = _nullable_float(values.get(name))
+                if parsed is not None:
+                    return parsed
+            return None
+
+        realized = value(
+            "realized_usd", "realized_pnl_usd", "realized",
+            f"{prefix}_realized_pnl_usd",
+        )
+        floating = value(
+            "floating_usd", "floating_pnl_usd", "floating",
+            f"{prefix}_floating_pnl_usd",
+        )
+        total = value(
+            "total_usd", "total_pnl_usd", "total",
+            f"{prefix}_total_pnl_usd",
+        )
+        if total is None and realized is not None and floating is not None:
+            total = realized + floating
+        complete = total is not None and (
+            (realized is not None and floating is not None)
+            or value("total_usd", "total_pnl_usd", "total", f"{prefix}_total_pnl_usd") is not None
+        )
+        return {
+            "realizedUsd": realized,
+            "floatingUsd": floating,
+            "totalUsd": total,
+            "basis": (
+                (
+                    "demo_source_position_comment_realized_plus_floating"
+                    if prefix == "demo" else "source_position_realized_plus_floating"
+                )
+                if complete else (
+                    "demo_source_position_comment_partial"
+                    if prefix == "demo" else "source_position_partial"
+                )
+                if realized is not None or floating is not None or total is not None
+                else "unavailable"
+            ),
+        }
+
+    @staticmethod
+    def _side_label(value: float | int | None) -> str | None:
+        if value is None:
+            return None
+        return "BUY" if value > 0 else "SELL" if value < 0 else None
 
     @staticmethod
     def _public_status(row: dict[str, Any]) -> dict[str, Any]:

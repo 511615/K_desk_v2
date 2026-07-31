@@ -26,6 +26,8 @@ from copy_pool_multisource import (
     account_key,
     normalize_route_capped_weights,
     normalize_product_budget_weights,
+    mt4_source_time_to_utc,
+    mt4_source_utc_offset_hours,
     open_risk_multiplier,
     passes_current_open_risk_gate,
     physical_routes,
@@ -943,8 +945,9 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(portfolio.client_product_position(mt5.account_key, "XAUUSD"), 0.25)
 
     def test_mt4_current_position_open_time_is_interpreted_as_utc(self) -> None:
-        routed = client(3, 6002426, "C001")
+        routed = client(3, 6002426, "C001", money_scale=0.01)
         database = MultiSourceDatabase()
+        database.clients = {routed.account_key: routed}
         database.clients_by_source_login = {
             routed.physical_key: {routed.login: routed.account_key}
         }
@@ -962,6 +965,9 @@ class MultiSourceTests(unittest.TestCase):
                     "CMD": 0,
                     "lots": 0.01,
                     "OPEN_TIME": datetime(2026, 7, 30, 14, 59, 55),
+                    "OPEN_PRICE": 4010.5,
+                    "CLOSE_PRICE": 4012.0,
+                    "floating_pnl": 123.45,
                 }]
 
         database.sources = {routed.physical_key: FakeSource()}
@@ -969,6 +975,64 @@ class MultiSourceTests(unittest.TestCase):
         rows = database.positions_for_source(routed.physical_key)
 
         self.assertEqual(rows[0]["source_opened_at"], "2026-07-30T14:59:55+00:00")
+        self.assertEqual(rows[0]["source_open_price"], 4010.5)
+        self.assertEqual(rows[0]["source_current_price"], 4012.0)
+        self.assertAlmostEqual(rows[0]["source_floating_pnl_usd"], 1.2345)
+
+    def test_mt4_physical_source_offsets_are_explicit_and_keep_live3_routed(self) -> None:
+        self.assertEqual(
+            mt4_source_utc_offset_hours("AC:mt4_export_syc:MT4"), 0
+        )
+        self.assertEqual(
+            mt4_source_utc_offset_hours("DBG:crm_cn_mt4_live1:MT4"), 3
+        )
+        self.assertEqual(
+            mt4_source_utc_offset_hours("DBG:crm_cn_mt4_live2:MT4"), 3
+        )
+        self.assertEqual(
+            mt4_source_utc_offset_hours("DBG:crm_vn_mt4_live3:MT4"), 3
+        )
+        self.assertIn("DBG:crm_vn_mt4_live3:MT4", physical_routes())
+
+    def test_dbg_mt4_current_position_open_time_is_normalized_from_utc_plus_three(self) -> None:
+        raw_open = datetime(2026, 7, 31, 11, 2, 9)
+        expected = datetime(2026, 7, 31, 8, 2, 9, tzinfo=timezone.utc)
+        self.assertEqual(
+            mt4_source_time_to_utc("DBG:crm_cn_mt4_live1:MT4", raw_open),
+            expected,
+        )
+        self.assertEqual(
+            mt4_source_time_to_utc("DBG:crm_cn_mt4_live2:MT4", raw_open),
+            expected,
+        )
+
+    def test_dbg_mt4_position_snapshot_uses_physical_source_offset(self) -> None:
+        routed = client(8, 7798014, "C001")
+        database = MultiSourceDatabase()
+        database.clients_by_source_login = {
+            routed.physical_key: {routed.login: routed.account_key}
+        }
+
+        class FakeSource:
+            platform = "MT4"
+            schema = "crm_cn_mt4_live1"
+
+            @staticmethod
+            def query(_sql: str, _params: object = ()) -> list[dict[str, object]]:
+                return [{
+                    "TICKET": 28450463,
+                    "LOGIN": 7798014,
+                    "SYMBOL": "XAUUSD",
+                    "CMD": 0,
+                    "lots": 0.05,
+                    "OPEN_TIME": datetime(2026, 7, 31, 11, 2, 9),
+                }]
+
+        database.sources = {routed.physical_key: FakeSource()}
+
+        rows = database.positions_for_source(routed.physical_key)
+
+        self.assertEqual(rows[0]["source_opened_at"], "2026-07-31T08:02:09+00:00")
 
     def test_mt4_entry_seen_three_seconds_after_open_is_not_expired(self) -> None:
         routed = client(3, 6002426, "C001")
@@ -1020,6 +1084,61 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(observed[0]["after_lots"], 0.01)
         self.assertEqual(observed[0]["signal_time"], datetime(
             2026, 7, 30, 14, 59, 55, tzinfo=timezone.utc
+        ))
+        self.assertFalse(event_rows[0]["signal_expired"])
+        self.assertTrue(event_rows[0]["latency_known"])
+        self.assertEqual(event_rows[0]["allowed_delay_seconds"], 5.0)
+
+    def test_dbg_mt4_entry_seen_two_seconds_after_normalized_open_is_not_expired(self) -> None:
+        routed = client(8, 7798014, "C001")
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.routed_clients = {routed.account_key: routed}
+        service.portfolio = MultiSourcePortfolio(service.routed_clients)
+        service.db = SimpleNamespace(sources={
+            routed.physical_key: SimpleNamespace(
+                health=SimpleNamespace(latency_ms=78.0)
+            )
+        })
+        service.current_targets = {"XAUUSD": 0.0}
+        service.phase = "live"
+        service.event_counter = 0
+        service.event_path = Path("unused.csv")
+        service.mt = SimpleNamespace(signed_position=lambda _product: 0.0)
+        service.sleeve_rows = {
+            sleeve_key(routed.account_key, "XAUUSD"): {
+                "historical_delay_enabled": False,
+                "hold_p25_seconds": 3_600.0,
+            }
+        }
+        service.sleeve_states = {}
+        service._refresh_targets = lambda: (
+            {"XAUUSD": 0.0}, {"XAUUSD": 0.01}, {"XAUUSD": 0.0}, 0.0
+        )
+        service._approved_source_after = (
+            lambda _account, _position, _product, _before, after, *, entry_timely: (
+                after if entry_timely else 0.0
+            )
+        )
+        observed: list[dict[str, object]] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            observed.append(kwargs) or ("open", None)
+        )
+        event_rows: list[dict[str, object]] = []
+        service._append_event_csv = event_rows.append
+        observed_at = datetime(2026, 7, 31, 8, 2, 11, tzinfo=timezone.utc)
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=observed_at):
+            service.apply_mt4_snapshot(routed.physical_key, [{
+                "account_key": routed.account_key,
+                "position_id": 28450463,
+                "symbol": "XAUUSD",
+                "lots": 0.05,
+                "source_opened_at": "2026-07-31T08:02:09+00:00",
+            }])
+
+        self.assertEqual(observed[0]["after_lots"], 0.05)
+        self.assertEqual(observed[0]["signal_time"], datetime(
+            2026, 7, 31, 8, 2, 9, tzinfo=timezone.utc
         ))
         self.assertFalse(event_rows[0]["signal_expired"])
         self.assertTrue(event_rows[0]["latency_known"])

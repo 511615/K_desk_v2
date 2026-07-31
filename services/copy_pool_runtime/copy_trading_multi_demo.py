@@ -787,8 +787,13 @@ class MultiSourceLiveService(LiveService):
             floating = 0.0
             for position in self.copy_book.positions_for_client(account_key):
                 values = pnl_rows.get(position.comment, {})
-                realized += float(values.get("realized", 0.0))
-                floating += float(values.get("floating", 0.0))
+                position_realized = float(values.get("realized", 0.0))
+                position_floating = float(values.get("floating", 0.0))
+                position.demo_realized_pnl_usd = position_realized
+                position.demo_floating_pnl_usd = position_floating
+                position.demo_total_pnl_usd = position_realized + position_floating
+                realized += position_realized
+                floating += position_floating
             risk.realized_pnl_usd = realized
             risk.floating_pnl_usd = floating
 
@@ -1210,6 +1215,24 @@ class MultiSourceLiveService(LiveService):
             raise error
         recent.append(now)
 
+    def _risk_signal_expired(self, position: IndependentCopyPosition) -> bool:
+        signal_timestamp = (
+            position.risk_signal_at
+            or position.source_opened_at
+            or position.first_signal_at
+        )
+        try:
+            signal_started_at = datetime.fromisoformat(signal_timestamp)
+        except (TypeError, ValueError):
+            return True
+        if signal_started_at.tzinfo is None:
+            signal_started_at = signal_started_at.replace(tzinfo=timezone.utc)
+        signal_age = max(0.0, (utc_now() - signal_started_at).total_seconds())
+        sleeve = getattr(self, "sleeve_rows", {}).get(
+            sleeve_key(position.account_key, position.product), {}
+        )
+        return is_signal_expired(signal_age, self._signal_delay_budget(sleeve))
+
     def _desired_copy_lots(
         self,
         position: IndependentCopyPosition,
@@ -1226,6 +1249,8 @@ class MultiSourceLiveService(LiveService):
         if not position.copy_eligible:
             return 0.0, "old_or_shadow_position"
         now = utc_now()
+        if not position.children and self._risk_signal_expired(position):
+            return 0.0, "signal_expired_no_copy"
         if risk.is_paused(now):
             return 0.0, "client_loss_pause"
         if risk.is_recovery_shadow(now):
@@ -1388,12 +1413,24 @@ class MultiSourceLiveService(LiveService):
             before = position.copied_signed_lots
         increase = abs(target) > abs(before) + 1e-9
         if increase:
+            if self._risk_signal_expired(position):
+                position.status = "monitor"
+                position.reject_reason = "signal_expired_no_copy"
+                self.copy_book.rejected_events += 1
+                self.copy_book.remove_closed(position.source_key)
+                return
             can_open = (
                 allow_increase
                 and not self.refresh_mt5_conflicts()
                 and self.quote_allows_open(position.product)
             )
             if can_open:
+                if self._risk_signal_expired(position):
+                    position.status = "monitor"
+                    position.reject_reason = "signal_expired_no_copy"
+                    self.copy_book.rejected_events += 1
+                    self.copy_book.remove_closed(position.source_key)
+                    return
                 delta = target - before
                 self._reserve_open_request()
                 result = self.mt.open_position(
@@ -1691,6 +1728,29 @@ class MultiSourceLiveService(LiveService):
         assert self.portfolio is not None
         before = self.portfolio.comparable_positions()
         rows = self.db.all_positions()
+        source_metrics = {
+            (
+                str(row["account_key"]),
+                int(row["position_id"]),
+                str(normalize_source_product(row.get("symbol"))),
+            ): row
+            for row in rows
+            if normalize_source_product(row.get("symbol")) is not None
+        }
+        for position in self.copy_book.positions.values():
+            row = source_metrics.get(
+                (position.account_key, position.source_position_id, position.product)
+            )
+            if row is None:
+                continue
+            position.source_open_price = float(row.get("source_open_price") or 0.0)
+            position.source_current_price = float(
+                row.get("source_current_price") or 0.0
+            )
+            if row.get("source_floating_pnl_usd") is not None:
+                position.source_floating_pnl_usd = float(
+                    row["source_floating_pnl_usd"]
+                )
         check = MultiSourcePortfolio(self.routed_clients)
         check.replace_positions(rows)
         after = check.comparable_positions()
@@ -1714,12 +1774,20 @@ class MultiSourceLiveService(LiveService):
                     after_lots = drift_after.get(key, 0.0)
                     if abs(before_lots - after_lots) < 1e-12:
                         continue
+                    approved_after = self._approved_source_after(
+                        key[0],
+                        key[1],
+                        key[2],
+                        before_lots,
+                        after_lots,
+                        entry_timely=False,
+                    )
                     self._handle_source_position_change(
                         account_key=key[0],
                         product=key[2],
                         position_id=key[1],
                         before_lots=before_lots,
-                        after_lots=after_lots,
+                        after_lots=approved_after,
                         signal_time=utc_now(),
                         reason="SOURCE_RECONCILE",
                     )

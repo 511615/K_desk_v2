@@ -68,6 +68,11 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   gross lots, XAUUSD gross/net lots, hedge ratio, oldest-open age, floating-loss ratio,
   margin/equity and the build-time open-risk multiplier. `/account/{login}` does not fetch or embed
   this dashboard; copy-pool state is shown only on `/copy-pool`.
+- The same dashboard additively exposes `currentCopies`, with one row per currently owned Demo
+  Ticket. Each row contains the real source Login, server/platform, product/direction, source
+  Position, source and Demo lots/open evidence, entry delay, exact source-position floating P/L,
+  Demo source-comment realized/floating/total P/L and the compatible account-detail link. Missing
+  legacy per-position P/L remains `null`; account-level profit is never allocated to a Ticket.
 - `GET /api/copy-pool/dashboard` additively projects v6 execution-quality and product-fallback fields: per-sleeve pool
   tier, factor readiness/base score/reason codes, delay compatibility fields, drawdown
   coverage, holding/overnight/weekend quality, and mapped dynamic sleeve/scheduler state. Fields are

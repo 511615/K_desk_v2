@@ -38,6 +38,8 @@ vi.mock('@tanstack/vue-query', () => ({
           { clientAlias: 'C002', product: 'EURUSD', tier: 'active' },
         ],
         clientRisks: [{ clientAlias: 'C002', status: 'risk_rejected', reductionReason: '当前综合收益为负' }],
+        copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],
+        ticketMappings: [{ clientAlias: 'C001', accountLogin: '3054777', product: 'XAUUSD', sourcePositionId: 135826468, demoTicket: 90001, lots: 0.01, side: 1, openTime: '2026-07-31T15:12:08+08:00' }],
       },
     },
     isLoading: { value: false },
@@ -63,5 +65,18 @@ describe('CopyPoolPage tier tabs', () => {
     expect(wrapper.text()).toContain('5200101')
     expect(wrapper.text()).toContain('当前综合收益为负')
     expect(wrapper.text()).not.toContain('C002')
+  })
+
+  it('shows current-copy ownership, quantities, and unavailable P/L explicitly', () => {
+    const wrapper = mount(CopyPoolPage)
+
+    const table = wrapper.get('.current-copy-table')
+    expect(table.text()).toContain('单主账号')
+    expect(table.text()).toContain('3054777')
+    expect(table.text()).toContain('135826468')
+    expect(table.text()).toContain('90001')
+    expect(table.text()).toContain('单主浮盈亏')
+    expect(table.text()).not.toContain('C001')
+    expect(table.get('a').attributes('href')).toBe('/copy-pool/accounts/C001')
   })
 })

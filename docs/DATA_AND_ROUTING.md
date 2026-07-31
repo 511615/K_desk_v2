@@ -58,9 +58,11 @@ from a prior pool build cannot overwrite the current pool projection. The dashbo
 sleeve dynamic weight by the client-specific Demo loss-budget factor before clamping it through the
 sleeve base weight.
 
-For all four physical MT4 sources, raw `OPEN_TIME` is UTC platform time. The MySQL session renders
-Unix `TIMESTAMP` values at `+08:00`, but that session offset must not be attached to `OPEN_TIME`.
-Current-position routing attaches UTC directly before comparing source age with the signal budget.
+Raw MT4 `OPEN_TIME` is physical-server time, not MySQL session time. AC `mt4_export_syc` uses UTC;
+DBG `crm_cn_mt4_live1` and `crm_cn_mt4_live2` use UTC+3. DBG `crm_vn_mt4_live3` remains in the full
+route set and provisionally uses UTC+3 until a fresh selected-position event reconfirms the clock.
+Current-position routing converts each source to aware UTC before comparing source age with the
+signal budget. The MySQL session's `+08:00` rendering must not be attached to the raw value.
 
 Open-position risk reads all market positions for each candidate, not only XAUUSD. MT5 uses current
 `mt5_positions` plus the current account `Profit`, `Equity` and `Margin`; MT4 uses `CMD IN (0,1)`
@@ -82,6 +84,18 @@ After exact Ticket recovery, a restored open source Position with no actual chil
 `restart_monitor_only` and made copy-ineligible. That persisted marker cannot be cleared by ordinary
 reconciliation; the mapping is deleted only when the source closes. A uniquely recovered actual
 Ticket is not marked and remains under exact ownership management.
+For a live eligible source Position without a Demo child, every reconciliation retry also compares
+the original source-open/first-signal time with the sleeve entry budget. Once expired, its target is
+zero for that Position with reason `signal_expired_no_copy`; this does not block reductions or closes
+of an existing owned child Ticket.
+Every Position also persists `risk_signal_at`, updated only by an opening, same-direction increase
+or reversal. The executor checks this timestamp again in the central risk-increase path and once
+more immediately before the broker open call. This applies to first entries, additions and the new
+leg of reversals; expiration may close the prior reversal leg but can never open the opposite leg.
+Missing or malformed risk-signal time fails closed for new risk.
+Current source-position snapshots retain open/current price and normalized floating P/L. Demo
+realized and floating P/L are persisted by the deterministic source-Position comment. These values
+feed the sanitized `currentCopies` projection; account-level P/L is not divided among Positions.
 MT5 execution increments and MT4 authoritative snapshots use the same position-difference contract,
 so one account cannot modify another account's children.
 MT5 polling applies every returned Deal to cursor, position and P&L state before invoking execution.

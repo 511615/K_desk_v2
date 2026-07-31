@@ -82,7 +82,16 @@ class IndependentCopyPosition:
     source_opened_at: str = ""
     first_signal_at: str = ""
     last_signal_at: str = ""
+    risk_signal_at: str = ""
     source_closed_at: str = ""
+    source_open_price: float | None = None
+    source_current_price: float | None = None
+    source_realized_pnl_usd: float | None = None
+    source_floating_pnl_usd: float | None = None
+    source_total_pnl_usd: float | None = None
+    demo_realized_pnl_usd: float | None = None
+    demo_floating_pnl_usd: float | None = None
+    demo_total_pnl_usd: float | None = None
     last_action: str = "monitor"
     children: list[DemoChildTicket] = field(default_factory=list)
 
@@ -254,6 +263,7 @@ class IndependentCopyBook:
                 status="pending_risk",
                 first_signal_at=stamp,
                 last_signal_at=stamp,
+                risk_signal_at=stamp,
                 last_action="open",
             )
             self.positions[key] = created
@@ -266,10 +276,13 @@ class IndependentCopyBook:
             return "close", existing
         if existing.source_lots * after_lots < 0:
             existing.source_lots = after_lots
+            existing.risk_signal_at = stamp
             existing.last_action = "reverse"
             return "reverse", existing
         action = "increase" if abs(after_lots) > abs(existing.source_lots) else "reduce"
         existing.source_lots = after_lots
+        if action == "increase":
+            existing.risk_signal_at = stamp
         existing.last_action = action
         return action, existing
 
@@ -364,7 +377,45 @@ class IndependentCopyBook:
                 source_opened_at=str(raw.get("source_opened_at") or ""),
                 first_signal_at=str(raw.get("first_signal_at") or ""),
                 last_signal_at=str(raw.get("last_signal_at") or ""),
+                risk_signal_at=str(
+                    raw.get("risk_signal_at")
+                    or raw.get("source_opened_at")
+                    or raw.get("first_signal_at")
+                    or ""
+                ),
                 source_closed_at=str(raw.get("source_closed_at") or ""),
+                source_open_price=(
+                    float(raw["source_open_price"])
+                    if raw.get("source_open_price") is not None else None
+                ),
+                source_current_price=(
+                    float(raw["source_current_price"])
+                    if raw.get("source_current_price") is not None else None
+                ),
+                source_realized_pnl_usd=(
+                    float(raw["source_realized_pnl_usd"])
+                    if raw.get("source_realized_pnl_usd") is not None else None
+                ),
+                source_floating_pnl_usd=(
+                    float(raw["source_floating_pnl_usd"])
+                    if raw.get("source_floating_pnl_usd") is not None else None
+                ),
+                source_total_pnl_usd=(
+                    float(raw["source_total_pnl_usd"])
+                    if raw.get("source_total_pnl_usd") is not None else None
+                ),
+                demo_realized_pnl_usd=(
+                    float(raw["demo_realized_pnl_usd"])
+                    if raw.get("demo_realized_pnl_usd") is not None else None
+                ),
+                demo_floating_pnl_usd=(
+                    float(raw["demo_floating_pnl_usd"])
+                    if raw.get("demo_floating_pnl_usd") is not None else None
+                ),
+                demo_total_pnl_usd=(
+                    float(raw["demo_total_pnl_usd"])
+                    if raw.get("demo_total_pnl_usd") is not None else None
+                ),
                 last_action=str(raw.get("last_action") or "monitor"),
                 children=children,
             )

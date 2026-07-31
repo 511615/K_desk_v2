@@ -5,10 +5,10 @@ module: automation
 status: active
 apis: ["GET /copy-pool", "GET /api/copy-pool/dashboard", "GET /copy-pool/accounts/{alias}"]
 code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool_monitor.py", "src/kdesk/infrastructure/copy_pool_monitor.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts", "frontend/src/pages/WorkbenchPage.vue", "frontend/src/pages/CopyPoolPage.vue", "frontend/src/copyPool.ts", "services/copy_pool_runtime/run_copy_demo_live.ps1", "services/copy_pool_runtime/copy_delay_replay_domain.py", "services/copy_pool_runtime/copy_dynamic_pool_domain.py", "services/copy_pool_runtime/copy_independent_execution.py", "services/copy_pool_runtime/copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/copy_pool_factor_domain.py", "services/copy_pool_runtime/copy_pool_factor_service.py", "services/copy_pool_runtime/copy_pool_history_adapter.py", "services/copy_pool_runtime/copy_pool_history_repository.py", "services/copy_pool_runtime/copy_pool_multisource.py", "services/copy_pool_runtime/copy_product_catalog.py", "services/copy_pool_runtime/copy_quote_replay_cache.py", "services/copy_pool_runtime/copy_trading_demo.py", "services/copy_pool_runtime/copy_trading_live_core.py", "services/copy_pool_runtime/copy_trading_live_demo.py", "services/copy_pool_runtime/copy_trading_multi_demo.py", "services/copy_pool_runtime/mt5_quote_partition_provider.py"]
-tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
+tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-30
+last_verified_date: 2026-07-31
 ---
 
 # Dynamic copy-pool monitor
@@ -68,6 +68,10 @@ position-path or intraday-equity evidence remains monitor-only rather than clean
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
 entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
 budget is capped at five seconds and `holdP25 / 3`, whichever is lower.
+Each source Position persists the latest opening, increase or reversal timestamp as its risk-signal
+clock. Initial entries, additions and reversal open legs all recheck this clock in the central
+risk-increase path and immediately before the broker request. Reductions and closes do not refresh
+the clock. An expired reversal may close the prior owned Ticket but cannot open the opposite leg.
 
 The producer processes source events every 500 ms, refreshes client and sleeve risk every 10
 seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded one/four-hour
@@ -130,6 +134,11 @@ client loss-budget use, source Position to Demo Ticket mappings,
 per-product quotes, gross long/short, net and locked exposure, equity history, database latency,
 strategy P/L, recent source/risk/order events and the current execution gates. Search
 and filters are presentation-only and never affect the copier.
+The `当前跟单` table contains only source Positions with actual owned Demo child Tickets. It shows
+the real source Login and detail link, server/platform, product/direction, source Position and lots,
+Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source
+floating P/L and Demo comment-attributed realized plus floating P/L. Legacy snapshots without exact
+per-position evidence display an unavailable state rather than allocating account totals.
 
 The `客户池层级与影子准入` panel is an interactive tabbed read view. Its seven tabs are `活动跟单池`,
 `入场观察`, `监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; each shows the current
@@ -161,7 +170,7 @@ the dedicated page.
 
 `GET /api/copy-pool/dashboard` accepts bounded `timeline_limit`, `event_limit` and `order_limit`
 query parameters and returns camelCase status, account-product pool, timeline, event and order rows,
-plus additive `clientRisks`, `copyPositions`, `ticketMappings` and `exposures`. It is additive
+plus additive `clientRisks`, `copyPositions`, `ticketMappings`, `currentCopies` and `exposures`. It is additive
 and read-only. Pool rows intentionally expose `accountLogin`, `accountPlatform` and `accountServer`
 for operators on the localhost risk workbench; no password, credential, contact field or complete
 private route object is returned. The response additively exposes `sourceCoverage`, route/source
@@ -217,13 +226,16 @@ run before new risk, one Position failure does not discard its siblings, and inc
 retried during the same process. On restart only pending reductions/closes resume; pending opens are
 cancelled to monitor-only and a pending reversal resumes only its old-direction close, preserving the
 no-chase rule. Invalid pending state fails startup instead of being silently discarded. An expired residual source position is reported as
-`signal_expired_no_copy`, not as source-flat. Existing copied exposure still follows reductions and closes. MT4 remains
+`signal_expired_no_copy`, not as source-flat. Reconciliation rechecks the entry deadline whenever an
+eligible source Position has no Demo child, so a prior rejection cannot be chased after its signal
+budget expires. Existing copied exposure still follows reductions and closes. MT4 remains
 snapshot-authoritative. The producer persists effective weights by composite
 account key; the dashboard prefers that current mapping over historical event rows and clamps any
 legacy fallback to zero through the accepted pool's base weight.
-Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
-render at `+08:00`; the producer attaches UTC before calculating signal age. This prevents a timely
-snapshot position from acquiring an artificial eight-hour delay.
+Replicated MT4 `OPEN_TIME` is normalized by physical source before signal-age calculation: AC
+`mt4_export_syc` uses UTC, while DBG CN Live1/Live2 use MT4 server time UTC+3. DBG VN Live3 remains
+fully routed and provisionally follows UTC+3 until a fresh runtime event reconfirms it. This prevents
+a timely snapshot position from appearing hours early or late.
 Daily holding-period reconstruction keeps the complete 20-day evidence requirement while avoiding
 one unbounded MT5 aggregate. MT5 reads start as five-day Login-batch windows; a slow window splits
 Logins first and then time down to six hours. Position openings and closes are merged across window
