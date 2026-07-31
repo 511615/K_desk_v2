@@ -220,6 +220,10 @@ legacy fallback to zero through the accepted pool's base weight.
 Replicated MT4 `OPEN_TIME` values are raw UTC platform time even though database session timestamps
 render at `+08:00`; the producer attaches UTC before calculating signal age. This prevents a timely
 snapshot position from acquiring an artificial eight-hour delay.
+Daily holding-period reconstruction keeps the complete 20-day evidence requirement but adapts to
+slow read-only sources. A timed-out Login batch is recursively split; a timed-out singleton uses
+bounded five-day windows with further six-hour subdivision. MT5 Position openings and closes are
+merged across window boundaries before percentiles are calculated, and no sample is silently skipped.
 The producer also persists normalized per-account open-risk state. The dashboard prefers the
 runtime projection over the build-time snapshot, while missing legacy fields degrade to the build
 values without inventing a clean current state. Missing hourly discovery fields remain unknown and
@@ -303,6 +307,8 @@ continuation of independent sibling transitions after one execution failure.
 Restart ownership regressions require an open persisted source Position without a real Demo child
 to remain monitor-only even in live reconciliation, retain a uniquely recoverable real Ticket, and
 remove the monitor-only mapping after its source close without sending a Demo order.
+Holding-statistics regressions force the 20-day MT5 aggregate to time out, reconstruct a Position
+whose opening and close fall in adjacent windows, and require its exact duration and sample count.
 
 ## Compatibility and deprecation
 

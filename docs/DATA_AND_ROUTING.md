@@ -94,6 +94,10 @@ private state. Successful transitions are removed individually. Within one proce
 remain pending and coalesce with later source events. On restart, only reductions/closes remain
 executable; opens are cancelled and reversals retain only the old-direction close. Invalid journal
 records fail startup so a possible risk-release instruction is never silently lost.
+The daily 20-day holding-statistics read is also complete-data only. Query timeouts recursively split
+Login batches. A singleton timeout switches to five-day windows, recursively down to six hours;
+MT5 opening/closing timestamps are merged by Login/Position/product before holding duration is
+derived. Exhausting the minimum window fails the build rather than omitting evidence.
 Closed mappings remain through the current trading day so comment-attributed realized Demo P/L stays
 assigned to its client loss budget. They are pruned only after the trading day changes and only when
 no Demo child Ticket or source exposure remains. Emergency flatten acceptance is based on the actual

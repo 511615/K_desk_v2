@@ -107,6 +107,48 @@ class MultiSourceTests(unittest.TestCase):
         row.update(overrides)
         return row
 
+    def test_holding_statistics_time_shards_single_mt5_account_after_timeout(self) -> None:
+        as_of = datetime(2026, 7, 31, 5, 0, tzinfo=timezone.utc)
+        start = as_of.astimezone(timezone(timedelta(hours=8))).replace(
+            tzinfo=None
+        ) - timedelta(days=20)
+        opened_at = start + timedelta(days=4, hours=23)
+        closed_at = start + timedelta(days=5, hours=1)
+        calls: list[tuple[object, ...]] = []
+
+        def query(sql: str, params: tuple[object, ...] = ()):
+            calls.append(params)
+            if " AS opened_at" not in sql:
+                raise TimeoutError("20-day aggregation timed out")
+            login, window_start, window_end = params
+            row = {
+                "Login": login,
+                "PositionID": 77,
+                "Symbol": "XAUUSD",
+                "opened_at": opened_at if window_start <= opened_at < window_end else None,
+                "closed_at": closed_at if window_start <= closed_at < window_end else None,
+            }
+            return [row] if row["opened_at"] is not None or row["closed_at"] is not None else []
+
+        source = SimpleNamespace(
+            platform="MT5",
+            schema="mt5_test",
+            query=query,
+        )
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"test-source": source}
+        frame = pd.DataFrame([{
+            "physical_key": "test-source",
+            "Login": 123,
+            "account_key": "test-route:123",
+        }])
+
+        result = database.holding_statistics(frame, as_of)
+
+        self.assertEqual(result["test-route:123|XAUUSD"]["holding_samples"], 1.0)
+        self.assertEqual(result["test-route:123|XAUUSD"]["median_hold_seconds"], 7200.0)
+        self.assertEqual(len(calls), 5)
+
     def test_multisource_schema_is_used_for_restart_validation(self) -> None:
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)

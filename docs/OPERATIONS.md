@@ -86,6 +86,10 @@ Pending terminal transitions are private state. A broker/runtime failure leaves 
 pending while independent sibling transitions continue and later events coalesce. Restart replays
 only reductions/closes; unfilled opens become monitor-only and a reversal keeps only its closing leg.
 Malformed pending state hard-stops startup. Do not delete private state to bypass a failure.
+If a daily build hits a 30-second holding-history query timeout, the Producer reconnects and
+subdivides the Login batch, then the time range for a remaining singleton. The build may take longer
+but must produce complete holding evidence or fail explicitly; do not reuse yesterday's pool or
+disable the holding gate to bypass the timeout.
 
 `-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
 effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;
