@@ -29,7 +29,10 @@ the status `dynamic_sleeves` list only after matching each private sleeve key to
 `client_routes_private.json` alias plus public product row, then exposes the alias/product state and
 the fixed scheduler timestamps. Unmapped state, raw private keys and free-form private gate text are
 dropped.
-Hourly score, one/four-hour P/L, current comprehensive-profit eligibility and discovery coverage are
+The public pool also carries the v7 factor-model identifier, normalized five/20-day copied P/L,
+estimated five/20-day copy cost, cost-adjusted P/L, cost coverage and the three percentile factor
+scores. These fields are derived from the complete private universe and expose no credentials,
+contacts or private route structures. Hourly score, one/four-hour P/L, current comprehensive-profit eligibility and discovery coverage are
 also public snapshot fields. K_desk does not query them from MySQL. The producer obtains them from
 the accepted `pool_universe_private.csv` plus bounded current-session reads; the daily historical
 factor evidence remains immutable until the next complete build.

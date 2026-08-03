@@ -43,9 +43,10 @@ from copy_trading_multi_demo import (
     MULTISOURCE_ORDER_PUBLIC_COLUMNS,
     MultiSourceLiveService,
     has_complete_hourly_evidence,
+    pool_build_day_key,
 )
 from copy_dynamic_pool_domain import SchedulerState
-from copy_independent_execution import IndependentCopyBook
+from copy_independent_execution import DemoChildTicket, IndependentCopyBook
 
 
 def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -> RoutedClient:
@@ -73,6 +74,260 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_same_day_cache_upgrade_load_and_bootstrap_keep_weights_and_ticket_ownership(self) -> None:
+        routed = client(0, 1, "C001")
+        source_keys = set(physical_routes())
+        source_rows = [
+            {"physical_key": key, "state": "ok"}
+            for key in sorted(source_keys)
+        ]
+        coverage = {
+            "logical_routes_expected": len(ROUTES),
+            "logical_routes_scanned": len(ROUTES),
+            "physical_sources_expected": len(source_keys),
+            "physical_sources_scanned": len(source_keys),
+            "route_account_counts": {route.key: 1 for route in ROUTES},
+            "sources": source_rows,
+        }
+        universe = pd.DataFrame([{
+            "account_key": routed.account_key,
+            "Login": routed.login,
+            "route_key": routed.route_key,
+            "physical_key": routed.physical_key,
+            "sleeve_key": f"{routed.account_key}|XAUUSD",
+            "product": "XAUUSD",
+            "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+            "net_5d_usd": 20.0, "net_20d_usd": 300.0,
+            "factor_ready": True, "factor_gate_reasons": "", "is_abook": False,
+            "dynamic_score": 0.99, "open_risk_multiplier": 1.0, "hold_multiplier": 1.0,
+            "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
+            "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
+            "quality_stress_net_15x_20d_usd": 10.0,
+        }])
+
+        restored_book = IndependentCopyBook()
+        _action, restored_position = restored_book.observe_source_position(
+            routed.account_key, routed.spec.alias, "XAUUSD", 901, 0.0, 1.0, utc_now()
+        )
+        assert restored_position is not None
+        restored_position.copy_eligible = True
+        restored_position.comment = "COPYPOOL_DEMO_V1"
+        restored_position.children.append(
+            DemoChildTicket(777001, 0.01, 1, utc_now().isoformat(), 100.0)
+        )
+
+        class FakeDatabase:
+            sources = {key: object() for key in source_keys}
+
+            @staticmethod
+            def selected_clients(_pool: pd.DataFrame) -> dict[str, RoutedClient]:
+                return {routed.account_key: routed}
+
+            @staticmethod
+            def set_clients(_clients: object) -> None:
+                return None
+
+            @staticmethod
+            def highwaters() -> dict[str, SourceCursor]:
+                return {routed.physical_key: SourceCursor(200, 20)}
+
+            @staticmethod
+            def all_positions() -> list[dict[str, object]]:
+                return [{
+                    "account_key": routed.account_key,
+                    "position_id": 901,
+                    "symbol": "XAUUSD",
+                    "lots": 1.0,
+                }]
+
+            @staticmethod
+            def intraday_net(_start: object) -> dict[str, float]:
+                return {routed.account_key: 0.0}
+
+            @staticmethod
+            def selected_open_risk() -> dict[str, dict[str, float]]:
+                return {routed.account_key: {"floating_pnl_usd": 0.0, "open_position_count": 1.0}}
+
+        class FakeMt:
+            @staticmethod
+            def account() -> object:
+                return SimpleNamespace(balance=10_000.0, equity=10_000.0, server="ACCMGlobal-Demo")
+
+            @staticmethod
+            def marked_pnl(_start: object) -> float:
+                return 0.0
+
+            @staticmethod
+            def all_strategy_positions() -> tuple[object, ...]:
+                return (SimpleNamespace(
+                    ticket=777001, volume=0.01, price_open=100.0,
+                    comment="COPYPOOL_DEMO_V1", symbol="XAUUSD",
+                ),)
+
+            @staticmethod
+            def signed_positions() -> dict[str, float]:
+                return {}
+
+            @staticmethod
+            def symbol(_product: str) -> object:
+                return SimpleNamespace(volume_min=0.01, volume_step=0.01)
+
+            @staticmethod
+            def margin_per_lot(_side: float, _product: str) -> float:
+                return 1.0
+
+            @staticmethod
+            def stress_loss_per_lot(_product: str, _move: float) -> float:
+                return 1.0
+
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "pool_snapshot_private.csv").write_text("legacy\n", encoding="utf-8")
+            universe.to_csv(directory / "pool_universe_private.csv", index=False)
+            (directory / "source_coverage.json").write_text(json.dumps(coverage), encoding="utf-8")
+            (directory / "pool_build_meta_private.json").write_text(json.dumps({
+                "producer": "copy-pool-multisource-v6-weight-fallback",
+                "factor_schema": "execution-quality-v1",
+                "pool_build_day": pool_build_day_key(utc_now()),
+                "logical_routes": len(ROUTES),
+                "physical_sources": len(source_keys),
+                "build_as_of": utc_now().isoformat(),
+            }), encoding="utf-8")
+            state_path = directory / "runtime_state_private.json"
+            state_path.write_text(json.dumps({
+                "risk_profile": "Capital10k",
+                "trading_day": trading_day_key(utc_now()),
+                "independent_copy": restored_book.to_private(),
+            }), encoding="utf-8")
+
+            service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+            service.pool_snapshot_path = directory / "pool_snapshot_private.csv"
+            service.pool_path = directory / "pool_public.csv"
+            service.private_routes_path = directory / "client_routes_private.json"
+            service.universe_path = directory / "pool_universe_private.csv"
+            service.coverage_path = directory / "source_coverage.json"
+            service.pool_build_meta_path = directory / "pool_build_meta_private.json"
+            service.private_state_path = state_path
+            service.db = FakeDatabase()  # type: ignore[assignment]
+            service.current_targets = {}
+            service.log = lambda *_args: None
+            service.load_pool()
+
+            self.assertFalse(service.pool_was_rebuilt)
+            self.assertTrue(service.pool_weights_rebuilt)
+
+            service.mt = FakeMt()
+            service.profile = RISK_PROFILES["Capital10k"]
+            service.args = SimpleNamespace(
+                mode="StagedLive", allow_demo_min_lot_override=False,
+                demo_fast_activation=False,
+            )
+            service.target_for_raw = lambda *_args: 0.0
+            service.bootstrap()
+
+            restored = service.copy_book.positions[restored_position.source_key]
+            self.assertEqual([child.ticket for child in restored.children], [777001])
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertIn(
+                str(777001),
+                json.dumps(persisted["independent_copy"], sort_keys=True),
+            )
+
+    def test_mt5_trade_feature_close_and_lot_totals_use_all_close_entries(self) -> None:
+        sql_calls: list[str] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "readonly"
+
+            @staticmethod
+            def query(sql: str, _params: object = ()) -> list[dict[str, object]]:
+                sql_calls.append(sql)
+                return [{
+                    "Login": 1, "Symbol": "XAUUSD", "closes": 2,
+                    "net": 10.0, "gross_profit": 12.0, "gross_loss": 2.0,
+                    "lots": 0.02, "source_contract_size": 100.0,
+                    "spread_cost": 1.0,
+                }]
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        end = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        rows = database._trade_feature_rows(
+            FakeSource(), end - timedelta(days=60), end - timedelta(days=20),
+            end - timedelta(days=5), end,
+        )
+
+        self.assertTrue(rows)
+        self.assertTrue(sql_calls)
+        sql = sql_calls[0]
+        self.assertGreaterEqual(sql.count("Entry IN (1,2,3)"), 2)
+        self.assertIn(
+            "SUM(CASE WHEN Entry IN (1,2,3) THEN VolumeExt / 100000000.0 ELSE 0 END) AS lots",
+            sql,
+        )
+        self.assertIn(
+            "SUM(CASE WHEN Entry IN (1,2,3) THEN 1 ELSE 0 END) AS closes",
+            sql,
+        )
+
+    def test_same_day_cost_factor_upgrade_rebuilds_weights_and_rejects_cost_failures(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        universe = pd.DataFrame([
+            {
+                "account_key": "route:1", "Login": 1, "sleeve_key": "route:1|XAUUSD",
+                "route_key": "route", "physical_key": "source-a", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 20.0, "net_20d_usd": 300.0,
+                "factor_ready": True, "factor_gate_reasons": "", "is_abook": False,
+                "dynamic_score": 0.99, "open_risk_multiplier": 1.0, "hold_multiplier": 1.0,
+                "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
+                "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
+                "quality_stress_net_15x_20d_usd": 10.0,
+            },
+            {
+                "account_key": "route:2", "Login": 2, "sleeve_key": "route:2|XAUUSD",
+                "route_key": "route", "physical_key": "source-a", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 50.0, "net_20d_usd": 200.0,
+                "factor_ready": True, "factor_gate_reasons": "", "is_abook": False,
+                "dynamic_score": 0.01, "open_risk_multiplier": 1.0, "hold_multiplier": 1.0,
+                "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
+                "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
+                "quality_stress_net_15x_20d_usd": 10.0,
+            },
+            {
+                "account_key": "route:3", "Login": 3, "sleeve_key": "route:3|XAUUSD",
+                "route_key": "route", "physical_key": "source-b", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 1.0, "net_20d_usd": 20.0,
+                "factor_ready": True, "factor_gate_reasons": "", "is_abook": False,
+                "dynamic_score": 1.0, "open_risk_multiplier": 1.0, "hold_multiplier": 1.0,
+                "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
+                "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
+                "quality_stress_net_15x_20d_usd": 10.0,
+            },
+        ])
+        coverage = {
+            "sources": [
+                {"physical_key": "source-a", "state": "ok"},
+                {"physical_key": "source-b", "state": "ok"},
+            ],
+        }
+
+        pool, upgraded, upgraded_coverage = service._upgrade_same_day_cost_pool(universe, coverage)
+
+        failed = upgraded.set_index("account_key").loc["route:3"]
+        self.assertFalse(bool(failed["factor_ready"]))
+        self.assertIn("cost_adjusted_net_5d_not_positive", failed["factor_gate_reasons"])
+        self.assertNotIn("route:3", set(pool["account_key"]))
+        self.assertTrue(bool(upgraded_coverage["same_day_cache_upgraded"]))
+        self.assertEqual(upgraded_coverage["factor_model"], "cost_profit_recent_coverage_v1")
+        self.assertEqual(upgraded_coverage["active_accounts"], 2)
+        self.assertEqual(
+            {row["physical_key"]: row["selected_clients"] for row in upgraded_coverage["sources"]},
+            {"source-a": 2, "source-b": 0},
+        )
+
     @staticmethod
     def _csv_service(directory: Path) -> MultiSourceLiveService:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)

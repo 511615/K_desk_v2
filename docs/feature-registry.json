@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "77defc2b5490",
+  "registryVersion": "d2bfb2727065",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -235,7 +235,7 @@
         "ACC-DETAIL-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-31",
+      "last_verified_date": "2026-08-03",
       "document": "docs/features/automation/dynamic-copy-pool-monitor.md"
     },
     {

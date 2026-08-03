@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-31
+last_verified_date: 2026-08-03
 ---
 
 # Dynamic copy-pool monitor
@@ -61,9 +61,17 @@ Twelve-hour positions cannot add risk and 24-hour positions close and pause that
 
 Historical Tick delay replay is deferred from V0.1 because its cross-product validation cost is not
 yet accepted. It does not participate in score or hard eligibility, and missing Tick partitions do
-not reject a sleeve. The remaining six weights are normalized to 25/18.75/18.75/12.5/12.5/12.5
-for five-day and 20-day risk-adjusted return, spread stress, PF structure, return/MDD and holding
-quality. Drawdown still uses cashflow-adjusted equity including synchronized floating P/L; missing
+not reject a sleeve. The primary cost_profit_recent_coverage_v1 score is 50% cost-adjusted profit
+per copied trade, 30% recent five-day cost-adjusted profit per copied trade and 20% copy-cost
+coverage. Source P/L is first normalized to USD, then scaled from the 20-day average closed
+execution size to the selected Demo product's actual minimum lot. Estimated cost is the product
+default round-trip spread at that minimum lot plus a 25% execution reserve; rebates never enter
+either P/L or cost. MT5 close counts and lots share the same exit/reversal Deal population. Five-day
+and 20-day cost-adjusted P/L must both be positive and 20-day cost coverage must be at least one;
+only rows passing those and all prior hard gates participate in percentile ranking. Missing or
+non-finite cost evidence is a hard rejection. Drawdown,
+holding, negative-equity, stop-out and evidence-quality checks remain non-compensable hard gates,
+not secondary score weights. Drawdown still uses cashflow-adjusted equity including synchronized floating P/L; missing
 position-path or intraday-equity evidence remains monitor-only rather than clean. A/TA status adds
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
 entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
@@ -214,8 +222,16 @@ composite account key, with legacy Login keys retained only as a compatibility f
 private file is returned wholesale or logged.
 
 The accepted same-day pool cache is valid only when its metadata and coverage file contain the
-exact configured eleven-route and nine-source sets and every source completed successfully. MT5
-polling intentionally reads non-trading ledger actions so each physical cursor can advance past
+exact configured eleven-route and nine-source sets and every source completed successfully.
+The v7 producer may migrate a same-trading-day v6 cache to the cost-profit model without repeating
+the 60-day database build, but only when the private universe is present and metadata plus coverage
+prove the exact complete eleven-route/nine-source set. Migration preserves all existing hard-gate
+failures, applies the new five-day/20-day after-cost and coverage gates across the full cached
+universe, regenerates selection and weights, and stamps v7 metadata. The next 05:15 schedule still
+performs a complete read-only database rebuild under the v7 model. A migration rebases sleeve
+weights but remains a same-day restart: persisted source-position to Demo-Ticket ownership is
+restored and validated rather than cleared.
+MT5 polling intentionally reads non-trading ledger actions so each physical cursor can advance past
 them; those actions never change virtual positions, intraday trading P/L, dynamic weights or source
 signals. All MT5 Deals returned in one polling cycle are first applied to the source ledger and then
 coalesced by account, product and Position to one terminal transition. An opening and complete close

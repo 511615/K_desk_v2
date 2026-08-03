@@ -118,9 +118,16 @@
   increase a dynamic weight. Current floating loss at or above 10% of equity or margin usage at or
   above 50% of equity is a build hard gate. Below those extremes, negative realized/floating
   components, margin use and gross-versus-net hedge evidence reduce the deployable score.
-- V0.1 defers historical Tick delay sensitivity from both scoring and hard eligibility. The six
-  active base factors normalize to 25/18.75/18.75/12.5/12.5/12.5 for five-day and 20-day
-  risk-adjusted return, spread stress, PF structure, return/MDD and holding quality. Excessive
+- V0.1 defers historical Tick delay sensitivity from both scoring and hard eligibility. The primary
+  factor score is 50% cost-adjusted profit per copied trade, 30% recent five-day cost-adjusted
+  profit per copied trade and 20% copy-cost coverage, using cross-sectional percentile ranks.
+  Source money is converted to USD first, then source P/L is scaled from the 20-day average closed
+  execution size to that Demo product's actual minimum lot. Estimated copy cost is the product
+  default round-trip spread at the same minimum lot plus a 25% execution reserve, with rebates
+  excluded. MT5 close counts and lots both use exit/reversal Deals, so partial closes cannot divide
+  unrelated opening volume. Both five-day and 20-day cost-adjusted P/L must be positive and 20-day
+  cost coverage must be at least one before percentile ranks are calculated; failed rows cannot
+  move qualified-account ranks. Missing or non-finite cost evidence fails closed. Excessive
   cashflow-adjusted equity MDD, incomplete intraday floating-equity coverage, extreme short holding
   and severe weekend holding remain non-compensable hard failures. Real-time quote age, source
   staleness, signal latency and expiry remain active; new-risk signal age is capped by five seconds

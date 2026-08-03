@@ -114,6 +114,19 @@ def make_snapshot(root: Path) -> Path:
         "pool_tier": "active",
         "factor_ready": True,
         "factor_base_score": 0.82,
+        "factor_model": "cost_profit_recent_coverage_v1",
+        "factor_rank_cost_profit": 0.81,
+        "factor_rank_recent_strength": 0.62,
+        "factor_rank_cost_coverage": 0.73,
+        "factor_copy_net_5d_usd": 20.0,
+        "factor_copy_net_20d_usd": 100.0,
+        "factor_estimated_copy_cost_5d_usd": 3.0,
+        "factor_estimated_copy_cost_20d_usd": 9.0,
+        "factor_cost_adjusted_net_5d_usd": 17.0,
+        "factor_cost_adjusted_net_20d_usd": 91.0,
+        "factor_cost_profit_per_trade": 9.1,
+        "factor_recent_profit_per_trade": 8.5,
+        "factor_cost_coverage": 11.1111,
         "historical_delay_enabled": False,
         "delay_factor_status": "deferred_v0_1",
         "hourly_score": 0.88,
@@ -346,6 +359,21 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert row["poolTier"] == "active"
     assert row["factorReady"] is True
     assert row["factorBaseScore"] == 0.82
+    assert row["factorModel"] == "cost_profit_recent_coverage_v1"
+    assert row["factorScores"]["costProfit"] == 0.81
+    assert row["factorScores"]["recentStrength"] == 0.62
+    assert row["factorScores"]["costCoverage"] == 0.73
+    assert row["copyCostEvidence"] == {
+        "copyNet5dUsd": 20.0,
+        "copyNet20dUsd": 100.0,
+        "estimatedCost5dUsd": 3.0,
+        "estimatedCost20dUsd": 9.0,
+        "afterCost5dUsd": 17.0,
+        "afterCost20dUsd": 91.0,
+        "coverage": 11.1111,
+        "costProfitPerTrade": 9.1,
+        "recentProfitPerTrade": 8.5,
+    }
     assert row["historicalDelayFactorEnabled"] is False
     assert row["delayFactorStatus"] == "deferred_v0_1"
     assert row["hourlyScore"] == 0.88

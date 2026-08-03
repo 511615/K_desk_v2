@@ -970,7 +970,7 @@ class MultiSourceDatabase:
  SUM(Profit + Commission + Storage + Fee) AS net,
  SUM(CASE WHEN Profit + Commission + Storage + Fee > 0 THEN Profit + Commission + Storage + Fee ELSE 0 END) AS gross_profit,
  -SUM(CASE WHEN Profit + Commission + Storage + Fee < 0 THEN Profit + Commission + Storage + Fee ELSE 0 END) AS gross_loss,
-  SUM(CASE WHEN Entry = 0 THEN VolumeExt / 100000000.0 ELSE 0 END) AS lots,
+  SUM(CASE WHEN Entry IN (1,2,3) THEN VolumeExt / 100000000.0 ELSE 0 END) AS lots,
   MAX(ContractSize) AS source_contract_size,
  SUM(CASE WHEN MarketAsk > MarketBid AND ContractSize > 0
           THEN (MarketAsk - MarketBid) * ContractSize * (VolumeExt / 100000000.0) * GREATEST(RateProfit, 1) / 2

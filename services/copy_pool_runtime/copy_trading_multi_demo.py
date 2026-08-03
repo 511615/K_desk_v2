@@ -42,6 +42,8 @@ from copy_dynamic_pool_domain import (
     update_rank_state,
 )
 from copy_pool_multisource import (
+    MAX_CLIENT_WEIGHT,
+    MAX_SLEEVE_WEIGHT,
     ROUTES,
     TOTAL_CLIENT_BUDGET,
     MultiSourceDatabase,
@@ -50,10 +52,16 @@ from copy_pool_multisource import (
     RoutedEvent,
     SourceCursor,
     require_nonempty_monitor_population,
+    _normalize_capped,
+    normalize_product_budget_weights,
     sleeve_key,
     validate_complete_coverage,
 )
-from copy_pool_factor_service import CopyPoolFactorService
+from copy_pool_factor_service import (
+    COST_FACTOR_MODEL,
+    CopyPoolFactorService,
+    apply_cost_factor_model,
+)
 from copy_quote_replay_cache import QuoteReplayCache
 from mt5_quote_partition_provider import Mt5QuotePartitionProvider, TerminalBoundMt5Api
 from copy_product_catalog import (
@@ -100,6 +108,18 @@ CLIENT_RISK_REFRESH_SECONDS = 10.0
 REBUILD_RETRY_SECONDS = 60.0
 CLIENT_PAUSE_SECONDS = 2 * 60 * 60
 CLIENT_RECOVERY_SHADOW_SECONDS = 15 * 60
+
+
+def atomic_csv(path: Path, frame: pd.DataFrame, *, encoding: str) -> None:
+    """Publish a CSV snapshot as one filesystem replacement."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+    try:
+        frame.to_csv(temporary, index=False, encoding=encoding)
+        temporary.replace(path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 SOURCE_ADD_LIMIT_SECONDS = 12 * 60 * 60
 SOURCE_CLOSE_LIMIT_SECONDS = 24 * 60 * 60
 PORTFOLIO_MARGIN_SOFT_FRACTION = 0.15
@@ -192,26 +212,218 @@ class MultiSourceLiveService(LiveService):
         self.scheduler_state = SchedulerState()
         self.sleeve_rows: dict[str, dict[str, Any]] = {}
         self.pool_was_rebuilt = False
+        self.pool_weights_rebuilt = False
         self.pending_coalesced_transitions: list[dict[str, Any]] = []
+
+    def _upgrade_same_day_cost_pool(
+        self,
+        universe: pd.DataFrame,
+        coverage: Mapping[str, Any],
+    ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+        """Re-rank a verified same-day all-route cache without another 60d query."""
+        eligible = apply_cost_factor_model(universe)
+        eligible["is_abook"] = eligible["is_abook"].fillna(False).astype(bool)
+        eligible["legacy_dynamic_score"] = pd.to_numeric(
+            eligible.get("dynamic_score", 0.0), errors="coerce"
+        ).fillna(0.0)
+        eligible["dynamic_score"] = (
+            pd.to_numeric(eligible["factor_base_score"], errors="coerce").fillna(0.0)
+            + eligible["is_abook"].astype(float) * 0.02
+        ).clip(upper=1.0)
+        eligible["monitor_score"] = (
+            eligible["dynamic_score"]
+            * pd.to_numeric(eligible["open_risk_multiplier"], errors="coerce").fillna(0.0)
+        )
+        eligible["adjusted_score"] = (
+            eligible["monitor_score"]
+            * pd.to_numeric(eligible["hold_multiplier"], errors="coerce").fillna(0.0)
+        )
+        hold_p25 = pd.to_numeric(eligible["hold_p25_seconds"], errors="coerce")
+        hold_median = pd.to_numeric(eligible["median_hold_seconds"], errors="coerce")
+        hold_p90 = pd.to_numeric(eligible["hold_p90_seconds"], errors="coerce")
+        short_ratio = pd.to_numeric(eligible["short_trade_ratio"], errors="coerce")
+        stress_net = pd.to_numeric(
+            eligible["quality_stress_net_15x_20d_usd"], errors="coerce"
+        ).fillna(0.0)
+        eligible["activity_eligible"] = (
+            eligible["factor_ready"].fillna(False).astype(bool)
+            & (hold_p25 > 10.0)
+            & (hold_median >= 60.0)
+            & (hold_median <= 8 * 60 * 60)
+            & (hold_p90 <= 24 * 60 * 60)
+            & (short_ratio < 0.20)
+            & (stress_net > 0)
+            & (eligible["monitor_score"] > 0.55)
+        )
+        monitor_candidates = eligible.loc[
+            eligible["factor_ready"].fillna(False).astype(bool)
+            & (eligible["monitor_score"] > 0.55)
+        ].copy()
+        if monitor_candidates.empty:
+            raise RuntimeError(
+                "No monitor sleeves passed the cost-profit factor and existing hard gates."
+            )
+        ranked_universe = build_rank_universe(
+            RankingCandidate(
+                sleeve_key=str(row.sleeve_key),
+                account_key=str(row.account_key),
+                product=str(row.product),
+                score=float(row.monitor_score),
+                hard_eligible=True,
+                activity_eligible=bool(row.activity_eligible),
+                min_lot_feasible=True,
+            )
+            for row in monitor_candidates.itertuples()
+        )
+        selected_sleeves = {
+            item.sleeve_key
+            for item in ranked_universe.monitor_sleeves + ranked_universe.reserve_sleeves
+        }
+        pool = monitor_candidates.loc[
+            monitor_candidates["sleeve_key"].isin(selected_sleeves)
+        ].copy()
+        monitor_accounts = set(ranked_universe.monitor_accounts)
+        reserve_accounts = set(ranked_universe.reserve_accounts)
+        pool["pool_tier"] = pool["account_key"].map(
+            lambda key: "monitor" if str(key) in monitor_accounts else "reserve"
+        )
+        pool["daily_activity_eligible"] = pool["activity_eligible"].astype(bool)
+        pool["activity_eligible"] = (
+            pool["activity_eligible"]
+            & pool["account_key"].astype(str).isin(monitor_accounts)
+        )
+        require_nonempty_monitor_population(
+            len(monitor_accounts), context="after same-day cost-factor migration"
+        )
+        ranked_accounts = (
+            pool.groupby("account_key", as_index=False)["adjusted_score"]
+            .max()
+            .sort_values("adjusted_score", ascending=False)
+        )
+        aliases = {
+            str(row.account_key): f"C{index:03d}"
+            for index, row in enumerate(ranked_accounts.itertuples(), start=1)
+        }
+        pool["client_alias"] = pool["account_key"].map(aliases)
+        pool["weight_alpha"] = (
+            pool["adjusted_score"] - 0.55
+        ).clip(lower=0).pow(1.5)
+        pool["customer_base_weight"] = 0.0
+        for _product, group in pool.loc[pool["activity_eligible"]].groupby("product"):
+            normalized = _normalize_capped(
+                {index: float(group.at[index, "weight_alpha"]) for index in group.index},
+                cap=0.20,
+            )
+            for index, value in normalized.items():
+                pool.at[index, "customer_base_weight"] = value
+        product_alpha = {
+            str(product): float(group["weight_alpha"].sum())
+            * math.sqrt(min(len(group), 30) / 30.0)
+            for product, group in pool.loc[pool["activity_eligible"]].groupby("product")
+        }
+        product_weights, product_weight_cap_fallback = (
+            normalize_product_budget_weights(product_alpha, cap=0.40)
+        )
+        pool["product_budget_weight"] = pool["product"].map(product_weights).fillna(0.0)
+        pool["portfolio_base_weight"] = (
+            pool["product_budget_weight"] * pool["customer_base_weight"]
+        )
+        pool["live_base_weight"] = pool["portfolio_base_weight"]
+        reserve_activity = (
+            (pool["pool_tier"] == "reserve") & pool["daily_activity_eligible"]
+        )
+        reserve_counts = pool.loc[reserve_activity].groupby("account_key")[
+            "sleeve_key"
+        ].transform("count")
+        pool.loc[reserve_activity, "live_base_weight"] = reserve_counts.map(
+            lambda count: min(
+                MAX_SLEEVE_WEIGHT,
+                MAX_CLIENT_WEIGHT / max(float(count), 1.0),
+            )
+        )
+        pool["pool_status"] = [
+            "reserve" if tier == "reserve" else (
+                "active_candidate" if activity else "monitor_only"
+            )
+            for tier, activity in zip(pool["pool_tier"], pool["activity_eligible"])
+        ]
+        pool = pool.sort_values(
+            ["activity_eligible", "product_budget_weight", "adjusted_score"],
+            ascending=[False, False, False],
+        )
+        pool["rank"] = range(1, len(pool) + 1)
+
+        updated = dict(coverage)
+        updated.update({
+            "generated_at": beijing_now().isoformat(),
+            "factor_model": COST_FACTOR_MODEL,
+            "selected_sleeves": int(len(pool)),
+            "selected_accounts": int(pool["account_key"].nunique()),
+            "monitor_accounts": len(monitor_accounts),
+            "reserve_accounts": len(reserve_accounts),
+            "monitor_sleeves": len(ranked_universe.monitor_sleeves),
+            "reserve_sleeves": len(ranked_universe.reserve_sleeves),
+            "coverage_products": list(ranked_universe.coverage_products),
+            "product_cap_fallback_accounts": list(
+                ranked_universe.cap_fallback_accounts
+            ),
+            "selected_products": sorted(
+                str(value) for value in pool["product"].unique()
+            ),
+            "active_sleeves": int(pool["activity_eligible"].sum()),
+            "active_accounts": int(
+                pool.loc[pool["activity_eligible"], "account_key"].nunique()
+            ),
+            "active_products": sorted(
+                str(value)
+                for value in pool.loc[pool["activity_eligible"], "product"].unique()
+            ),
+            "product_weight_cap_fallback": product_weight_cap_fallback,
+            "same_day_cache_upgraded": True,
+        })
+        source_counts = (
+            pool.groupby("physical_key")["account_key"].nunique().to_dict()
+        )
+        updated["sources"] = [
+            {
+                **dict(row),
+                "selected_clients": int(source_counts.get(str(row.get("physical_key")), 0)),
+            }
+            for row in coverage.get("sources", [])
+            if isinstance(row, Mapping)
+        ]
+        return pool.reset_index(drop=True), eligible.reset_index(drop=True), updated
 
     def load_pool(self, force_rebuild: bool = False) -> None:
         pool: pd.DataFrame
         coverage: dict[str, Any]
         cache_valid = False
+        cache_upgraded = False
         accepted_build_day: str | None = None
+        meta: dict[str, Any] = {}
         if not force_rebuild and self.pool_snapshot_path.exists() and self.pool_build_meta_path.exists() and self.coverage_path.exists():
             try:
                 meta = json.loads(self.pool_build_meta_path.read_text(encoding="utf-8"))
                 coverage = json.loads(self.coverage_path.read_text(encoding="utf-8"))
-                cache_valid = (
-                        meta.get("producer") == "copy-pool-multisource-v6-weight-fallback"
-                    and meta.get("pool_build_day") == pool_build_day_key(utc_now())
+                same_day_complete = (
+                    meta.get("pool_build_day") == pool_build_day_key(utc_now())
                     and int(meta.get("logical_routes", 0)) == len(ROUTES)
                     and int(meta.get("physical_sources", 0)) == len(self.db.sources)
                     and int(coverage.get("logical_routes_scanned", 0)) == len(ROUTES)
                 )
-                if cache_valid:
+                cache_valid = (
+                    meta.get("producer") == "copy-pool-multisource-v7-cost-profit"
+                    and same_day_complete
+                )
+                upgrade_candidate = (
+                    meta.get("producer") == "copy-pool-multisource-v6-weight-fallback"
+                    and meta.get("factor_schema") == "execution-quality-v1"
+                    and same_day_complete
+                    and self.universe_path.exists()
+                )
+                if cache_valid or upgrade_candidate:
                     validate_complete_coverage(coverage, self.db.sources)
+                if cache_valid:
                     pool = pd.read_csv(self.pool_snapshot_path)
                     accepted_build_day = str(meta.get("pool_build_day") or "") or None
                     required = {
@@ -219,12 +431,43 @@ class MultiSourceLiveService(LiveService):
                         "floating_pnl_usd", "floating_loss_ratio", "open_position_count",
                         "product", "product_floating_pnl_usd", "comprehensive_net_20d_usd",
                         "factor_ready", "factor_base_score", "factor_gate_reasons",
+                        "factor_model", "factor_cost_adjusted_net_5d_usd",
+                        "factor_cost_adjusted_net_20d_usd", "factor_cost_profit_per_trade",
+                        "factor_recent_profit_per_trade", "factor_cost_coverage",
+                        "factor_rank_cost_profit", "factor_rank_recent_strength",
+                        "factor_rank_cost_coverage",
+                        "factor_copy_net_5d_usd", "factor_copy_net_20d_usd",
+                        "factor_estimated_copy_cost_5d_usd",
+                        "factor_estimated_copy_cost_20d_usd",
                         "delay_score", "mdd_20d", "mdd_60d", "holding_path_complete",
                         "pool_tier", "conservative_break_even_ms",
                         "historical_delay_enabled", "delay_factor_status",
                     }
                     if pool.empty or not required.issubset(pool.columns):
                         cache_valid = False
+                elif upgrade_candidate:
+                    universe = pd.read_csv(self.universe_path)
+                    expected_rows = int(coverage.get("eligible_sleeves", 0) or 0)
+                    if expected_rows and len(universe.index) != expected_rows:
+                        raise ValueError(
+                            f"Accepted universe row count mismatch: {len(universe.index)} != {expected_rows}"
+                        )
+                    pool, universe, coverage = self._upgrade_same_day_cost_pool(
+                        universe, coverage
+                    )
+                    accepted_build_day = str(meta.get("pool_build_day") or "") or None
+                    atomic_csv(self.pool_snapshot_path, pool, encoding="utf-8")
+                    atomic_csv(self.universe_path, universe, encoding="utf-8-sig")
+                    atomic_json(self.coverage_path, coverage)
+                    meta = {
+                        **meta,
+                        "producer": "copy-pool-multisource-v7-cost-profit",
+                        "factor_schema": "cost-profit-recent-coverage-v1",
+                        "cache_upgraded_at": beijing_now().isoformat(),
+                    }
+                    atomic_json(self.pool_build_meta_path, meta)
+                    cache_valid = True
+                    cache_upgraded = True
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 cache_valid = False
         if cache_valid:
@@ -239,20 +482,29 @@ class MultiSourceLiveService(LiveService):
             except (OSError, ValueError, TypeError):
                 cache_valid = False
         if cache_valid:
+            # A same-day factor migration changes selection and weights, but
+            # it remains a restart from the same trading-day runtime state.
+            # Preserve independent source-to-Demo Ticket ownership.
             self.pool_was_rebuilt = False
-            self.log("Restored the current trading day's accepted all-source pool snapshot.")
+            self.pool_weights_rebuilt = cache_upgraded
+            self.log(
+                "Upgraded the current trading day's complete all-source cache to the cost-profit model."
+                if cache_upgraded else
+                "Restored the current trading day's accepted all-source pool snapshot."
+            )
         else:
             pool, universe, coverage = self.db.build_pool()
             self.pool_was_rebuilt = True
+            self.pool_weights_rebuilt = True
             validate_complete_coverage(coverage, self.db.sources)
             accepted_build_day = pool_build_day_key(utc_now())
-            pool.to_csv(self.pool_snapshot_path, index=False, encoding="utf-8")
-            universe.to_csv(self.universe_path, index=False, encoding="utf-8-sig")
+            atomic_csv(self.pool_snapshot_path, pool, encoding="utf-8")
+            atomic_csv(self.universe_path, universe, encoding="utf-8-sig")
             atomic_json(
                 self.pool_build_meta_path,
                 {
-                    "producer": "copy-pool-multisource-v6-weight-fallback",
-                    "factor_schema": "execution-quality-v1",
+                    "producer": "copy-pool-multisource-v7-cost-profit",
+                    "factor_schema": "cost-profit-recent-coverage-v1",
                     "pool_build_day": accepted_build_day,
                     "logical_routes": len(ROUTES),
                     "physical_sources": len(self.db.sources),
@@ -299,6 +551,14 @@ class MultiSourceLiveService(LiveService):
             "short_trade_ratio", "holding_samples", "activity_eligible", "pool_status",
             "daily_activity_eligible",
             "pool_tier", "factor_ready", "factor_base_score", "factor_gate_reasons",
+            "factor_model", "factor_cost_adjusted_net_5d_usd",
+            "factor_cost_adjusted_net_20d_usd", "factor_cost_profit_per_trade",
+            "factor_recent_profit_per_trade", "factor_cost_coverage",
+            "factor_rank_cost_profit", "factor_rank_recent_strength",
+            "factor_rank_cost_coverage",
+            "factor_copy_net_5d_usd", "factor_copy_net_20d_usd",
+            "factor_estimated_copy_cost_5d_usd",
+            "factor_estimated_copy_cost_20d_usd",
             "hourly_score", "recent_net_1h_usd", "recent_net_4h_usd",
             "current_comprehensive_net_20d_usd", "hourly_hard_eligible",
             "hourly_activity_eligible",
@@ -560,6 +820,7 @@ class MultiSourceLiveService(LiveService):
                 )
             elif (
                 getattr(self, "pool_was_rebuilt", False)
+                or getattr(self, "pool_weights_rebuilt", False)
                 or saved.get("trading_day") != trading_day_key(utc_now())
             ):
                 state = daily_rebuild(

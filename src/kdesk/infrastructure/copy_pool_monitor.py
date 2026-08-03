@@ -347,6 +347,7 @@ class CopyPoolFileSnapshotRepository:
                 "poolTier": self._pool_tier(row.get("pool_tier"), row.get("pool_status")),
                 "factorReady": _bool(row.get("factor_ready")),
                 "factorBaseScore": _float(row.get("factor_base_score")),
+                "factorModel": str(row.get("factor_model") or "legacy"),
                 "historicalDelayFactorEnabled": _bool(
                     row.get("historical_delay_enabled")
                 ),
@@ -368,6 +369,9 @@ class CopyPoolFileSnapshotRepository:
                 ),
                 "factorGateReasons": _reason_codes(row.get("factor_gate_reasons")),
                 "factorScores": {
+                    "costProfit": _float(row.get("factor_rank_cost_profit")),
+                    "recentStrength": _float(row.get("factor_rank_recent_strength")),
+                    "costCoverage": _float(row.get("factor_rank_cost_coverage")),
                     "riskAdjustedReturn5d": _float(row.get("factor_risk_adjusted_return_5d")),
                     "riskAdjustedReturn20d": _float(row.get("factor_risk_adjusted_return_20d")),
                     "spreadStressReturn": _float(row.get("factor_spread_stress_return")),
@@ -375,6 +379,29 @@ class CopyPoolFileSnapshotRepository:
                     "delay": _float(row.get("factor_delay_score")),
                     "returnToDrawdown": _float(row.get("factor_return_to_drawdown")),
                     "holdingQuality": _float(row.get("factor_holding_quality")),
+                },
+                "copyCostEvidence": {
+                    "copyNet5dUsd": _float(row.get("factor_copy_net_5d_usd")),
+                    "copyNet20dUsd": _float(row.get("factor_copy_net_20d_usd")),
+                    "estimatedCost5dUsd": _float(
+                        row.get("factor_estimated_copy_cost_5d_usd")
+                    ),
+                    "estimatedCost20dUsd": _float(
+                        row.get("factor_estimated_copy_cost_20d_usd")
+                    ),
+                    "afterCost5dUsd": _float(
+                        row.get("factor_cost_adjusted_net_5d_usd")
+                    ),
+                    "afterCost20dUsd": _float(
+                        row.get("factor_cost_adjusted_net_20d_usd")
+                    ),
+                    "coverage": _float(row.get("factor_cost_coverage")),
+                    "costProfitPerTrade": _float(
+                        row.get("factor_cost_profit_per_trade")
+                    ),
+                    "recentProfitPerTrade": _float(
+                        row.get("factor_recent_profit_per_trade")
+                    ),
                 },
                 "delay": {
                     "score": _float(row.get("delay_score")),

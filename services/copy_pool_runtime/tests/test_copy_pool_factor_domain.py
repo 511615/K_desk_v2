@@ -297,6 +297,24 @@ class HoldingQualityMetricsTests(unittest.TestCase):
 
 
 class FactorResultTests(unittest.TestCase):
+    def test_cost_profit_recent_coverage_model_is_primary_when_provided(self) -> None:
+        result = calculate_factor_result(valid_inputs(
+            cost_profit_score=1.0,
+            recent_strength_score=0.0,
+            cost_coverage_score=0.0,
+        ))
+        self.assertAlmostEqual(result.base_score, 0.50)
+
+    def test_cost_model_still_honors_noncompensable_hard_gates(self) -> None:
+        result = calculate_factor_result(valid_inputs(
+            cost_profit_score=1.0,
+            recent_strength_score=1.0,
+            cost_coverage_score=1.0,
+            mdd_20d=0.100001,
+        ))
+        self.assertFalse(result.eligible)
+        self.assertIn("mdd_20d_over_10pct", result.gate_reasons)
+
     def test_fixed_weights_sum_to_one_and_inputs_clamp(self) -> None:
         result = calculate_factor_result(valid_inputs(
             risk_adjusted_return_5d=2.0,

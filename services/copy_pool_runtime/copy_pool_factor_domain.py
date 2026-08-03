@@ -102,6 +102,12 @@ class FactorInputs:
     coverage_60d: bool = True
     daily_drawdown_coverage: bool = True
     extra_gate_reasons: tuple[str, ...] = ()
+    # V1 primary model inputs. None keeps backwards-compatible legacy scoring
+    # for isolated callers and older fixtures; production pool evaluation sets
+    # all three explicitly.
+    cost_profit_score: float | None = None
+    recent_strength_score: float | None = None
+    cost_coverage_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -495,12 +501,26 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         "return_to_drawdown": 0.10,
         "holding_quality": 0.10,
     }
-    weights = dict(configured_weights)
-    if not inputs.delay_factor_enabled:
-        weights.pop("delay_score")
-        retained_total = sum(weights.values())
-        weights = {name: value / retained_total for name, value in weights.items()}
-    base_score = sum(weights[name] * factor_scores[name] for name in weights)
+    if (
+        inputs.cost_profit_score is not None
+        and inputs.recent_strength_score is not None
+        and inputs.cost_coverage_score is not None
+    ):
+        # Production V1: the requested three-factor model is the primary
+        # ordering signal. Risk/holding/drawdown remain hard gates and are
+        # exposed separately for auditability; they do not dilute this score.
+        base_score = (
+            0.50 * _clamp_unit(inputs.cost_profit_score)
+            + 0.30 * _clamp_unit(inputs.recent_strength_score)
+            + 0.20 * _clamp_unit(inputs.cost_coverage_score)
+        )
+    else:
+        weights = dict(configured_weights)
+        if not inputs.delay_factor_enabled:
+            weights.pop("delay_score")
+            retained_total = sum(weights.values())
+            weights = {name: value / retained_total for name, value in weights.items()}
+        base_score = sum(weights[name] * factor_scores[name] for name in weights)
     reasons = list(inputs.extra_gate_reasons)
     if not inputs.coverage_20d:
         reasons.append("insufficient_equity_coverage_20d")

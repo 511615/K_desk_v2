@@ -53,8 +53,13 @@ new full preflight instead of entering Demo execution.
 When a valid cache is restored, its accepted build day advances the daily scheduler guard before the
 first loop and a fresh status snapshot is published immediately. This prevents a restart after 05:15
 from launching a duplicate full build while the dashboard continues to show stale prior-day state.
-The accepted cache producer is `copy-pool-multisource-v6-weight-fallback`; older snapshots are
-rebuilt because their factor weights and delay-factor state differ. V0.1 complete builds do not
+The accepted cache producer is copy-pool-multisource-v7-cost-profit. A same-trading-day
+copy-pool-multisource-v6-weight-fallback cache may be upgraded in place only when its metadata,
+coverage and full private universe prove exact 11/11 logical-route and 9/9 physical-source
+completion. The upgrade preserves all existing hard rejections and adds the v7 copy-cost gates;
+partial, older-day or malformed snapshots force a complete rebuild. The next 05:15 schedule always
+runs the complete v7 database build. Same-day migration rebases dynamic sleeve weights but restores
+and validates persisted independent Demo Ticket ownership exactly like a normal restart. V0.1 complete builds do not
 load historical Tick partitions. They still require drawdown and holding-quality gates in addition to
 account-product selection, complete open-position risk or independent execution inputs. Bootstrap
 and each ten-second refresh must read

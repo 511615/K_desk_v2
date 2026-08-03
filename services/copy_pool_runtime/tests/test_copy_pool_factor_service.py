@@ -9,7 +9,7 @@ import pandas as pd
 from copy_delay_replay_domain import PositionExecutionEvent, PositionLifecycle
 from copy_pool_equity_reconstruction import ReconstructedEquity
 from copy_pool_factor_domain import AdjustedEquityPoint, TradeHoldingObservation
-from copy_pool_factor_service import CopyPoolFactorService
+from copy_pool_factor_service import CopyPoolFactorService, apply_cost_factor_model
 from copy_pool_history_repository import (
     AccountHistoryBundle,
     SleeveHistoryBundle,
@@ -60,6 +60,95 @@ def lifecycle(position_id: str, opened_ms: int, closed_ms: int) -> PositionLifec
 
 
 class FactorServiceTests(unittest.TestCase):
+    def test_cost_model_uses_product_volume_minimum_for_non_micro_products(self) -> None:
+        frame = pd.DataFrame([{
+            "sleeve_key": "route:apple|Apple", "product": "Apple",
+            "closes_5d": 2, "closes_20d": 10, "lots_20d": 100.0,
+            "net_5d_usd": 300.0, "net_20d_usd": 500.0,
+            "factor_ready": True, "factor_gate_reasons": "",
+        }])
+
+        result = apply_cost_factor_model(frame).iloc[0]
+
+        # Apple has a 10-share minimum. Ten source closes totalling 100
+        # shares therefore copy at 10 shares per close, not 0.01 lots.
+        self.assertAlmostEqual(result["factor_copy_net_20d_usd"], 500.0)
+        self.assertAlmostEqual(result["factor_estimated_copy_cost_20d_usd"], 250.0)
+        self.assertAlmostEqual(result["factor_cost_adjusted_net_20d_usd"], 250.0)
+        self.assertAlmostEqual(result["factor_cost_coverage"], 2.0)
+        self.assertTrue(bool(result["factor_ready"]))
+
+    def test_missing_or_nan_cost_evidence_fails_closed_without_legacy_fallback(self) -> None:
+        complete = pd.DataFrame([{
+            "sleeve_key": "route:1|XAUUSD", "product": "XAUUSD",
+            "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+            "net_5d_usd": 20.0, "net_20d_usd": 300.0,
+            "factor_ready": True, "factor_gate_reasons": "",
+        }])
+        missing = complete.drop(columns=["lots_20d"])
+        nan_value = complete.copy()
+        nan_value.loc[0, "lots_20d"] = float("nan")
+
+        for frame in (missing, nan_value):
+            result = apply_cost_factor_model(frame).iloc[0]
+            self.assertFalse(bool(result["factor_ready"]))
+            self.assertIn("missing_copy_cost_evidence", result["factor_gate_reasons"])
+            self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_v1")
+
+    def test_cost_factor_model_uses_copy_lot_costs_weighted_50_30_20_and_hard_gates(self) -> None:
+        frame = pd.DataFrame([
+            {
+                "sleeve_key": "route:1|XAUUSD", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 20.0, "net_20d_usd": 300.0,
+                "factor_ready": True, "factor_gate_reasons": "",
+            },
+            {
+                "sleeve_key": "route:2|XAUUSD", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 50.0, "net_20d_usd": 200.0,
+                "factor_ready": False, "factor_gate_reasons": "legacy_hard_gate",
+            },
+            {
+                "sleeve_key": "route:3|XAUUSD", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 20.0, "net_20d_usd": 100.0,
+                "factor_ready": True, "factor_gate_reasons": "",
+            },
+            {
+                "sleeve_key": "route:4|XAUUSD", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 1.0, "net_20d_usd": 20.0,
+                "factor_ready": True, "factor_gate_reasons": "",
+            },
+        ])
+
+        result = apply_cost_factor_model(frame).set_index("sleeve_key")
+        strongest = result.loc["route:1|XAUUSD"]
+        rejected = result.loc["route:4|XAUUSD"]
+
+        # Ten source closes totalling one lot imply 0.10 average lots, so the
+        # 0.01 Demo copy scale is 10%. XAUUSD's reserved round-trip cost is
+        # 0.75 USD per copied close (0.01 lot x 1.25 reserve).
+        self.assertAlmostEqual(strongest["factor_copy_net_20d_usd"], 30.0)
+        self.assertAlmostEqual(strongest["factor_estimated_copy_cost_20d_usd"], 7.5)
+        self.assertAlmostEqual(strongest["factor_cost_adjusted_net_20d_usd"], 22.5)
+        # Percentiles are calculated only after every hard gate, so the
+        # legacy-hard-failed and after-cost-failed rows cannot move the score.
+        self.assertAlmostEqual(strongest["factor_base_score"], 0.925)
+        self.assertAlmostEqual(
+            strongest["factor_base_score"],
+            0.50 * strongest["factor_rank_cost_profit"]
+            + 0.30 * strongest["factor_rank_recent_strength"]
+            + 0.20 * strongest["factor_rank_cost_coverage"],
+        )
+        self.assertFalse(bool(result.loc["route:2|XAUUSD", "factor_ready"]))
+        self.assertIn("legacy_hard_gate", result.loc["route:2|XAUUSD", "factor_gate_reasons"])
+        self.assertFalse(bool(rejected["factor_ready"]))
+        self.assertIn("cost_adjusted_net_5d_not_positive", rejected["factor_gate_reasons"])
+        self.assertIn("cost_adjusted_net_20d_not_positive", rejected["factor_gate_reasons"])
+        self.assertIn("cost_coverage_below_1", rejected["factor_gate_reasons"])
+
     def setUp(self) -> None:
         self.as_of = datetime(2026, 7, 29, tzinfo=timezone.utc)
         opened = int((self.as_of - timedelta(hours=2)).timestamp() * 1000)
@@ -91,6 +180,8 @@ class FactorServiceTests(unittest.TestCase):
             "physical_key": "source", "account_key": "route:7", "sleeve_key": "route:7|XAUUSD",
             "product": "XAUUSD", "ret_5d": 0.05, "ret_20d": 0.10,
             "stress_ret_20d": 0.08, "pf_20d": 2.0, "hold_p25_seconds": 3600,
+            "closes_5d": 1, "closes_20d": 1, "lots_20d": 0.10,
+            "net_5d_usd": 20.0, "net_20d_usd": 40.0,
         }])
 
     def test_complete_evidence_produces_traceable_factor_row(self) -> None:
@@ -131,6 +222,31 @@ class FactorServiceTests(unittest.TestCase):
         self.assertFalse(bool(result.iloc[0]["historical_delay_enabled"]))
         self.assertEqual(result.iloc[0]["delay_factor_status"], "deferred_v0_1")
         self.assertNotIn("missing_or_incomplete_quote_range", result.iloc[0]["factor_gate_reasons"])
+
+    def test_cost_model_scales_source_profit_to_demo_lot_before_cost(self) -> None:
+        frame = self.frame.assign(
+            closes_5d=2,
+            closes_20d=10,
+            lots_20d=1.0,
+            net_5d_usd=10.0,
+            net_20d_usd=50.0,
+            money_scale=1.0,
+        )
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype), complete=False)),
+            historical_delay_enabled=False,
+            history_repository=FakeRepository(self.bundle),
+        )
+
+        result = service.evaluate({"source": object()}, frame, self.as_of).iloc[0]
+
+        self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_v1")
+        self.assertAlmostEqual(result["factor_copy_net_20d_usd"], 5.0)
+        self.assertAlmostEqual(result["factor_estimated_copy_cost_20d_usd"], 7.5)
+        self.assertAlmostEqual(result["factor_cost_adjusted_net_20d_usd"], -2.5)
+        self.assertAlmostEqual(result["factor_cost_coverage"], 5.0 / 7.5)
+        self.assertFalse(bool(result["factor_ready"]))
+        self.assertIn("cost_adjusted_net_20d_not_positive", result["factor_gate_reasons"])
 
     def test_incomplete_intraday_paths_are_disclosed_and_penalized_not_hard_clean(self) -> None:
         account = self.bundle.accounts["route:7"]

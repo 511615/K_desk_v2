@@ -79,6 +79,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   snapshot-derived only; unknown private sleeve keys are omitted rather than returned. V0.1 returns
   `historicalDelayFactorEnabled=false` and `delayFactorStatus=deferred_v0_1`; delay compatibility
   values are not scoring or hard-gate evidence.
+- The same pool rows additively expose the v7 `factorModel`, hard-filtered percentile scores for
+  cost-adjusted profit, recent cost-adjusted profit and cost coverage, plus minimum-lot normalized
+  five/20-day copied P/L, estimated cost, after-cost P/L, per-trade values and coverage evidence.
+  Existing fields and URLs remain compatible.
 - Pool `effectiveWeight`, status `activeWeights`, product `activeWeight` and `activeCopyClients`
   represent final executable dynamic sleeves rather than source-quality weights. Additive
   `riskManagedClients` separately reports client risk-ledger membership.
