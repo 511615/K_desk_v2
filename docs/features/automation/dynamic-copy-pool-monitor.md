@@ -71,7 +71,17 @@ and 20-day cost-adjusted P/L must both be positive and 20-day cost coverage must
 only rows passing those and all prior hard gates participate in percentile ranking. Missing or
 non-finite cost evidence is a hard rejection. Drawdown,
 holding, negative-equity, stop-out and evidence-quality checks remain non-compensable hard gates,
-not secondary score weights. Drawdown still uses cashflow-adjusted equity including synchronized floating P/L; missing
+not secondary score weights. Drawdown uses cashflow-adjusted equity including synchronized floating
+P/L. Pre-funding zero-equity rows are ignored and the first positive funded observation establishes
+capital without subtracting its own funding movement. Actual platform equity below zero remains
+`negative_equity`; that code comes only from authoritative platform daily/current equity evidence,
+not from an incomplete reconstructed snapshot path. Later cashflow-adjusted capital at or below zero is the separate hard gate
+`cashflow_adjusted_capital_exhaustion`, so replenishment after losses is rejected without being
+misreported as platform negative equity. Daily drawdown loads the nearest daily anchor before the
+60-day scoring window, ignores only the partial first trading day intersecting the cutoff, and
+accepts an anchor exactly on the server rollover boundary. For a newly funded account, the first
+positive funded observation is also the first day's baseline because no earlier account equity
+state exists. Missing
 position-path or intraday-equity evidence remains monitor-only rather than clean. A/TA status adds
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
 entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
@@ -223,6 +233,11 @@ private file is returned wholesale or logged.
 
 The accepted same-day pool cache is valid only when its metadata and coverage file contain the
 exact configured eleven-route and nine-source sets and every source completed successfully.
+Every MT4 and MT5 factor-history load includes the nearest available daily equity row before its
+bounded 61-day range. It searches indexed Login/time windows from 7 days backward and doubles the
+lookback only for unresolved accounts; it does not run a full-history grouped maximum or sort over
+the exported daily view. This read-only anchor is used only as the pre-window capital/day boundary;
+the detailed trade and snapshot reads remain bounded to the existing scoring range.
 The v7 producer may migrate a same-trading-day v6 cache to the cost-profit model without repeating
 the 60-day database build, but only when the private universe is present and metadata plus coverage
 prove the exact complete eleven-route/nine-source set. Migration preserves all existing hard-gate

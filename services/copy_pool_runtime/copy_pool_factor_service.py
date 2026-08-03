@@ -360,7 +360,18 @@ class CopyPoolFactorService:
                     max_daily_loss=drawdown.max_daily_loss if drawdown is not None else 1.0,
                     delay_gates_passed=bool(delay and delay.hard_gate_passed and raw.quote_complete),
                     delay_factor_enabled=self.historical_delay_enabled,
-                    negative_equity=bool(drawdown and any("nonpositive_adjusted_equity" in reason for reason in drawdown.gate_reasons)),
+                    # The candidate aggregate is the authoritative platform
+                    # Equity hard gate. Reconstructed intraday paths may be
+                    # incomplete and cannot independently prove this state.
+                    negative_equity=(
+                        float(getattr(row, "negative_equity_days_60d", 0.0) or 0.0)
+                        > 0.0
+                    ),
+                    cashflow_adjusted_capital_exhaustion=bool(
+                        drawdown
+                        and "cashflow_adjusted_capital_exhaustion"
+                        in drawdown.gate_reasons
+                    ),
                     nonpositive_balance_baseline=bool(drawdown and "nonpositive_adjusted_balance_baseline" in drawdown.gate_reasons),
                     stop_out_compensation=bool(raw.account and raw.account.stop_out_compensation),
                     holding_hard_failed=bool(

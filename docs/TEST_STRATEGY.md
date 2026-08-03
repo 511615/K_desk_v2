@@ -74,6 +74,10 @@ The renderer must retain viewport culling, relation-label width caching, frame t
 graph rebuild and no evidence-pane render for pointer movement. A drag of at least four screen pixels must
 suppress activation on release. Canvas hit testing must preserve node and edge selection; wheel deltas must
 use continuous cursor-centred scaling rather than fixed scale steps.
+Kuzu-demo regressions create and close a temporary local graph file, then verify the additive standalone
+page and a reopened two-hop API response preserve typed nodes, evidence edges and source counts while
+depth outside the fixed `1..3` range is rejected. The test has no remote provider call and does not
+assert a risk score or conclusion.
 Automation-report regressions open each generated `.xlsx` and verify sheet order, table ranges,
 account IDs stored as text, numeric profit formats, reconciliation formulas, valid empty-result
 workbooks and download content-disposition headers. Copy reports must contain only `单主汇总` plus
@@ -220,6 +224,13 @@ Execution-quality dashboard tests additionally require an explicit deferred hist
 cashflow-adjusted drawdown coverage, holding/overnight/weekend fields, factor gate-code filtering,
 pool-tier projection and scheduler/dynamic-sleeve state. A dynamic state row with an unmapped private
 sleeve key must be omitted from both top-level and per-sleeve output.
+Drawdown regressions require pre-funding zero rows and the first funding movement not to create a
+false loss, raw platform equity below zero to retain `negative_equity`, and later cashflow-adjusted
+capital exhaustion to use its own non-compensable reason. An incomplete reconstructed path cannot
+set the platform-negative code when the authoritative daily aggregate is clean. MT4 and MT5 repository tests require the
+nearest pre-window daily anchor, exact-rollover baseline acceptance and exclusion of only the partial
+first trading day at the 60-day cutoff; a new account's first funded observation supplies its first
+daily baseline.
 Dashboard tests also pin hourly score, one/four-hour net P/L, current comprehensive-profit hard-gate
 state and bounded hourly-discovery coverage.
 Producer tests prove that deferred mode performs no Tick-cache load, removes delay from score and
@@ -306,7 +317,7 @@ the unchanged two-ranking/ten-minute default elsewhere.
 
 ## Release acceptance
 
-Both readiness endpoints, account 302360 legacy detail HTML, account 7798437 finance, Live3,
+Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,
 DBG MT5 Live2 account 5200101 routing/finance/orders, rebate, copy/EA, Toxic job recovery, K-line
 generation and rollback rehearsal must pass. Remote
 tests are read-only and never mutate MT or CRM state.

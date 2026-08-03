@@ -58,6 +58,60 @@ class FakeSource:
         assert "ApiData" not in sql
 
 
+class PreWindowAnchorSource(FakeSource):
+    """Returns a daily anchor only when the repository asks before its scoring window."""
+
+    def query(self, sql, params=()):
+        self.calls.append((sql, tuple(params)))
+        self.assert_read_only(sql)
+        if "mt5_daily_view" in sql:
+            timestamp = (
+                self.now - timedelta(days=90)
+                if "mt5_daily_view history" in sql
+                else self.now - timedelta(days=59)
+            )
+            if "mt5_daily_view history" in sql:
+                lower, upper = (int(params[-2]), int(params[-1]))
+                value = int(timestamp.timestamp())
+                if not lower <= value < upper:
+                    return []
+            return [{
+                "Login": 7, "Timestamp": datetime_to_filetime(timestamp),
+                "Balance": 10_000, "Credit": 0, "ProfitEquity": 10_000,
+                "DailyBalance": 0, "DailyCredit": 0, "DailyCharge": 0,
+                "DailyCorrection": 0, "DailyBonus": 0, "DailyAgent": 0,
+                "DailySOCompensation": 0, "DailySOCompensationCredit": 0,
+            }]
+        return super().query(sql, params)
+
+
+class Mt4PreWindowAnchorSource(FakeSource):
+    platform = "MT4"
+
+    def query(self, sql, params=()):
+        self.calls.append((sql, tuple(params)))
+        self.assert_read_only(sql)
+        if "mt4_daily" in sql:
+            timestamp = (
+                self.now - timedelta(days=90)
+                if "mt4_daily history" in sql
+                else self.now - timedelta(days=59)
+            )
+            if "mt4_daily history" in sql:
+                lower, upper = params[-2], params[-1]
+                if not lower <= timestamp.replace(tzinfo=None) < upper:
+                    return []
+            return [{
+                "LOGIN": 7, "TIME": timestamp, "BALANCE": 10_000,
+                "CREDIT": 0, "DEPOSIT": 0, "EQUITY": 10_000,
+            }]
+        if "mt4_trades " in sql or "mt4_trades_snap" in sql:
+            return []
+        if "mt4_users_view" in sql:
+            return [{"LOGIN": 7, "BALANCE": 10_000, "CREDIT": 0, "EQUITY": 10_000}]
+        raise AssertionError(sql)
+
+
 class SplittingHistorySource:
     """Fake source which forces the repository to split oversized Login lists."""
 
@@ -122,7 +176,7 @@ class SplittingHistorySource:
     @staticmethod
     def _stream(sql: str) -> str:
         if "mt5_daily_view" in sql:
-            return "daily"
+            return "daily_anchor" if "mt5_daily_view history" in sql else "daily"
         if "mt5_deals" in sql:
             return "deals"
         if "mt5_accounts" in sql:
@@ -162,12 +216,43 @@ class HistoryRepositoryTests(unittest.TestCase):
         )
         daily_sql, _daily_params = next(
             (sql, params) for sql, params in source.calls if "mt5_daily_view" in sql
+            and "mt5_daily_view history" not in sql
+        )
+        _anchor_sql, anchor_params = next(
+            (sql, params) for sql, params in source.calls if "mt5_daily_view" in sql
+            and "mt5_daily_view history" in sql
         )
         self.assertIn("Datetime >= %s", daily_sql)
         self.assertNotIn("Timestamp >= %s", daily_sql)
+        self.assertIsInstance(anchor_params[-2], int)
+        self.assertIsInstance(anchor_params[-1], int)
         self.assertIn("WHERE Position IN", snapshot_sql)
         self.assertEqual(snapshot_params[0], 99)
         self.assertTrue(all("%s" in sql for sql, _params in source.calls))
+
+    def test_daily_history_includes_nearest_anchor_before_the_scoring_window(self) -> None:
+        now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
+        source = PreWindowAnchorSource(now)
+        frame = pd.DataFrame([{
+            "Login": 7, "account_key": "route:7", "money_scale": 1.0,
+            "product": "XAUUSD",
+        }])
+
+        result = ReadOnlyPoolHistoryRepository().load_source(source, frame, now)
+
+        timestamps = [point.timestamp for point in result.accounts["route:7"].equity.points]
+        self.assertIn(now - timedelta(days=90), timestamps)
+
+    def test_mt4_daily_history_includes_nearest_pre_window_anchor(self) -> None:
+        now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
+        source = Mt4PreWindowAnchorSource(now)
+
+        result = ReadOnlyPoolHistoryRepository().load_source(
+            source, self._candidates([7]), now
+        )
+
+        timestamps = [point.timestamp for point in result.accounts["route:7"].equity.points]
+        self.assertIn(now - timedelta(days=90), timestamps)
 
     def test_transient_large_batches_split_per_history_stream_without_duplicate_or_missing_accounts(self) -> None:
         now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
@@ -179,13 +264,19 @@ class HistoryRepositoryTests(unittest.TestCase):
         expected = set(logins)
         self.assertEqual(set(result.accounts), {f"route:{login}" for login in expected})
         self.assertEqual(set(result.sleeves), {f"route:{login}|XAUUSD" for login in expected})
-        for stream in ("daily", "deals", "current"):
+        for stream in ("daily", "daily_anchor", "deals", "current"):
             successful = source.successful_batches[stream]
             flattened = [login for batch in successful for login in batch]
             self.assertEqual(set(flattened), expected, stream)
             self.assertEqual(len(flattened), len(expected), stream)
             self.assertTrue(all(len(batch) <= source.max_batch for batch in successful), stream)
-            self.assertTrue(any(len(batch) > source.max_batch for batch in self._attempted_batches(source, stream)), stream)
+            if stream == "daily_anchor":
+                self.assertTrue(all(len(batch) <= source.max_batch for batch in successful), stream)
+            else:
+                self.assertTrue(any(
+                    len(batch) > source.max_batch
+                    for batch in self._attempted_batches(source, stream)
+                ), stream)
         self.assertGreater(source.reset_calls, 0)
 
     def test_transient_timeout_for_one_login_is_propagated_after_split_floor(self) -> None:

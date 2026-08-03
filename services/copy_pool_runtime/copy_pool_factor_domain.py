@@ -95,6 +95,7 @@ class FactorInputs:
     delay_gates_passed: bool
     delay_factor_enabled: bool = False
     negative_equity: bool = False
+    cashflow_adjusted_capital_exhaustion: bool = False
     nonpositive_balance_baseline: bool = False
     stop_out_compensation: bool = False
     holding_hard_failed: bool = False
@@ -212,10 +213,29 @@ def calculate_adjusted_equity_metrics(
             ("missing_equity_history",),
         )
 
+    raw_negative_equity = any(float(point.equity_usd) < 0.0 for point in ordered)
+    funded_index = next(
+        (index for index, point in enumerate(ordered) if float(point.equity_usd) > 0.0),
+        None,
+    )
+    if funded_index is None:
+        reasons = ["missing_funded_equity_baseline"]
+        if raw_negative_equity:
+            reasons.append("negative_equity")
+        return DrawdownMetrics(
+            1.0, 1.0, 1.0, 1.0, 0.0, 0, 0.0, False, False, False,
+            tuple(reasons),
+        )
+
+    # A zero/negative pre-funding row is not an equity loss. The first funded
+    # observation establishes the capital baseline, so its own deposit is not
+    # subtracted from itself. Later external cashflows are removed normally.
+    funded = ordered[funded_index:]
     cumulative_cashflow = 0.0
     adjusted: list[tuple[datetime, float]] = []
-    for point in ordered:
-        cumulative_cashflow += float(point.external_cashflow_usd)
+    for index, point in enumerate(funded):
+        if index:
+            cumulative_cashflow += float(point.external_cashflow_usd)
         adjusted.append((point.timestamp.astimezone(timezone.utc), float(point.equity_usd) - cumulative_cashflow))
 
     reasons: list[str] = []
@@ -223,20 +243,15 @@ def calculate_adjusted_equity_metrics(
     coverage_60d, coverage_60_reasons = _coverage(adjusted, as_of_utc, 60, max_staleness)
     reasons.extend(coverage_20_reasons)
     reasons.extend(coverage_60_reasons)
-    if adjusted[0][1] <= 0:
-        reasons.append("nonpositive_adjusted_balance_baseline")
+    if raw_negative_equity:
+        reasons.append("negative_equity")
     if any(value <= 0 for _timestamp, value in adjusted):
-        reasons.append("nonpositive_adjusted_equity")
+        reasons.append("cashflow_adjusted_capital_exhaustion")
 
     values_20d = _window_with_boundary(adjusted, as_of_utc - timedelta(days=20))
     values_60d = _window_with_boundary(adjusted, as_of_utc - timedelta(days=60))
     mdd_20d = _window_mdd(values_20d)
     mdd_60d = _window_mdd(values_60d)
-    if any(value <= 0 for _timestamp, value in values_20d):
-        reasons.append("nonpositive_adjusted_equity_20d")
-    if any(value <= 0 for _timestamp, value in values_60d):
-        reasons.append("nonpositive_adjusted_equity_60d")
-
     peak = adjusted[0][1]
     peak_timestamp = adjusted[0][0]
     current_drawdown = 0.0
@@ -271,16 +286,27 @@ def calculate_adjusted_equity_metrics(
             daily_rows.setdefault(_trading_day(local, rollover_time), []).append((timestamp, value))
     max_daily_loss = 0.0
     daily_coverage_complete = True
+    first_funded_day = _trading_day(
+        adjusted[0][0].astimezone(day_timezone), rollover_time
+    )
     for local_day, rows in daily_rows.items():
         boundary = _trading_day_start(local_day, rollover_time, day_timezone).astimezone(timezone.utc)
-        baselines = [value for timestamp, value in adjusted if timestamp < boundary]
-        if not baselines:
-            daily_coverage_complete = False
-            reasons.append(f"missing_daily_baseline_{local_day.isoformat()}")
+        # Do not judge the partial first trading day intersecting the 60-day
+        # cutoff. It has no complete start boundary by definition.
+        if boundary < daily_cutoff:
             continue
-        start = baselines[-1]
+        baselines = [value for timestamp, value in adjusted if timestamp <= boundary]
+        if not baselines:
+            if local_day != first_funded_day:
+                daily_coverage_complete = False
+                reasons.append(f"missing_daily_baseline_{local_day.isoformat()}")
+                continue
+            # Before an account's first funding event no equity state exists.
+            # Its first funded observation is the valid start of that day.
+            start = rows[0][1]
+        else:
+            start = baselines[-1]
         if start <= 0:
-            daily_coverage_complete = False
             reasons.append(f"nonpositive_daily_baseline_{local_day.isoformat()}")
             continue
         max_daily_loss = max(max_daily_loss, (start - min(value for _timestamp, value in rows)) / start)
@@ -540,6 +566,8 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         reasons.append("delay_hard_gate_failed")
     if inputs.negative_equity:
         reasons.append("negative_equity")
+    if inputs.cashflow_adjusted_capital_exhaustion:
+        reasons.append("cashflow_adjusted_capital_exhaustion")
     if inputs.nonpositive_balance_baseline:
         reasons.append("nonpositive_balance_baseline")
     if inputs.stop_out_compensation:

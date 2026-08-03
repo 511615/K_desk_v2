@@ -129,7 +129,15 @@
   cost coverage must be at least one before percentile ranks are calculated; failed rows cannot
   move qualified-account ranks. Missing or non-finite cost evidence fails closed. Excessive
   cashflow-adjusted equity MDD, incomplete intraday floating-equity coverage, extreme short holding
-  and severe weekend holding remain non-compensable hard failures. Real-time quote age, source
+  and severe weekend holding remain non-compensable hard failures. Cashflow-adjusted equity begins
+  at the first positive funded observation: earlier zero-equity rows are pre-funding state and the
+  first observation's funding is not subtracted from itself. Actual platform equity below zero is
+  the `negative_equity` hard gate, and only authoritative platform daily/current evidence may set it;
+  an incomplete reconstructed snapshot path cannot. Capital reaching zero after later deposits/withdrawals are removed
+  is the separate `cashflow_adjusted_capital_exhaustion` hard gate. Daily loss uses the nearest
+  pre-window anchor, ignores the incomplete trading day intersecting the 60-day cutoff and accepts
+  an anchor exactly at rollover. A newly funded account uses its first positive funded observation
+  as its first-day baseline. Real-time quote age, source
   staleness, signal latency and expiry remain active; new-risk signal age is capped by five seconds
   and holding P25 divided by three.
 - Every ten seconds the copier refreshes client Demo loss budgets, realized trading P/L and

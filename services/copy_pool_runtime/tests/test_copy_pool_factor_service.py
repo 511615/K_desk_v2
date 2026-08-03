@@ -284,6 +284,109 @@ class FactorServiceTests(unittest.TestCase):
         self.assertLess(result["factor_holding_quality"], 1.0)
         self.assertNotIn("missing_holding_snapshot_path", result["factor_gate_reasons"])
 
+    def test_authoritative_platform_negative_equity_is_not_hidden_by_cashflow(self) -> None:
+        account = self.bundle.accounts["route:7"]
+        negative_raw_equity = ReconstructedEquity(
+            points=(
+                AdjustedEquityPoint(self.as_of - timedelta(days=61), 10_000.0),
+                AdjustedEquityPoint(self.as_of - timedelta(days=2), -1.0, -10_000.0),
+                AdjustedEquityPoint(self.as_of, 10_000.0),
+            ),
+            intraday_complete=account.equity.intraday_complete,
+            reasons=(),
+            emitted_intraday_points=account.equity.emitted_intraday_points,
+            skipped_incomplete_snapshots=0,
+        )
+        bundle = SourceHistoryBundle(
+            {"route:7": AccountHistoryBundle("route:7", negative_raw_equity, False)},
+            self.bundle.sleeves,
+        )
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype), complete=False)),
+            historical_delay_enabled=False,
+            history_repository=FakeRepository(bundle),
+        )
+
+        result = service.evaluate(
+            {"source": object()},
+            self.frame.assign(
+                net_5d_usd=100.0,
+                net_20d_usd=200.0,
+                negative_equity_days_60d=1,
+            ),
+            self.as_of,
+        ).iloc[0]
+
+        self.assertIn("negative_equity", result["factor_gate_reasons"])
+
+    def test_incomplete_reconstruction_cannot_claim_platform_negative_equity(self) -> None:
+        account = self.bundle.accounts["route:7"]
+        reconstructed_negative = ReconstructedEquity(
+            points=(
+                AdjustedEquityPoint(self.as_of - timedelta(days=61), 10_000.0),
+                AdjustedEquityPoint(self.as_of - timedelta(days=2), -1.0),
+                AdjustedEquityPoint(self.as_of, 10_000.0),
+            ),
+            intraday_complete=False,
+            reasons=("unsynchronized_position_snapshot_coverage",),
+            emitted_intraday_points=1,
+            skipped_incomplete_snapshots=1,
+        )
+        bundle = SourceHistoryBundle(
+            {"route:7": AccountHistoryBundle("route:7", reconstructed_negative, False)},
+            self.bundle.sleeves,
+        )
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype), complete=False)),
+            historical_delay_enabled=False,
+            history_repository=FakeRepository(bundle),
+        )
+
+        result = service.evaluate(
+            {"source": object()},
+            self.frame.assign(negative_equity_days_60d=0),
+            self.as_of,
+        ).iloc[0]
+
+        self.assertNotIn("negative_equity", result["factor_gate_reasons"])
+        self.assertIn(
+            "cashflow_adjusted_capital_exhaustion",
+            result["factor_gate_reasons"],
+        )
+
+    def test_refunding_after_capital_exhaustion_uses_its_own_gate_code(self) -> None:
+        account = self.bundle.accounts["route:7"]
+        exhausted_capital = ReconstructedEquity(
+            points=(
+                AdjustedEquityPoint(self.as_of - timedelta(days=61), 10_000.0, 10_000.0),
+                AdjustedEquityPoint(self.as_of - timedelta(days=30), 0.0),
+                AdjustedEquityPoint(self.as_of - timedelta(days=29), 10_000.0, 10_000.0),
+                AdjustedEquityPoint(self.as_of, 10_000.0),
+            ),
+            intraday_complete=account.equity.intraday_complete,
+            reasons=(),
+            emitted_intraday_points=account.equity.emitted_intraday_points,
+            skipped_incomplete_snapshots=0,
+        )
+        bundle = SourceHistoryBundle(
+            {"route:7": AccountHistoryBundle("route:7", exhausted_capital, False)},
+            self.bundle.sleeves,
+        )
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype), complete=False)),
+            historical_delay_enabled=False,
+            history_repository=FakeRepository(bundle),
+        )
+
+        result = service.evaluate(
+            {"source": object()},
+            self.frame.assign(net_5d_usd=100.0, net_20d_usd=200.0),
+            self.as_of,
+        ).iloc[0]
+
+        self.assertIn("cashflow_adjusted_capital_exhaustion", result["factor_gate_reasons"])
+        self.assertNotIn("negative_equity", result["factor_gate_reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()

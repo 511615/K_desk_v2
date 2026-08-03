@@ -9,6 +9,11 @@ revision state. Excel files are import/export snapshots only.
 The account relationship network has no independent store or remote query protocol. It composes the
 already routed read-only account-risk, login-IP, Copy, EA and CRM-rebate response payloads and never
 writes an inferred cross-account relationship.
+The separate `ACC-REL-002` Kuzu demo reads an operator-created local file at
+`KDESK_KUZU_DEMO_DB` (default `runtime/<profile>/relationship_graph_demo.kuzu`). It is a
+non-authoritative evidence projection for one bounded demo subject: it does not refresh from, write
+to or replace any remote source or local authority. Missing data remains missing rather than
+triggering an on-demand remote multi-hop scan.
 
 The dynamic copy-pool dashboard reads the copier's local snapshot directory. Public inputs are
 `status.json`, `pool_public.csv`, `events_public.csv`, `orders_public.csv` and
@@ -120,6 +125,14 @@ Closed mappings remain through the current trading day so comment-attributed rea
 assigned to its client loss budget. They are pruned only after the trading day changes and only when
 no Demo child Ticket or source exposure remains. Emergency flatten acceptance is based on the actual
 strategy Ticket set, never on a possibly zero net position.
+
+Factor-history reads retain one additional read-only daily row per account: the latest MT4/MT5
+daily equity anchor strictly before the bounded 61-day range. The repository finds it through
+half-open indexed Login/time windows, beginning with 7 days and progressively doubling only for
+accounts that still have no row; exported daily views are never subjected to a full-history grouped
+maximum or ordered scan. All deal, trade and snapshot reads remain unchanged. The anchor establishes
+the funded capital and server-day boundary; it is not a trade, cashflow or synthetic intraday
+observation.
 
 The product catalog maps only proven source/Demo equivalents. Suffix and Roll aliases are normalized,
 including `UT100 -> NAS100Roll` and `USOIL -> USOILRoll`; unproven dated futures are excluded rather

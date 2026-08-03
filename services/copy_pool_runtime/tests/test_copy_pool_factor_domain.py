@@ -57,6 +57,47 @@ def valid_inputs(**overrides: object) -> FactorInputs:
 
 
 class AdjustedEquityMetricsTests(unittest.TestCase):
+    def test_first_funded_anchor_ignores_prefunding_zero_and_its_own_cashflow(self) -> None:
+        as_of = datetime(2026, 3, 2, tzinfo=UTC)
+
+        metrics = calculate_adjusted_equity_metrics([
+            AdjustedEquityPoint(as_of - timedelta(days=62), 0.0),
+            AdjustedEquityPoint(as_of - timedelta(days=61), 1_000.0, 1_000.0),
+            AdjustedEquityPoint(as_of - timedelta(days=20), 1_050.0),
+            AdjustedEquityPoint(as_of, 1_050.0),
+        ], as_of)
+
+        self.assertNotIn("nonpositive_adjusted_balance_baseline", metrics.gate_reasons)
+        self.assertNotIn("nonpositive_adjusted_equity", metrics.gate_reasons)
+        self.assertEqual(metrics.mdd_60d, 0.0)
+
+    def test_raw_negative_equity_remains_a_negative_equity_hard_failure(self) -> None:
+        as_of = datetime(2026, 3, 2, tzinfo=UTC)
+
+        metrics = calculate_adjusted_equity_metrics([
+            AdjustedEquityPoint(as_of - timedelta(days=61), 100.0),
+            # The withdrawal makes cashflow-adjusted capital positive, but the
+            # platform still recorded an actual negative equity state.
+            AdjustedEquityPoint(as_of - timedelta(days=2), -1.0, -100.0),
+            AdjustedEquityPoint(as_of, 100.0),
+        ], as_of)
+
+        self.assertIn("negative_equity", metrics.gate_reasons)
+
+    def test_post_loss_refunding_is_cashflow_adjusted_capital_exhaustion_not_negative_equity(self) -> None:
+        as_of = datetime(2026, 3, 2, tzinfo=UTC)
+
+        metrics = calculate_adjusted_equity_metrics([
+            AdjustedEquityPoint(as_of - timedelta(days=61), 1_000.0, 1_000.0),
+            AdjustedEquityPoint(as_of - timedelta(days=30), 0.0),
+            AdjustedEquityPoint(as_of - timedelta(days=29), 1_000.0, 1_000.0),
+            AdjustedEquityPoint(as_of, 1_000.0),
+        ], as_of)
+
+        self.assertIn("cashflow_adjusted_capital_exhaustion", metrics.gate_reasons)
+        self.assertNotIn("negative_equity", metrics.gate_reasons)
+        self.assertTrue(metrics.daily_coverage_complete)
+
     def test_external_cashflow_does_not_create_drawdown(self) -> None:
         as_of = datetime(2026, 3, 2, tzinfo=UTC)
         metrics = calculate_adjusted_equity_metrics([
@@ -82,7 +123,7 @@ class AdjustedEquityMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(metrics.max_consecutive_loss_usd, 20.0)
         self.assertEqual(metrics.max_consecutive_losses, 1)
 
-    def test_coverage_and_nonpositive_baseline_are_explicit_failures(self) -> None:
+    def test_prefunding_zero_is_ignored_but_short_coverage_still_fails(self) -> None:
         as_of = datetime(2026, 3, 2, tzinfo=UTC)
         metrics = calculate_adjusted_equity_metrics([
             AdjustedEquityPoint(as_of - timedelta(days=19), 0.0),
@@ -90,7 +131,7 @@ class AdjustedEquityMetricsTests(unittest.TestCase):
         ], as_of)
         self.assertFalse(metrics.coverage_20d)
         self.assertFalse(metrics.coverage_60d)
-        self.assertIn("nonpositive_adjusted_balance_baseline", metrics.gate_reasons)
+        self.assertNotIn("nonpositive_adjusted_balance_baseline", metrics.gate_reasons)
         self.assertIn("insufficient_equity_coverage_20d", metrics.gate_reasons)
 
     def test_daily_loss_uses_start_of_utc_day_to_low(self) -> None:
@@ -121,9 +162,10 @@ class AdjustedEquityMetricsTests(unittest.TestCase):
             AdjustedEquityPoint(as_of, 10.0),
         ], as_of)
         self.assertEqual(nonpositive.mdd_20d, 1.0)
-        self.assertIn("nonpositive_adjusted_equity_20d", nonpositive.gate_reasons)
+        self.assertIn("negative_equity", nonpositive.gate_reasons)
+        self.assertIn("cashflow_adjusted_capital_exhaustion", nonpositive.gate_reasons)
 
-    def test_stale_history_and_missing_daily_baseline_are_not_clean(self) -> None:
+    def test_stale_history_fails_but_first_funded_day_supplies_its_baseline(self) -> None:
         as_of = datetime(2026, 3, 2, tzinfo=UTC)
         stale = calculate_adjusted_equity_metrics([
             AdjustedEquityPoint(as_of - timedelta(days=61), 100.0),
@@ -132,13 +174,13 @@ class AdjustedEquityMetricsTests(unittest.TestCase):
         self.assertFalse(stale.coverage_20d)
         self.assertIn("stale_equity_coverage_20d", stale.gate_reasons)
 
-        missing_daily = calculate_adjusted_equity_metrics([
-            AdjustedEquityPoint(datetime(2026, 1, 1, 17, tzinfo=UTC), 100.0),
+        first_funded_day = calculate_adjusted_equity_metrics([
+            AdjustedEquityPoint(datetime(2026, 1, 1, 17, 1, tzinfo=UTC), 100.0),
             AdjustedEquityPoint(datetime(2026, 1, 1, 18, tzinfo=UTC), 92.0),
             AdjustedEquityPoint(as_of, 92.0),
         ], as_of, rollover_time=time(17, 0))
-        self.assertFalse(missing_daily.daily_coverage_complete)
-        self.assertIn("missing_daily_baseline_2026-01-01", missing_daily.gate_reasons)
+        self.assertTrue(first_funded_day.daily_coverage_complete)
+        self.assertAlmostEqual(first_funded_day.max_daily_loss, 0.08)
 
     def test_unrecovered_drawdown_and_flat_change_keep_equity_downward_chain(self) -> None:
         as_of = datetime(2026, 3, 2, tzinfo=UTC)
@@ -160,6 +202,33 @@ class AdjustedEquityMetricsTests(unittest.TestCase):
             AdjustedEquityPoint(datetime(2026, 1, 1, 18, tzinfo=UTC), 92.0),
             AdjustedEquityPoint(as_of, 92.0),
         ], as_of, rollover_time=time(17, 0))
+        self.assertTrue(metrics.daily_coverage_complete)
+        self.assertAlmostEqual(metrics.max_daily_loss, 0.08)
+
+    def test_daily_coverage_ignores_partial_first_trading_day_at_60_day_cutoff(self) -> None:
+        as_of = datetime(2026, 3, 2, 12, tzinfo=UTC)
+        metrics = calculate_adjusted_equity_metrics([
+            # The 60-day cutoff is 2026-01-01 12:00. This observation belongs
+            # to the trading day that began on 2025-12-31 at 17:00, so there is
+            # intentionally no pre-boundary point for that partial first day.
+            AdjustedEquityPoint(datetime(2026, 1, 1, 12, tzinfo=UTC), 100.0),
+            AdjustedEquityPoint(datetime(2026, 1, 1, 17, tzinfo=UTC), 100.0),
+            AdjustedEquityPoint(datetime(2026, 1, 1, 18, tzinfo=UTC), 92.0),
+            AdjustedEquityPoint(as_of, 92.0),
+        ], as_of, rollover_time=time(17, 0))
+
+        self.assertTrue(metrics.daily_coverage_complete)
+        self.assertNotIn("missing_daily_baseline_2025-12-31", metrics.gate_reasons)
+
+    def test_rollover_timestamp_anchor_is_a_daily_start_baseline(self) -> None:
+        as_of = datetime(2026, 3, 2, 19, tzinfo=UTC)
+        metrics = calculate_adjusted_equity_metrics([
+            AdjustedEquityPoint(datetime(2026, 1, 1, 12, tzinfo=UTC), 100.0),
+            AdjustedEquityPoint(datetime(2026, 1, 2, 17, tzinfo=UTC), 100.0),
+            AdjustedEquityPoint(datetime(2026, 1, 2, 20, tzinfo=UTC), 92.0),
+            AdjustedEquityPoint(as_of, 92.0),
+        ], as_of, rollover_time=time(17, 0))
+
         self.assertTrue(metrics.daily_coverage_complete)
         self.assertAlmostEqual(metrics.max_daily_loss, 0.08)
 
@@ -365,6 +434,14 @@ class FactorResultTests(unittest.TestCase):
         self.assertIn("negative_equity", result.gate_reasons)
         self.assertIn("nonpositive_balance_baseline", result.gate_reasons)
         self.assertIn("incomplete_daily_drawdown_coverage", result.gate_reasons)
+
+    def test_cashflow_adjusted_capital_exhaustion_is_a_hard_gate(self) -> None:
+        result = calculate_factor_result(valid_inputs(
+            cashflow_adjusted_capital_exhaustion=True,
+        ))
+
+        self.assertFalse(result.eligible)
+        self.assertIn("cashflow_adjusted_capital_exhaustion", result.gate_reasons)
 
 
 if __name__ == "__main__":
