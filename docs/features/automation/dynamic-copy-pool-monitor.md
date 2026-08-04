@@ -32,6 +32,13 @@ Product sleeve floors and a 40% monitor-account cap protect product coverage, wi
 metadata when the floor/cap combination cannot be satisfied.
 Holding-period, copyability and minimum-risk-lot checks decide which sleeves can execute.
 
+Once a sleeve passes the hard factor, cost, holding and copyability gates, its factor score is
+used for proportional base-weight allocation. The score is not itself a second eligibility floor:
+there is no `monitor_score > 0.55` requirement. A lower-scoring hard-qualified sleeve receives a
+smaller positive base weight when its product and client caps permit it; current floating risk,
+loss budgets, margin, quote, latency and portfolio limits may still reduce its executable weight
+or reject a new order at runtime.
+
 Execution ownership is `account + source Position -> one or more Demo Tickets`. Customer opening,
 increasing, reducing, closing and reversing events affect only those mapped Tickets. Opposing
 customers remain independently open; net exposure is display and combination-risk evidence only.
@@ -50,11 +57,16 @@ live reconciliation and is removed when the source closes; restart never turns i
 Demo order. A uniquely recovered or already mapped Ticket remains eligible for reduction, close and
 risk management.
 
-Base sleeve weights total 100%. Product weights use a 40% diversification cap when at least three
-qualified products make that cap feasible; with fewer products the unallocatable remainder is
-distributed evenly and the fallback is disclosed instead of silently shrinking the base-weight
-total. Combination risk utilization and the live 40% product-direction cluster limit remain
-separate. The copier applies a 1.5% cycle-loss budget, 3% daily stop, per-client Demo loss budgets,
+After cost, drawdown and copyability hard gates, every executable sleeve with a positive adjusted
+score receives proportional base-weight input. The adjusted score is not subject to a separate
+`0.55` activity floor or threshold subtraction: factor ranks determine relative allocation, while
+zero current risk multipliers still receive no new-risk allocation. Product weights use a 40%
+diversification cap when at least three qualified products make that cap feasible; with fewer
+products the unallocatable remainder is distributed evenly and the fallback is disclosed instead of
+silently shrinking the base-weight total. Existing per-client, per-sleeve, route, product and
+combination caps remain authoritative. Combination risk utilization and the live 40%
+product-direction cluster limit remain separate. The copier applies a 1.5% cycle-loss budget, 3%
+daily stop, per-client Demo loss budgets,
 and 15% soft/25% hard margin limits. Client loss use follows the 20/50/80/100% reduction curve;
 exhaustion closes only that client, pauses two hours and requires a 15-minute recovery shadow.
 Twelve-hour positions cannot add risk and 24-hour positions close and pause that client.
@@ -244,12 +256,12 @@ each physical source remains one serial task per stage. Results merge in stable 
 order; any source failure rejects the complete build.
 Coverage records bounded stage timings for route discovery, feature scan, current state, risk,
 holding, factor history/scoring and total build time without exposing SQL or account identity.
-The v7 producer may migrate a same-trading-day v6 cache to the cost-profit model without repeating
-the 60-day database build, but only when the private universe is present and metadata plus coverage
-prove the exact complete eleven-route/nine-source set. Migration preserves all existing hard-gate
-failures, applies the new five-day/20-day after-cost and coverage gates across the full cached
-universe, regenerates selection and weights, and stamps v7 metadata. The next 05:15 schedule still
-performs a complete read-only database rebuild under the v7 model. A migration rebases sleeve
+The v8 producer may migrate a same-trading-day v6 or v7 cache without repeating the 60-day database
+build, but only when the private universe is present and metadata plus coverage prove the exact
+complete eleven-route/nine-source set. Migration preserves all existing hard-gate failures, applies
+the current five-day/20-day after-cost and coverage gates across the full cached universe,
+regenerates selection and positive-score weights, and stamps v8 metadata. The next 05:15 schedule
+still performs a complete read-only database rebuild under the v8 model. A migration rebases sleeve
 weights but remains a same-day restart: persisted source-position to Demo-Ticket ownership is
 restored and validated rather than cleared.
 MT5 polling intentionally reads non-trading ledger actions so each physical cursor can advance past
