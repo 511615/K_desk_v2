@@ -88,6 +88,9 @@ Panels load independently where supported. A failed panel shows its own reason a
 the complete page or leave a false 100% progress state. A cold read of the normal account detail
 and risk-panel APIs must return complete results within 10 seconds; a warm read must not be used to
 hide a cold-path regression.
+The legacy source-notes text is optional once the compatibility workbook exists. If it is absent,
+the detail API treats it as empty source input and continues to serve the stored ledger; it never
+creates the file during a read request.
 
 ## Code and dependencies
 

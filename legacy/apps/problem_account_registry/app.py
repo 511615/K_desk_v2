@@ -430,7 +430,12 @@ def default_join_time(record: dict[str, str], journal_times: dict[str, str] | No
 
 
 def read_source_text() -> str:
-    data = SOURCE_TXT.read_bytes()
+    try:
+        data = SOURCE_TXT.read_bytes()
+    except FileNotFoundError:
+        # Source notes are optional after the ledger workbook has been initialized.
+        # A missing notes file must not make an account-detail read unavailable.
+        return ""
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
             return data.decode(encoding)

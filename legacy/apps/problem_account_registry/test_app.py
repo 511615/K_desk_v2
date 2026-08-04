@@ -9,6 +9,16 @@ from unittest.mock import MagicMock, patch
 import app
 
 
+class SourceNotesTests(unittest.TestCase):
+    def test_missing_optional_source_notes_returns_empty_text(self):
+        missing_path = Path(tempfile.gettempdir()) / "kdesk-missing-source-notes.txt"
+        if missing_path.exists():
+            missing_path.unlink()
+
+        with patch.object(app, "SOURCE_TXT", missing_path):
+            self.assertEqual(app.read_source_text(), "")
+
+
 class HierarchyNetDepositTests(unittest.TestCase):
     def test_query_validation_accepts_product_prefix_and_rejects_oversized_range(self):
         parsed = app.hierarchy_net_deposit.parse_query(
