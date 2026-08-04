@@ -68,6 +68,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   gross lots, XAUUSD gross/net lots, hedge ratio, oldest-open age, floating-loss ratio,
   margin/equity and the build-time open-risk multiplier. `/account/{login}` does not fetch or embed
   this dashboard; copy-pool state is shown only on `/copy-pool`.
+- `PUT /api/copy-pool/controls` - loopback-only, strictly validated manual control update for
+  automatic new exposure, equity-floor, daily-loss and cycle-loss gates plus one-shot recovery
+  shadow. The response and dashboard expose only switch state, revision and update metadata; the
+  producer consumes the atomic local file and audit log without an MT Manager operation.
 - The same dashboard additively exposes `currentCopies`, with one row per currently owned Demo
   Ticket. Each row contains the real source Login, server/platform, product/direction, source
   Position, source and Demo lots/open evidence, entry delay, exact source-position floating P/L,

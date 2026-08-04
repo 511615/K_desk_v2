@@ -165,6 +165,42 @@
         }
       }
     },
+    "/api/copy-pool/controls": {
+      "put": {
+        "summary": "Update Copy Pool Controls",
+        "operationId": "update_copy_pool_controls_api_copy_pool_controls_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyPoolControlsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/copy-pool/accounts/{alias}": {
       "get": {
         "summary": "Copy Pool Account",
@@ -2146,6 +2182,40 @@
   },
   "components": {
     "schemas": {
+      "CopyPoolControlsRequest": {
+        "properties": {
+          "autoTradingEnabled": {
+            "type": "boolean",
+            "title": "Autotradingenabled"
+          },
+          "equityFloorEnabled": {
+            "type": "boolean",
+            "title": "Equityfloorenabled"
+          },
+          "dailyLossEnabled": {
+            "type": "boolean",
+            "title": "Dailylossenabled"
+          },
+          "cycleLossEnabled": {
+            "type": "boolean",
+            "title": "Cyclelossenabled"
+          },
+          "resumeRequested": {
+            "type": "boolean",
+            "title": "Resumerequested",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "autoTradingEnabled",
+          "equityFloorEnabled",
+          "dailyLossEnabled",
+          "cycleLossEnabled"
+        ],
+        "title": "CopyPoolControlsRequest"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {

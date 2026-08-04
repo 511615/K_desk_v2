@@ -47,7 +47,8 @@ vi.mock('@tanstack/vue-query', () => ({
   }),
 }))
 
-vi.mock('../api', () => ({ api: vi.fn() }))
+const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn() }))
+vi.mock('../api', () => ({ api: apiMock }))
 vi.mock('../frontendUpdate', () => ({ startFrontendUpdateMonitor: () => () => undefined }))
 
 import CopyPoolPage from './CopyPoolPage.vue'
@@ -78,5 +79,18 @@ describe('CopyPoolPage tier tabs', () => {
     expect(table.text()).toContain('单主浮盈亏')
     expect(table.text()).not.toContain('C001')
     expect(table.get('a').attributes('href')).toBe('/copy-pool/accounts/C001')
+  })
+
+  it('shows manual risk controls and sends an audited control update', async () => {
+    const wrapper = mount(CopyPoolPage)
+
+    expect(wrapper.get('[data-testid="risk-controls"]').text()).toContain('权益地板')
+    await wrapper.get('[data-testid="equity-floor-toggle"]').setValue(false)
+    await wrapper.get('[data-testid="apply-risk-controls"]').trigger('click')
+
+    expect(apiMock).toHaveBeenCalledWith('/api/copy-pool/controls', expect.objectContaining({
+      method: 'PUT',
+      body: expect.stringContaining('"equityFloorEnabled":false'),
+    }))
   })
 })

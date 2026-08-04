@@ -87,6 +87,11 @@ The owning source Position retains that minimum lot across reconciliation. A rol
 permits at most eight open requests; a ninth request enters execution hard stop and flattens strategy
 Tickets. Investigate and deploy a tested fix before restarting rather than repeatedly relaunching an
 unchanged Producer.
+Manual risk controls are written only through the loopback 8777 endpoint and consumed from
+`manual_controls.json` in the Producer output directory. Every update appends
+`manual_controls_audit.jsonl`. Use the separate resume action after changing a gate; it starts
+recovery shadow and requires the normal operational gates before live execution. Deleting or
+hand-editing the file is not an approved reset procedure.
 MT5 incremental polling coalesces every poll batch to the final source Position before execution. A
 `batch_terminal_flat` event means the source opened and fully closed before the Producer could act;
 no Demo Ticket is expected. If an open and immediate close order pair appears instead, stop the

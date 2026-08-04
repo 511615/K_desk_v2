@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "74642ac1a594",
+  "registryVersion": "12f5a4c8b53a",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -183,6 +183,7 @@
       "apis": [
         "GET /copy-pool",
         "GET /api/copy-pool/dashboard",
+        "PUT /api/copy-pool/controls",
         "GET /copy-pool/accounts/{alias}"
       ],
       "code": [
@@ -200,6 +201,7 @@
         "services/copy_pool_runtime/copy_delay_replay_domain.py",
         "services/copy_pool_runtime/copy_dynamic_pool_domain.py",
         "services/copy_pool_runtime/copy_independent_execution.py",
+        "services/copy_pool_runtime/copy_manual_controls.py",
         "services/copy_pool_runtime/copy_pool_equity_reconstruction.py",
         "services/copy_pool_runtime/copy_pool_factor_domain.py",
         "services/copy_pool_runtime/copy_pool_factor_service.py",
@@ -219,6 +221,7 @@
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/src/copyPool.spec.ts",
         "frontend/src/pages/CopyPoolPage.spec.ts",
+        "services/copy_pool_runtime/tests/test_copy_manual_controls.py",
         "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py",
         "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py",
         "services/copy_pool_runtime/tests/test_copy_independent_execution.py",

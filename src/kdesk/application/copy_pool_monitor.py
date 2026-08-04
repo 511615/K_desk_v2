@@ -9,6 +9,8 @@ class CopyPoolSnapshotRepository(Protocol):
 
     def account_target(self, alias: str) -> str | None: ...
 
+    def update_controls(self, values: dict[str, bool]) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class CopyPoolMonitorService:
@@ -23,3 +25,6 @@ class CopyPoolMonitorService:
 
     def account_target(self, alias: str) -> str | None:
         return self.repository.account_target(alias)
+
+    def update_controls(self, values: dict[str, bool]) -> dict[str, Any]:
+        return self.repository.update_controls(values)

@@ -23,6 +23,7 @@ from copy_independent_execution import (
     slow_weight_increase,
     source_position_key,
 )
+from copy_manual_controls import DEFAULT_MANUAL_CONTROLS, normalize_manual_controls
 from copy_dynamic_pool_domain import (
     PoolTier,
     RankingCandidate,
@@ -214,6 +215,9 @@ class MultiSourceLiveService(LiveService):
         self.pool_was_rebuilt = False
         self.pool_weights_rebuilt = False
         self.pending_coalesced_transitions: list[dict[str, Any]] = []
+        self.manual_controls_path = self.output_dir / "manual_controls.json"
+        self.manual_controls = dict(DEFAULT_MANUAL_CONTROLS)
+        self.manual_controls_revision = ""
 
     def _upgrade_same_day_cost_pool(
         self,
@@ -1763,6 +1767,7 @@ class MultiSourceLiveService(LiveService):
             self.phase == "live"
             and position.copy_eligible
             and policy == "normal"
+            and self.manual_control_enabled("auto_trading_enabled")
         )
         self.persist_private_state()
         self._sync_independent_position(
@@ -1812,6 +1817,41 @@ class MultiSourceLiveService(LiveService):
                 "saved_at": beijing_now().isoformat(),
             },
         )
+
+    def refresh_manual_controls(self) -> None:
+        if not self.manual_controls_path.exists():
+            self.manual_controls = dict(DEFAULT_MANUAL_CONTROLS)
+            return
+        try:
+            payload = json.loads(self.manual_controls_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            self.manual_controls = dict(DEFAULT_MANUAL_CONTROLS)
+            return
+        revision = str(payload.get("revision") or "") if isinstance(payload, Mapping) else ""
+        controls = normalize_manual_controls(payload if isinstance(payload, Mapping) else {})
+        if revision and revision != self.manual_controls_revision and controls["resume_requested"]:
+            account = self.mt.account()
+            marked = self.mt.marked_pnl(trading_day_start_utc(utc_now()))
+            self.daily_hard_stop = False
+            self.cooldown_until = None
+            self.daily_reference_equity = float(account.equity)
+            self.cycle_reference_equity = float(account.equity)
+            self.cycle_baseline_pnl = marked
+            self.phase = "recovery_shadow"
+            self.shadow_started = time.monotonic()
+            self.required_shadow_seconds = RECOVERY_SHADOW_SECONDS
+            self.reconcile_streak = 0
+            controls["resume_requested"] = False
+            payload = {**payload, "resume_requested": False}
+            atomic_json(self.manual_controls_path, payload)
+            self.log("Manual hard-stop recovery requested; recovery shadow started.")
+        self.manual_controls = controls
+        self.manual_controls_revision = revision
+
+    def manual_control_enabled(self, key: str) -> bool:
+        controls = getattr(self, "manual_controls", DEFAULT_MANUAL_CONTROLS)
+        value = controls.get(key, DEFAULT_MANUAL_CONTROLS[key])
+        return value if isinstance(value, bool) else DEFAULT_MANUAL_CONTROLS[key]
 
     def public_status(self) -> dict[str, Any]:
         status = super().public_status()
@@ -1927,6 +1967,7 @@ class MultiSourceLiveService(LiveService):
                 ),
                 "independent_source_positions": len(self.copy_book.positions),
                 "independent_demo_tickets": len(self.copy_book.ticket_owners()),
+                "manual_controls": dict(self.manual_controls),
                 "dynamic_sleeves": [
                     {
                         "sleeve_key": key,
@@ -2792,7 +2833,11 @@ class MultiSourceLiveService(LiveService):
                 self.flatten("friday_fallback")
             return
         self.reconcile_independent_copies(
-            allow_increase=self.phase == "live" and policy == "normal"
+            allow_increase=(
+                self.phase == "live"
+                and policy == "normal"
+                and self.manual_control_enabled("auto_trading_enabled")
+            )
         )
 
     def risk_check(self) -> None:
@@ -2817,6 +2862,8 @@ class MultiSourceLiveService(LiveService):
         marked = self.mt.marked_pnl(trading_day_start_utc(utc_now()))
         cycle = marked - self.cycle_baseline_pnl
         if (
+            self.manual_control_enabled("equity_floor_enabled")
+            and
             self.profile.equity_floor_usd is not None
             and float(account.equity) <= self.profile.equity_floor_usd
         ):
@@ -2825,13 +2872,17 @@ class MultiSourceLiveService(LiveService):
             self.daily_hard_stop = True
             self.phase = "equity_floor_stop"
             return
-        if marked <= -self.daily_loss_limit():
+        if self.manual_control_enabled("daily_loss_enabled") and marked <= -self.daily_loss_limit():
             if self._live_positions():
                 self.flatten("daily_loss_stop")
             self.daily_hard_stop = True
             self.phase = "daily_stop"
             return
-        if self.phase == "live" and cycle <= -self.cycle_loss_limit():
+        if (
+            self.manual_control_enabled("cycle_loss_enabled")
+            and self.phase == "live"
+            and cycle <= -self.cycle_loss_limit()
+        ):
             self.flatten("cycle_loss_stop")
             self.cooldown_until = utc_now() + timedelta(seconds=COOLDOWN_SECONDS)
             self.phase = "cooldown"
@@ -2940,6 +2991,7 @@ class MultiSourceLiveService(LiveService):
                 loop_started = time.monotonic()
                 try:
                     assert self.portfolio is not None
+                    self.refresh_manual_controls()
                     events, mt5_errors = self.db.poll_mt5_events(self.portfolio.cursors)
                     snapshots, mt4_errors = self.db.poll_mt4_positions()
                     self.apply_event_batch(events)

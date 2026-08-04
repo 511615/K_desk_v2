@@ -81,6 +81,10 @@
   follows the 100/70/25/0 reduction curve. Exhaustion closes only that client, pauses two hours and
   requires 15 minutes of recovery shadow. Weight decreases are immediate; recovery increases no
   faster than five percentage points per 15 minutes and ten per hour.
+- Local operator controls may disable automatic new exposure or one of the equity-floor, daily-loss
+  and cycle-loss gates for the Demo experiment. Missing or invalid controls enable every gate. A
+  resume request clears a latched daily stop once and enters recovery shadow; it never directly
+  authorizes a broker order and never disables margin, outage, Friday or Ticket-ownership controls.
 - When the explicit minimum-lot exception is active on `ACCMGlobal-Demo` in `StagedLive`, an active
   client's loss allowance is floored at the existing 20% per-client share of the cycle budget. This
   exception aligns the indivisible 0.01-lot test exposure with its stop budget; it does not increase

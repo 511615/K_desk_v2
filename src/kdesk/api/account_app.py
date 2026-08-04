@@ -13,6 +13,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict
 
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
@@ -36,6 +37,16 @@ from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
 
 logger = logging.getLogger("kdesk.account")
+
+
+class CopyPoolControlsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    autoTradingEnabled: bool
+    equityFloorEnabled: bool
+    dailyLossEnabled: bool
+    cycleLossEnabled: bool
+    resumeRequested: bool = False
 
 
 def _xlsx_response(content: bytes, filename: str) -> Response:
@@ -209,6 +220,23 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             event_limit=event_limit,
             order_limit=order_limit,
         )
+
+    @app.put("/api/copy-pool/controls")
+    async def update_copy_pool_controls(request: Request, body: CopyPoolControlsRequest):
+        host = request.client.host if request.client else ""
+        if host not in {"127.0.0.1", "::1", "testclient"}:
+            raise HTTPException(status_code=403, detail="风控控制仅允许从本机操作")
+        controls = await run_in_threadpool(
+            copy_pool.update_controls,
+            {
+                "auto_trading_enabled": body.autoTradingEnabled,
+                "equity_floor_enabled": body.equityFloorEnabled,
+                "daily_loss_enabled": body.dailyLossEnabled,
+                "cycle_loss_enabled": body.cycleLossEnabled,
+                "resume_requested": body.resumeRequested,
+            },
+        )
+        return {"ok": True, "controls": controls}
 
     @app.get("/copy-pool/accounts/{alias}")
     async def copy_pool_account(alias: str):

@@ -659,6 +659,48 @@ def test_copy_pool_api_and_anonymous_account_redirect(tmp_path: Path) -> None:
     assert "server=DBG+GB+MT5+Live2" in redirect.headers["location"]
 
 
+def test_copy_pool_manual_controls_are_local_only_and_audited(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    settings = replace(make_test_settings(tmp_path), copy_pool_output_dir=output)
+    app = create_account_app(settings)
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        response = client.put(
+            "/api/copy-pool/controls",
+            json={
+                "autoTradingEnabled": True,
+                "equityFloorEnabled": False,
+                "dailyLossEnabled": False,
+                "cycleLossEnabled": True,
+                "resumeRequested": True,
+            },
+        )
+        dashboard = client.get(
+            "/api/copy-pool/dashboard?timeline_limit=30&event_limit=10&order_limit=10"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["controls"]["equityFloorEnabled"] is False
+    assert response.json()["controls"]["resumeRequested"] is True
+    assert dashboard.json()["controls"]["dailyLossEnabled"] is False
+    audit = (output / "manual_controls_audit.jsonl").read_text(encoding="utf-8")
+    assert '"source": "8777-local-ui"' in audit
+
+    with TestClient(app, client=("10.1.2.3", 50000)) as remote_client:
+        forbidden = remote_client.put(
+            "/api/copy-pool/controls",
+            json={
+                "autoTradingEnabled": False,
+                "equityFloorEnabled": False,
+                "dailyLossEnabled": False,
+                "cycleLossEnabled": False,
+                "resumeRequested": False,
+            },
+        )
+
+    assert forbidden.status_code == 403
+
+
 def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
     payload = CopyPoolFileSnapshotRepository(tmp_path / "missing").dashboard(
         timeline_limit=30,
@@ -682,4 +724,14 @@ def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
         "exposures": [],
         "dynamicSleeves": [],
         "scheduler": {},
+        "controls": {
+            "autoTradingEnabled": True,
+            "equityFloorEnabled": True,
+            "dailyLossEnabled": True,
+            "cycleLossEnabled": True,
+            "resumeRequested": False,
+            "revision": "",
+            "updatedAt": None,
+            "source": "default",
+        },
     }

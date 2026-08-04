@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import re
 from collections import deque
 from collections.abc import Iterable
@@ -10,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
+from uuid import uuid4
 
 ALIAS_RE = re.compile(r"^C\d{3}$")
 REASON_CODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$")
@@ -163,6 +165,54 @@ class CopyPoolFileSnapshotRepository:
         self.routes_path = self.output_dir / "client_routes_private.json"
         self.private_state_path = self.output_dir / "runtime_state_private.json"
         self.coverage_path = self.output_dir / "source_coverage.json"
+        self.controls_path = self.output_dir / "manual_controls.json"
+        self.controls_audit_path = self.output_dir / "manual_controls_audit.jsonl"
+
+    @staticmethod
+    def _control_defaults() -> dict[str, bool]:
+        return {
+            "auto_trading_enabled": True,
+            "equity_floor_enabled": True,
+            "daily_loss_enabled": True,
+            "cycle_loss_enabled": True,
+            "resume_requested": False,
+        }
+
+    def controls(self) -> dict[str, Any]:
+        raw = _read_json(self.controls_path)
+        values = {
+            key: raw.get(key) if isinstance(raw.get(key), bool) else default
+            for key, default in self._control_defaults().items()
+        }
+        return {
+            "autoTradingEnabled": values["auto_trading_enabled"],
+            "equityFloorEnabled": values["equity_floor_enabled"],
+            "dailyLossEnabled": values["daily_loss_enabled"],
+            "cycleLossEnabled": values["cycle_loss_enabled"],
+            "resumeRequested": values["resume_requested"],
+            "revision": str(raw.get("revision") or ""),
+            "updatedAt": raw.get("updated_at"),
+            "source": str(raw.get("source") or "default"),
+        }
+
+    def update_controls(self, values: dict[str, bool]) -> dict[str, Any]:
+        payload = {
+            "auto_trading_enabled": values["auto_trading_enabled"],
+            "equity_floor_enabled": values["equity_floor_enabled"],
+            "daily_loss_enabled": values["daily_loss_enabled"],
+            "cycle_loss_enabled": values["cycle_loss_enabled"],
+            "resume_requested": values["resume_requested"],
+            "revision": uuid4().hex,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "source": "8777-local-ui",
+        }
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        temporary = self.controls_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, self.controls_path)
+        with self.controls_audit_path.open("a", encoding="utf-8") as audit:
+            audit.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return self.controls()
 
     def _routes(self) -> dict[str, dict[str, str]]:
         payload = _read_json(self.routes_path)
@@ -214,6 +264,7 @@ class CopyPoolFileSnapshotRepository:
                 "exposures": [],
                 "dynamicSleeves": [],
                 "scheduler": {},
+                "controls": self.controls(),
             }
 
         all_events = _read_csv(self.events_path)
@@ -507,6 +558,7 @@ class CopyPoolFileSnapshotRepository:
             "exposures": exposures,
             "dynamicSleeves": dynamic_sleeves,
             "scheduler": self._scheduler(status.get("scheduler")),
+            "controls": self.controls(),
         }
 
     @staticmethod
@@ -906,6 +958,12 @@ class CopyPoolFileSnapshotRepository:
             "riskManagedClients": _int(row.get("risk_managed_clients")),
             "independentSourcePositions": _int(row.get("independent_source_positions")),
             "independentDemoTickets": _int(row.get("independent_demo_tickets")),
+            "manualControls": {
+                "autoTradingEnabled": bool(item.get("auto_trading_enabled", True)),
+                "equityFloorEnabled": bool(item.get("equity_floor_enabled", True)),
+                "dailyLossEnabled": bool(item.get("daily_loss_enabled", True)),
+                "cycleLossEnabled": bool(item.get("cycle_loss_enabled", True)),
+            } if isinstance((item := row.get("manual_controls")), dict) else {},
             "portfolioMarginBudgetUsd": _float(row.get("portfolio_margin_budget_usd")),
             "portfolioStressBudgetUsd": _float(row.get("portfolio_stress_budget_usd")),
             "products": [

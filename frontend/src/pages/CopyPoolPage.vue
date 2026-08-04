@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
 import type { PoolTierTab } from '../copyPool'
@@ -9,6 +9,9 @@ import { startFrontendUpdateMonitor } from '../frontendUpdate'
 const poolSearch = ref('')
 const poolFilter = ref<'all' | 'abook' | 'position' | 'reduced'>('all')
 const selectedPoolTier = ref<PoolTierTab>('active')
+const controlsSaving = ref(false)
+const controlsMessage = ref('')
+const controlForm = ref({ autoTradingEnabled: true, equityFloorEnabled: true, dailyLossEnabled: true, cycleLossEnabled: true })
 let stopFrontendUpdateMonitor: () => void = () => undefined
 
 const dashboard = useQuery({
@@ -33,6 +36,28 @@ const exposures = computed<any[]>(() => payload.value.exposures || [])
 const productQuotes = computed<any[]>(() => status.value.products || [])
 const dynamicSleeves = computed<any[]>(() => payload.value.dynamicSleeves || status.value.dynamicSleeves || [])
 const scheduler = computed<any>(() => payload.value.scheduler || status.value.scheduler || {})
+const controls = computed<any>(() => payload.value.controls || status.value.manualControls || {})
+watch(controls, value => {
+  controlForm.value = {
+    autoTradingEnabled: value.autoTradingEnabled !== false,
+    equityFloorEnabled: value.equityFloorEnabled !== false,
+    dailyLossEnabled: value.dailyLossEnabled !== false,
+    cycleLossEnabled: value.cycleLossEnabled !== false,
+  }
+}, { immediate: true })
+async function saveControls(resumeRequested = false) {
+  controlsSaving.value = true
+  controlsMessage.value = ''
+  try {
+    await api('/api/copy-pool/controls', { method: 'PUT', body: JSON.stringify({ ...controlForm.value, resumeRequested }) })
+    controlsMessage.value = resumeRequested ? '已请求解除硬停，系统将进入恢复影子核对' : '风控开关已保存，Producer 将在下一轮读取'
+    await dashboard.refetch?.()
+  } catch (error: any) {
+    controlsMessage.value = `保存失败：${error?.message || '未知错误'}`
+  } finally {
+    controlsSaving.value = false
+  }
+}
 const chartRows = computed(() => timeline.value.slice(-360))
 const filters = [
   { key: 'all', label: '全部' },
@@ -277,6 +302,16 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
     <div v-else-if="!payload.available" class="panel-state">{{ payload.message || '当前没有可显示的跟单数据' }}</div>
 
     <template v-else>
+      <section class="copy-panel risk-control-panel" data-testid="risk-controls">
+        <div class="copy-panel-head"><div><h2>人工风控控制</h2><small>仅本机可修改；关闭保护不会自动解除已触发的硬停，需单独请求恢复影子</small></div><span :class="status.dailyHardStop ? 'negative' : 'positive'">{{ status.dailyHardStop ? '当前硬停' : '未硬停' }}</span></div>
+        <div class="risk-control-grid">
+          <label><input v-model="controlForm.autoTradingEnabled" type="checkbox"><span><b>自动下单</b><small>关闭后禁止新增敞口，仍允许减仓和平仓</small></span></label>
+          <label><input v-model="controlForm.equityFloorEnabled" data-testid="equity-floor-toggle" type="checkbox"><span><b>权益地板</b><small>当前阈值 {{ money(status.equityFloorUsd) }} USD</small></span></label>
+          <label><input v-model="controlForm.dailyLossEnabled" type="checkbox"><span><b>日内亏损硬停</b><small>当前额度 {{ money(status.dailyLossLimitUsd) }} USD</small></span></label>
+          <label><input v-model="controlForm.cycleLossEnabled" type="checkbox"><span><b>周期亏损冷却</b><small>当前额度 {{ money(status.cycleLossLimitUsd) }} USD</small></span></label>
+        </div>
+        <div class="risk-control-actions"><button class="primary" data-testid="apply-risk-controls" :disabled="controlsSaving" @click="saveControls(false)">保存风控开关</button><button :disabled="controlsSaving || !status.dailyHardStop" @click="saveControls(true)">解除硬停并恢复影子</button><small>{{ controlsMessage || `当前阶段：${phaseLabel(status.phase)}` }}</small></div>
+      </section>
       <section class="copy-summary-grid">
         <article><span>模拟账户权益</span><strong>{{ money(status.equityUsd) }} USD</strong><small :class="Number(status.strategyMarkedPnlUsd) >= 0 ? 'positive' : 'negative'">今日 {{ Number(status.strategyMarkedPnlUsd) >= 0 ? '+' : '' }}{{ money(status.strategyMarkedPnlUsd) }} USD</small></article>
         <article><span>Demo 多仓 / 空仓</span><strong class="positive">+{{ number(demoExposure.long) }}</strong><small class="negative">空仓 -{{ number(demoExposure.short) }} · 双边 {{ number(demoExposure.gross) }} 手</small></article>
@@ -450,6 +485,14 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 <style scoped>
 .copy-topbar nav a.active { color: #fff; background: #0b5683; border-radius: 4px; }
 .copy-pool-page { max-width: 1580px; margin: auto; padding: 14px 16px 50px; font-variant-numeric: tabular-nums; }
+.risk-control-panel { margin-bottom: 12px; }
+.risk-control-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.risk-control-grid label { display: flex; gap: 9px; align-items: flex-start; padding: 10px; border: 1px solid #164c72; border-radius: 6px; background: #061a2e; cursor: pointer; }
+.risk-control-grid input { margin-top: 3px; accent-color: #28c89a; }
+.risk-control-grid span { display: grid; gap: 3px; }
+.risk-control-grid small { color: #7f9db7; line-height: 1.35; }
+.risk-control-actions { display: flex; align-items: center; gap: 9px; margin-top: 10px; flex-wrap: wrap; }
+.risk-control-actions small { color: #8fa9bf; }
 .copy-titlebar { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding: 5px 0 12px; border-bottom: 1px solid var(--kdesk-border); }
 .copy-titlebar h1 { margin: 0; font-size: 24px; }
 .copy-titlebar p { margin: 5px 0 0; color: var(--kdesk-muted); font-size: 12px; }
@@ -629,6 +672,7 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 .empty-inline { padding: 16px; text-align: center; color: var(--kdesk-muted); font-size: 11px; }
 .warning { color: var(--kdesk-warning) !important; }
 @media (max-width: 1100px) {
+  .risk-control-grid { grid-template-columns: 1fr 1fr; }
   .health-strip { grid-template-columns: repeat(4, 1fr); }
   .health-strip article:nth-child(4n) { border-right: 0; }
   .health-strip article:nth-child(-n+4) { border-bottom: 1px solid var(--kdesk-border); }
