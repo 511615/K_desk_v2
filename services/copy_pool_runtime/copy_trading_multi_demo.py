@@ -1397,6 +1397,7 @@ class MultiSourceLiveService(LiveService):
                     target_weight=float(row.get("live_base_weight", 0.0) or 0.0),
                     required_active_qualifications=required_qualifications,
                     entry_shadow_duration=entry_shadow_duration,
+                    fast_activation=fast_activation,
                 )
             total_effective = sum(
                 state.effective_weight for state in self.sleeve_states.values()

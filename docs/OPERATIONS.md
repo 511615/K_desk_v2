@@ -120,9 +120,12 @@ four physical sources concurrently, but a physical source remains serial within 
 `build_stage_seconds` in accepted coverage before changing
 batch sizes or concurrency; a failed source must prevent publication rather than produce a partial pool.
 
-`-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
-effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;
-other server/mode combinations retain two rankings plus ten minutes even when the switch is passed.
+`-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. For a fresh
+hard/activity/minimum-lot-qualified sleeve in the active zone, its first 15-minute ranking enters
+`ACTIVE` directly and sets effective weight to the current live base weight, without entry shadow or
+slow-weight limits. Existing entry shadows still require healthy observation, and operational gates,
+terminal permission and factor qualification remain mandatory. Other server/mode combinations retain
+two rankings plus ten minutes and slow-weight recovery even when the switch is passed.
 The status snapshot records requested and effective state. This option does not imply
 `-EnableLiveTrading` and does not bypass any operational, ownership, risk or terminal gate.
 

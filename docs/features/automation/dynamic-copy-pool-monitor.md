@@ -145,11 +145,12 @@ More than eight Demo open requests in a rolling 60-second window triggers an exe
 strategy flatten before another opening request is sent.
 
 The optional `-DemoFastActivation` switch is also effective only for `ACCMGlobal-Demo` in
-`StagedLive`. It changes entry from two consecutive rankings plus ten healthy minutes to one
-qualified ranking plus two continuously healthy minutes. It does not authorize trading, bypass an
-operational or risk gate, chase a position observed during shadow or increase weight while health is
-false. Without the switch, and on every other server or mode, the normal two-plus-ten policy remains
-authoritative.
+`StagedLive`. For a fresh sleeve in the active zone that is hard-eligible, activity-eligible and
+minimum-lot feasible, the first 15-minute ranking directly sets `ACTIVE` and its effective weight to
+the current `live_base_weight`; it does not wait for entry shadow or the slow weight-increase limits.
+It does not authorize trading or bypass operational/risk gates, and an existing entry shadow remains
+subject to its health window. Without the switch, and on every other server or mode, the normal
+two-plus-ten shadow and slow-weight policy remains authoritative.
 
 ## UI and behavior
 
@@ -363,8 +364,9 @@ idle source semantics and the bounded explicit Demo minimum-lot exception.
 The minimum-lot budget regression also requires a tiny-weight active client to receive the 20%
 cycle-budget floor only under the explicit Demo switch, proves that a 0.69 USD copied loss does not
 exhaust that floor and preserves weight-proportional budgets elsewhere.
-Producer and dashboard tests also cover the explicit Demo fast-activation scope, one-ranking/two-
-minute policy, default two-ranking/ten-minute compatibility and effective status projection.
+Producer and dashboard tests also cover the explicit Demo fast-activation scope, direct first-ranking
+activation for fresh eligible sleeves, retained entry-shadow safety, default two-ranking/ten-minute
+compatibility and effective status projection.
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
 MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
 file, preventing DictReader field shifts after a producer schema upgrade.

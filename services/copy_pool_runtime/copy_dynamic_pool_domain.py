@@ -309,6 +309,7 @@ def update_rank_state(
     target_weight: float | None = None,
     required_active_qualifications: int = 2,
     entry_shadow_duration: timedelta = timedelta(minutes=10),
+    fast_activation: bool = False,
 ) -> SleeveDynamicState:
     """Apply one 15-minute rank decision without leaking client budget across sleeves."""
     now = _ensure_aware(now)
@@ -332,6 +333,34 @@ def update_rank_state(
 
     active_ok = active_zone and candidate.executable
     desired = state.day_start_base_weight if target_weight is None else target_weight
+    # The explicit Demo fast-activation policy is deliberately narrower than
+    # the normal rank path. It only applies to a fresh, executable sleeve in
+    # the active zone; an existing entry shadow remains subject to its health
+    # window so a pending reconciliation cannot bypass an operational gate.
+    if fast_activation and state.tier != PoolTier.ENTRY_SHADOW:
+        if not active_ok:
+            return replace(
+                _reduce_weight(state, 0.0, now),
+                tier=PoolTier.MONITOR,
+                consecutive_active_qualifications=0,
+                consecutive_qualified_falls=0,
+                shadow_started_at=None,
+                shadow_ends_at=None,
+                last_ranked_at=now,
+            )
+        return replace(
+            state,
+            tier=PoolTier.ACTIVE,
+            effective_weight=max(0.0, float(desired)),
+            consecutive_active_qualifications=max(
+                state.consecutive_active_qualifications + 1,
+                required_active_qualifications,
+            ),
+            consecutive_qualified_falls=0,
+            shadow_started_at=None,
+            shadow_ends_at=None,
+            last_ranked_at=now,
+        )
     if state.tier == PoolTier.ENTRY_SHADOW:
         if not active_ok:
             return replace(_reduce_weight(state, 0.0, now), tier=PoolTier.MONITOR,

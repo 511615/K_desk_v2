@@ -109,6 +109,35 @@ class DynamicStateTests(unittest.TestCase):
             PoolTier.ACTIVE,
         )
 
+    def test_demo_fast_activation_promotes_fresh_active_zone_without_shadow(self) -> None:
+        active = update_rank_state(
+            self.state,
+            self.row,
+            NOW,
+            active_zone=True,
+            qualified_zone=True,
+            target_weight=0.07,
+            required_active_qualifications=1,
+            entry_shadow_duration=timedelta(minutes=2),
+            fast_activation=True,
+        )
+        self.assertEqual(active.tier, PoolTier.ACTIVE)
+        self.assertEqual(active.effective_weight, 0.07)
+        self.assertEqual(active.consecutive_active_qualifications, 1)
+        self.assertIsNone(active.shadow_started_at)
+
+        blocked = update_rank_state(
+            active,
+            candidate("A", "XAUUSD", 1.0, activity_eligible=False),
+            NOW + timedelta(minutes=15),
+            active_zone=True,
+            qualified_zone=True,
+            target_weight=0.07,
+            fast_activation=True,
+        )
+        self.assertEqual(blocked.tier, PoolTier.MONITOR)
+        self.assertEqual(blocked.effective_weight, 0.0)
+
     def test_two_qualified_falls_hard_fail_weight_limit_release_and_frozen_budget(self) -> None:
         active = SleeveDynamicState(day_start_base_weight=.10, effective_weight=.10, tier=PoolTier.ACTIVE, frozen_daily_loss_budget=15)
         once = update_rank_state(active, self.row, NOW, active_zone=True, qualified_zone=False)
