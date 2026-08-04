@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/app.py", "legacy/scripts/run_ac_mt5
 tests: ["legacy/apps/problem_account_registry/test_app.py", "legacy/scripts/test_run_platform_push_discovery.py", "tests/test_worker.py", "frontend/src/pushDiscovery.spec.ts"]
 depends_on: ["JOB-RECOVERY-001", "ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-23
+last_verified_date: 2026-08-04
 ---
 
 # Market-pushing detection
@@ -115,6 +115,12 @@ evidence are terminal explicit states; polling must not freeze on false progress
 may contain per-source or per-account failures, which remain visible instead of being discarded.
 Network fetch errors are recoverable polling states, not terminal detection failures.
 Cancellation remains visible until the persistent worker confirms the terminal cancelled state.
+Every deep candidate runs in an isolated child process. The parent emits the current deep stage
+(`load_history`, `build_context`, `finance`, `cross_account_sync`, `tick_analysis` or `score`) on
+entry and a heartbeat at least every 10 seconds while remote reads are pending. A candidate that
+exceeds the fixed 300-second budget is terminated without changing any remote state, persisted as a
+recoverable deep-stage failure and does not block later candidates or the discovery queue. A timeout
+is unavailable evidence, never a clean result or a no-risk conclusion.
 
 ## Code and dependencies
 
@@ -126,7 +132,8 @@ Tests cover progress mapping, selected order filters, peer comparisons, quote-pr
 partial failure serialization, bounded candidate shards, exact cross-shard MT5 order reconciliation,
 time-first order reconstruction and de-duplication, concurrent synchronization source ordering,
 exact Tick-window slicing, serial/parallel structure-score equivalence, absence of candidate
-daily-view queries, transient polling disconnects, restart recovery and the inclusive absolute and
+daily-view queries, deep-stage heartbeat and timeout isolation, transient polling disconnects,
+restart recovery and the inclusive absolute and
 deposit-relative economic boundaries.
 
 ## Compatibility and deprecation

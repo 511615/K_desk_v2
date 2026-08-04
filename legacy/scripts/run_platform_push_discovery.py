@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
+import queue
 import sys
 import threading
 import time
+import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -56,6 +59,21 @@ MAX_SCREEN_PROCESSES = 2
 MIN_SUSPECTED_INTERVAL_NET = 50.0
 MIN_ABSOLUTE_SUSPECTED_INTERVAL_NET = 100.0
 MIN_SUSPECTED_INTERVAL_RETURN_PCT = 10.0
+DEEP_CANDIDATE_TIMEOUT_SECONDS = 300
+DEEP_HEARTBEAT_SECONDS = 10
+
+DEEP_STAGE_LABELS = {
+    "load_history": "读取全历史订单",
+    "build_context": "构建推盘订单上下文",
+    "finance": "复核资金与收益",
+    "cross_account_sync": "比对跨账户同步交易",
+    "tick_analysis": "复核报价与盈利订单",
+    "score": "汇总证据与评分",
+}
+
+
+class DeepCandidateTimeout(RuntimeError):
+    """A single remote deep check exceeded its bounded execution budget."""
 
 
 @dataclass(frozen=True)
@@ -120,6 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-handled", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--small-order-priority", type=int, default=200)
     parser.add_argument("--deep-limit", type=int, default=50)
+    parser.add_argument("--deep-candidate-timeout", type=int, default=DEEP_CANDIDATE_TIMEOUT_SECONDS)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--output-root", type=Path, default=ROOT / "outputs" / "push_discovery")
     return parser.parse_args()
@@ -1171,14 +1190,25 @@ def push_economic_evidence(candidate: dict, suspected_intervals: dict) -> dict:
     }
 
 
-def deep_candidate(candidate: dict, source: dict) -> dict:
+def deep_candidate(
+    candidate: dict,
+    source: dict,
+    progress: Callable[[str], None] | None = None,
+) -> dict:
+    def stage(name: str) -> None:
+        if progress:
+            progress(name)
+
     started = time.perf_counter()
+    stage("load_history")
     rows = load_deep_rows(source, candidate["login"])
     if not rows:
         raise RuntimeError("账号全历史没有可检测订单")
+    stage("build_context")
     push_context = app.toxic_build_push_context(rows)
     core_rows = push_context["rows"]
     metrics = app.trade_metrics(core_rows)
+    stage("finance")
     finance = app.toxic_finance_summary(candidate["login"], core_rows, metrics)
     original_loader = app.toxic_sync_candidates_for_source
 
@@ -1194,10 +1224,13 @@ def deep_candidate(candidate: dict, source: dict) -> dict:
 
     app.toxic_sync_candidates_for_source = source_aware_loader
     try:
+        stage("cross_account_sync")
         sync = app.toxic_cross_account_sync(candidate["login"], core_rows)
     finally:
         app.toxic_sync_candidates_for_source = original_loader
+    stage("tick_analysis")
     tick = app.toxic_winning_ticks(candidate["login"], core_rows)
+    stage("score")
     result = app.calculate_toxic_results(
         candidate["login"],
         core_rows,
@@ -1237,6 +1270,86 @@ def deep_candidate(candidate: dict, source: dict) -> dict:
     }
 
 
+def _deep_candidate_child(
+    candidate: dict,
+    source: dict,
+    event_queue,
+    result_queue,
+) -> None:
+    """Run one deep check outside the discovery process so it can be terminated safely."""
+    try:
+        result = deep_candidate(candidate, source, progress=lambda name: event_queue.put({"stage": name}))
+        result_queue.put({"result": result})
+    except BaseException as exc:
+        result_queue.put({
+            "error": str(exc),
+            "traceback": traceback.format_exc(limit=8),
+        })
+
+
+def run_deep_candidate_bounded(
+    candidate: dict,
+    source: dict,
+    *,
+    timeout_seconds: int,
+    progress: Callable[[str, float, bool], None],
+) -> dict:
+    """Run one candidate with stage heartbeats and a hard, recoverable process boundary."""
+    context = multiprocessing.get_context("spawn")
+    event_queue = context.Queue()
+    result_queue = context.Queue()
+    process = context.Process(
+        target=_deep_candidate_child,
+        args=(candidate, source, event_queue, result_queue),
+        name=f"push-deep-{candidate['login']}",
+    )
+    process.start()
+    started = time.monotonic()
+    current_stage = "load_history"
+    next_heartbeat = started
+    outcome: dict | None = None
+    try:
+        while process.is_alive() or outcome is None:
+            while True:
+                try:
+                    event = event_queue.get_nowait()
+                except queue.Empty:
+                    break
+                stage_name = str(event.get("stage") or "")
+                if stage_name in DEEP_STAGE_LABELS:
+                    current_stage = stage_name
+                    progress(current_stage, time.monotonic() - started, False)
+            try:
+                outcome = result_queue.get_nowait()
+            except queue.Empty:
+                pass
+            if outcome is not None:
+                break
+            elapsed = time.monotonic() - started
+            if elapsed >= timeout_seconds:
+                process.terminate()
+                process.join(timeout=5)
+                raise DeepCandidateTimeout(
+                    f"深检超过{timeout_seconds}秒：当前阶段{DEEP_STAGE_LABELS[current_stage]}"
+                )
+            if time.monotonic() >= next_heartbeat:
+                progress(current_stage, elapsed, True)
+                next_heartbeat = time.monotonic() + DEEP_HEARTBEAT_SECONDS
+            process.join(timeout=0.25)
+        if outcome.get("error"):
+            raise RuntimeError(str(outcome["error"]))
+        result = outcome.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("深检子进程未返回结果")
+        return result
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+        event_queue.close()
+        result_queue.close()
+
+
 def transient_mysql_failure(exc: Exception) -> bool:
     args = getattr(exc, "args", ())
     try:
@@ -1261,6 +1374,8 @@ def main() -> int:
         raise ValueError("max-active-ratio must be between 0 and 100")
     if not (1 <= args.deep_limit <= 300):
         raise ValueError("deep-limit must be between 1 and 300")
+    if not (30 <= args.deep_candidate_timeout <= 900):
+        raise ValueError("deep-candidate-timeout must be between 30 and 900 seconds")
     if not (1 <= args.workers <= 8):
         raise ValueError("workers must be between 1 and 8")
 
@@ -1509,8 +1624,31 @@ def main() -> int:
     deep_results: list[dict] = []
     economic_rejections: list[dict] = []
     for index, candidate in enumerate(selected, start=1):
+        deep_progress = 62 + round((index - 1) / max(len(selected), 1) * 34)
+
+        def report_deep_stage(stage: str, elapsed: float, heartbeat: bool) -> None:
+            suffix = "，仍在读取" if heartbeat else ""
+            emit(
+                "deep",
+                f"深检 {index}/{len(selected)}：{candidate['server']}/{candidate['login']} "
+                f"{DEEP_STAGE_LABELS[stage]}（{elapsed:.0f}秒）{suffix}",
+                deep_progress,
+                candidateIndex=index,
+                candidateTotal=len(selected),
+                candidateServer=candidate["server"],
+                candidateLogin=candidate["login"],
+                deepStage=stage,
+                deepElapsedSeconds=round(elapsed, 1),
+                heartbeat=heartbeat,
+            )
+
         try:
-            result = deep_candidate(candidate, source_map[candidate["source"]])
+            result = run_deep_candidate_bounded(
+                candidate,
+                source_map[candidate["source"]],
+                timeout_seconds=args.deep_candidate_timeout,
+                progress=report_deep_stage,
+            )
             deep_checked_results.append(result)
             if result.get("economicEvidence", {}).get("qualified"):
                 deep_results.append(result)
@@ -1524,7 +1662,13 @@ def main() -> int:
                 f"{result['initialScore']}→{result['deepScore']}，{economic_status}"
             )
         except Exception as exc:
-            failures.append({"stage": "deep", **candidate, "error": str(exc)})
+            failures.append({
+                "stage": "deep",
+                **candidate,
+                "error": str(exc),
+                "recoverable": isinstance(exc, DeepCandidateTimeout),
+                "timeoutSeconds": args.deep_candidate_timeout if isinstance(exc, DeepCandidateTimeout) else 0,
+            })
             message = f"深检 {index}/{len(selected)} 失败：{candidate['server']}/{candidate['login']}"
         emit("deep", message, 62 + round(index / max(len(selected), 1) * 34))
     deep_results.sort(key=lambda row: (-app.numeric_value(row.get("deepScore")), -app.numeric_value(row.get("routePriority"))))

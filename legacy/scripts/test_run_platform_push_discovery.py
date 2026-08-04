@@ -8,6 +8,73 @@ from scripts import run_platform_push_discovery as runner
 
 
 class PushDiscoveryTests(unittest.TestCase):
+    def test_deep_candidate_reports_each_remote_stage(self):
+        candidate = {
+            "login": "700001",
+            "source": "Test MT5",
+            "server": "Test MT5",
+            "platform": "MT5",
+            "exactOrders": 2,
+            "closedOrders": 2,
+            "initialScore": 50,
+        }
+        rows = [{"ticket": "1"}]
+        context = {"rows": rows}
+        stages = []
+        result = {
+            "score": 70,
+            "level": "关注",
+            "confidence": 80,
+            "summary": "test",
+            "triggeredRules": [],
+            "limitations": [],
+        }
+        with patch.object(runner, "load_deep_rows", return_value=rows), \
+             patch.object(runner.app, "toxic_build_push_context", return_value=context), \
+             patch.object(runner.app, "trade_metrics", return_value={}), \
+             patch.object(runner.app, "toxic_finance_summary", return_value={}), \
+             patch.object(runner.app, "toxic_sync_candidates_for_source", return_value=[]), \
+             patch.object(runner.app, "toxic_cross_account_sync", return_value={}), \
+             patch.object(runner.app, "toxic_winning_ticks", return_value={"available": True, "analyzedOrders": 1}), \
+             patch.object(runner.app, "calculate_toxic_results", return_value=[result]), \
+             patch.object(runner, "suspected_push_interval_profit", return_value={}), \
+             patch.object(runner, "push_economic_evidence", return_value={"qualified": True}):
+            deep = runner.deep_candidate(candidate, {"server": "Test MT5"}, progress=stages.append)
+        self.assertEqual(
+            stages,
+            ["load_history", "build_context", "finance", "cross_account_sync", "tick_analysis", "score"],
+        )
+        self.assertEqual(deep["deepScore"], 70)
+
+    def test_deep_candidate_timeout_has_a_bounded_default(self):
+        with patch.object(sys, "argv", ["runner"]):
+            args = runner.parse_args()
+        self.assertEqual(args.deep_candidate_timeout, runner.DEEP_CANDIDATE_TIMEOUT_SECONDS)
+        self.assertGreaterEqual(args.deep_candidate_timeout, 30)
+
+    def test_bounded_deep_check_terminates_a_hung_child(self):
+        event_queue = MagicMock()
+        result_queue = MagicMock()
+        event_queue.get_nowait.side_effect = __import__("queue").Empty
+        result_queue.get_nowait.side_effect = __import__("queue").Empty
+        process = MagicMock()
+        process.is_alive.return_value = True
+        context = MagicMock()
+        context.Queue.side_effect = [event_queue, result_queue]
+        context.Process.return_value = process
+        with patch.object(runner.multiprocessing, "get_context", return_value=context), \
+             patch.object(runner.time, "monotonic", side_effect=[0.0, 1.0]):
+            with self.assertRaises(runner.DeepCandidateTimeout):
+                runner.run_deep_candidate_bounded(
+                    {"login": "700001"},
+                    {"server": "Test MT5"},
+                    timeout_seconds=0,
+                    progress=MagicMock(),
+                )
+        process.terminate.assert_called()
+        event_queue.close.assert_called_once()
+        result_queue.close.assert_called_once()
+
     def test_excluded_logins_only_uses_confirmed_actions(self):
         records = [
             {"账号": "100", "建议动作": "T"},

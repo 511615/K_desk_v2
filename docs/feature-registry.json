@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "87a39bfa8ecb",
+  "registryVersion": "74642ac1a594",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -450,7 +450,7 @@
       ],
       "depends_on": [],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-20",
+      "last_verified_date": "2026-08-04",
       "document": "docs/features/jobs/job-progress-recovery.md"
     },
     {
@@ -710,7 +710,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-04",
       "document": "docs/features/toxic/market-pushing.md"
     }
   ]
