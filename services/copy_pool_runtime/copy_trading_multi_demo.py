@@ -1402,19 +1402,14 @@ class MultiSourceLiveService(LiveService):
             total_effective = sum(
                 state.effective_weight for state in self.sleeve_states.values()
             )
-            excess = max(0.0, total_effective - TOTAL_CLIENT_BUDGET)
-            if excess > 1e-12:
-                for candidate in sorted(candidates, key=lambda item: item.score):
-                    state = self.sleeve_states[candidate.sleeve_key]
-                    reduction = min(state.effective_weight, excess)
-                    if reduction <= 0:
+            if total_effective > TOTAL_CLIENT_BUDGET + 1e-12:
+                scale = TOTAL_CLIENT_BUDGET / total_effective
+                for key, state in list(self.sleeve_states.items()):
+                    if state.effective_weight <= 0:
                         continue
-                    self.sleeve_states[candidate.sleeve_key] = reduce_effective_weight(
-                        state, state.effective_weight - reduction, now
+                    self.sleeve_states[key] = reduce_effective_weight(
+                        state, state.effective_weight * scale, now
                     )
-                    excess -= reduction
-                    if excess <= 1e-12:
-                        break
             self.scheduler_state = mark_scheduler_run(
                 self.scheduler_state, now, rank=True
             )

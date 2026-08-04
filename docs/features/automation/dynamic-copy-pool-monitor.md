@@ -65,7 +65,10 @@ diversification cap when at least three qualified products make that cap feasibl
 products the unallocatable remainder is distributed evenly and the fallback is disclosed instead of
 silently shrinking the base-weight total. Existing per-client, per-sleeve, route, product and
 combination caps remain authoritative. Combination risk utilization and the live 40%
-product-direction cluster limit remain separate. The copier applies a 1.5% cycle-loss budget, 3%
+product-direction cluster limit remain separate. If active effective weights exceed the separate
+25% client-risk utilization budget, all positive sleeves are reduced proportionally so their
+relative allocation is retained; lower-ranked qualified sleeves are not tail-cut to zero merely to
+meet that portfolio budget. The copier applies a 1.5% cycle-loss budget, 3%
 daily stop, per-client Demo loss budgets,
 and 15% soft/25% hard margin limits. Client loss use follows the 20/50/80/100% reduction curve;
 exhaustion closes only that client, pauses two hours and requires a 15-minute recovery shadow.

@@ -63,7 +63,9 @@
   positive adjusted score receives proportional weight input; factor ranking is not a second `0.55`
   hard gate and the allocation does not subtract that value. Existing per-client, sleeve, route and
   product caps remain in force, while product weights and within-product customer weights normalize
-  where those caps are feasible. Risk utilization is not embedded in those weights.
+  where those caps are feasible. Risk utilization is not embedded in those weights. When current
+  effective weights exceed the separate 25% client-risk budget, every positive sleeve is scaled by
+  the same ratio; the budget must not be enforced by zeroing the lowest-ranked sleeves one by one.
 - Source execution is customer-owned: `account + source Position` maps to one or more Demo Tickets.
   Open, add, reduce, close and reverse events may touch only those Tickets. Opposing customers remain
   independently open; combination risk may reject or shrink additions but never nets customer

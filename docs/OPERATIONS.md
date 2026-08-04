@@ -126,6 +126,9 @@ hard/activity/minimum-lot-qualified sleeve in the active zone, its first 15-minu
 slow-weight limits. Existing entry shadows still require healthy observation, and operational gates,
 terminal permission and factor qualification remain mandatory. Other server/mode combinations retain
 two rankings plus ten minutes and slow-weight recovery even when the switch is passed.
+The independent 25% client-risk utilization ceiling remains enabled. If direct or gradual effective
+weights exceed it, the Producer scales every positive sleeve by the same ratio instead of removing
+the budget excess from low-ranked sleeves first.
 The status snapshot records requested and effective state. This option does not imply
 `-EnableLiveTrading` and does not bypass any operational, ownership, risk or terminal gate.
 

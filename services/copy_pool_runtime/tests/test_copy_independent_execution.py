@@ -16,7 +16,7 @@ from copy_independent_execution import (
 )
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
 from copy_trading_multi_demo import OPEN_REQUEST_LIMIT, MultiSourceLiveService, parse_args
-from copy_pool_multisource import sleeve_key
+from copy_pool_multisource import TOTAL_CLIENT_BUDGET, sleeve_key
 from copy_dynamic_pool_domain import PoolTier, SchedulerState, SleeveDynamicState, mark_scheduler_run
 
 
@@ -386,7 +386,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             service.sleeve_states["route:2|EURUSD"].effective_weight, 0.09
         )
 
-    def test_demo_fast_rank_enters_active_immediately_after_one_qualification(self) -> None:
+    def test_demo_fast_rank_scales_all_active_weights_proportionally_to_budget(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
         service.mt = FakeHedgingMt()
@@ -394,25 +394,36 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             SchedulerState(), NOW, risk=True, discovery=True,
             daily_rebuild_run=True,
         )
-        key = "route:1|XAUUSD"
+        first_key = "route:1|XAUUSD"
+        second_key = "route:2|EURUSD"
         service.sleeve_rows = {
-            key: {
+            first_key: {
                 "account_key": "route:1",
                 "product": "XAUUSD",
                 "factor_ready": True,
                 "hourly_score": 0.9,
                 "daily_activity_eligible": True,
-                "live_base_weight": 0.04,
+                "live_base_weight": 0.20,
+            },
+            second_key: {
+                "account_key": "route:2",
+                "product": "EURUSD",
+                "factor_ready": True,
+                "hourly_score": 0.8,
+                "daily_activity_eligible": True,
+                "live_base_weight": 0.20,
             },
         }
         service.sleeve_states = {
-            key: SleeveDynamicState(day_start_base_weight=0.04),
+            first_key: SleeveDynamicState(day_start_base_weight=0.20),
+            second_key: SleeveDynamicState(day_start_base_weight=0.20),
         }
         service.routed_clients = {
             "route:1": SimpleNamespace(spec=SimpleNamespace(equity_usd=10_000.0)),
+            "route:2": SimpleNamespace(spec=SimpleNamespace(equity_usd=10_000.0)),
         }
         service.portfolio = SimpleNamespace(
-            product_comprehensive_pnl_usd={key: 1.0},
+            product_comprehensive_pnl_usd={first_key: 1.0, second_key: 1.0},
             intraday_product_net_usd={},
             floating_product_pnl_usd={},
         )
@@ -421,12 +432,17 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
             service.refresh_dynamic_sleeves()
 
-        active = service.sleeve_states[key]
-        self.assertEqual(active.tier, PoolTier.ACTIVE)
-        self.assertEqual(active.consecutive_active_qualifications, 1)
-        self.assertEqual(active.effective_weight, 0.04)
-        self.assertIsNone(active.shadow_started_at)
-        self.assertIsNone(active.shadow_ends_at)
+        for key in (first_key, second_key):
+            active = service.sleeve_states[key]
+            self.assertEqual(active.tier, PoolTier.ACTIVE)
+            self.assertEqual(active.consecutive_active_qualifications, 1)
+            self.assertAlmostEqual(active.effective_weight, 0.125)
+            self.assertIsNone(active.shadow_started_at)
+            self.assertIsNone(active.shadow_ends_at)
+        self.assertAlmostEqual(
+            sum(state.effective_weight for state in service.sleeve_states.values()),
+            TOTAL_CLIENT_BUDGET,
+        )
 
     def test_first_pending_reconcile_frame_restarts_entry_shadow_without_losing_rank(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
