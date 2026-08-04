@@ -163,6 +163,13 @@ Manager write operation as a recovery action.
 
 ## K-line quote sources
 
+Production K-line jobs use the dedicated read-only quote Terminal at
+`D:\risk\mt5_backtest_terminal\terminal64.exe` by default. Set the user environment variable
+`KDESK_KLINE_QUOTE_TERMINAL` to use another dedicated `terminal64.exe`; `start_prod.ps1` validates
+the path before launching services. Do not point it to an operator's interactive Terminal. A source
+that returns MT5 `IPC timeout` is unavailable and must be replaced or restarted separately; K_desk
+does not perform any account or trade operation during quote access.
+
 Set `KDESK_KLINE_QUOTE_SOURCES` to a local JSON based on
 `config/kline_quote_sources.example.json`. Keep it credential-free. Routes list same-source providers
 before explicitly allowed fallbacks. Deleting the variable retains the legacy single Terminal only

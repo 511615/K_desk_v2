@@ -34,6 +34,17 @@ $env:TRADE_KLINE_WEB_URL = "http://127.0.0.1:8766"
 $env:TRADE_KLINE_OUT_DIR = Join-Path $Runtime "artifacts"
 $env:ACCOUNT_REGISTRY_DATA_DIR = Join-Path $Runtime "legacy_compat"
 $env:ACCOUNT_LOGIN_IP_DB_PATH = Join-Path $Runtime "account_login_ips.sqlite"
+$quoteTerminal = $env:KDESK_KLINE_QUOTE_TERMINAL
+if (-not $quoteTerminal) {
+    $quoteTerminal = [Environment]::GetEnvironmentVariable("KDESK_KLINE_QUOTE_TERMINAL", "User")
+}
+if (-not $quoteTerminal) {
+    $quoteTerminal = "D:\risk\mt5_backtest_terminal\terminal64.exe"
+}
+if (-not (Test-Path -LiteralPath $quoteTerminal -PathType Leaf)) {
+    throw "K-line quote terminal is unavailable: $quoteTerminal. Set KDESK_KLINE_QUOTE_TERMINAL to a read-only terminal64.exe path."
+}
+$env:TRADE_KLINE_TERMINAL = $quoteTerminal
 $mysqlPassword = [Environment]::GetEnvironmentVariable("ACCOUNT_TRADE_MYSQL_PASSWORD", "User")
 if (-not $env:ACCOUNT_TRADE_MYSQL_PASSWORD -and $mysqlPassword) {
     $env:ACCOUNT_TRADE_MYSQL_PASSWORD = $mysqlPassword

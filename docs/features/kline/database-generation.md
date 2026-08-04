@@ -43,6 +43,10 @@ Job results retain `chart`, `status` and `message` and add `partial`, `symbols[]
 Database and MT5 quote access is read-only. Uploads/artifacts remain inside configured runtime directories.
 Database order lookup includes DBG MT5 Live2 through `crm_vn` code 5 / `crm_vn_mt5_live2`; quote
 selection still follows the returned logical server and the configured provider registry.
+Production starts K-line work with a dedicated local quote Terminal. `KDESK_KLINE_QUOTE_TERMINAL`
+can override its executable path from the user environment; if it is not set, the validated isolated
+`D:\risk\mt5_backtest_terminal\terminal64.exe` is used. Startup fails explicitly when that executable
+is unavailable instead of silently falling back to a stale interactive Terminal.
 `KDESK_KLINE_QUOTE_SOURCES` may point to a local credential-free JSON registry. Database orders use
 their platform/server same-source route first; only route-declared fallback providers are eligible.
 Uploaded reports evaluate the allowed provider pool and select the highest-confidence accepted source.
@@ -70,6 +74,9 @@ time and use hollow warning markers rather than moving to the next quote.
 Invalid uploads, unavailable quotes and unsafe paths fail explicitly. A failed symbol does not block
 accepted symbols; the job fails only when no symbol is accepted. Jobs survive web restart and retain
 structured failure details in the existing SQLite result JSON.
+An MT5 IPC initialization failure is reported as a structured source failure. The production launcher
+prevents the known stale-interactive-Terminal route by selecting the dedicated quote Terminal before
+the web and worker processes start.
 
 ## Code and dependencies
 

@@ -49,6 +49,9 @@ The active-job lookup is read-only and prefers a running discovery job over queu
 ## Data, routing and read-only constraints
 
 Jobs and events are stored in SQLite. Workers may call only governed read-only remote adapters.
+Production launcher configuration is inherited by the web and Worker child processes. K-line jobs
+therefore use the same dedicated read-only quote Terminal after a controlled service restart; a
+stale interactive Terminal is not an implicit Worker fallback.
 
 ## Business rules and units
 

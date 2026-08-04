@@ -152,3 +152,12 @@ def test_worker_reads_additive_kline_result() -> None:
 
     assert result["partial"] is True
     assert result["symbols"][0]["symbol"] == "XAUUSD"
+
+
+def test_production_launcher_uses_dedicated_quote_terminal_with_override() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+
+    assert "KDESK_KLINE_QUOTE_TERMINAL" in launcher
+    assert r"D:\risk\mt5_backtest_terminal\terminal64.exe" in launcher
+    assert "$env:TRADE_KLINE_TERMINAL" in launcher
