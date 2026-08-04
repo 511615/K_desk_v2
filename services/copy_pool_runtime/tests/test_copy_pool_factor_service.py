@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
-
 from copy_delay_replay_domain import PositionExecutionEvent, PositionLifecycle
 from copy_pool_equity_reconstruction import ReconstructedEquity
 from copy_pool_factor_domain import AdjustedEquityPoint, TradeHoldingObservation
@@ -45,6 +46,29 @@ class FakeRepository:
 
     def load_source(self, _source, _frame, _as_of):
         return self.bundle
+
+
+class ConcurrencyRepository:
+    def __init__(self, *, failing_source=None):
+        self.failing_source = failing_source
+        self.active = 0
+        self.maximum_active = 0
+        self.calls = []
+        self.lock = threading.Lock()
+
+    def load_source(self, source, _frame, _as_of):
+        with self.lock:
+            self.calls.append(source)
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+        try:
+            time.sleep(0.03)
+            if source == self.failing_source:
+                raise RuntimeError("history source unavailable")
+            return SourceHistoryBundle({}, {})
+        finally:
+            with self.lock:
+                self.active -= 1
 
 
 def lifecycle(position_id: str, opened_ms: int, closed_ms: int) -> PositionLifecycle:
@@ -196,6 +220,55 @@ class FactorServiceTests(unittest.TestCase):
         self.assertEqual(result.iloc[0]["entry_p95_ms"], 1500)
         self.assertEqual(result.iloc[0]["mdd_60d"], 0)
         self.assertTrue(quote_range.closed)
+
+    def test_history_sources_run_with_stable_bounded_concurrency(self) -> None:
+        repository = ConcurrencyRepository()
+        frame = pd.concat([
+            self.frame.assign(
+                physical_key=f"source-{index}",
+                account_key=f"route:{index}",
+                sleeve_key=f"route:{index}|XAUUSD",
+            )
+            for index in range(8)
+        ], ignore_index=True)
+        sources = {f"source-{index}": f"connection-{index}" for index in range(8)}
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype))),
+            historical_delay_enabled=False,
+            history_repository=repository,
+        )
+
+        service.evaluate(sources, frame, self.as_of)
+
+        self.assertEqual(set(repository.calls), set(sources.values()))
+        self.assertGreater(repository.maximum_active, 1)
+        self.assertLessEqual(repository.maximum_active, 4)
+        self.assertGreater(service.last_stage_seconds["history_load"], 0.0)
+        self.assertGreater(service.last_stage_seconds["factor_scoring"], 0.0)
+        self.assertGreaterEqual(
+            service.last_stage_seconds["total"],
+            service.last_stage_seconds["history_load"],
+        )
+
+    def test_history_source_failure_rejects_the_whole_factor_evaluation(self) -> None:
+        repository = ConcurrencyRepository(failing_source="connection-3")
+        frame = pd.concat([
+            self.frame.assign(
+                physical_key=f"source-{index}",
+                account_key=f"route:{index}",
+                sleeve_key=f"route:{index}|XAUUSD",
+            )
+            for index in range(6)
+        ], ignore_index=True)
+        sources = {f"source-{index}": f"connection-{index}" for index in range(6)}
+        service = CopyPoolFactorService(
+            FakeCache(FakeRange(np.empty(0, dtype=self.ticks.dtype))),
+            historical_delay_enabled=False,
+            history_repository=repository,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "source-3.*history source unavailable"):
+            service.evaluate(sources, frame, self.as_of)
 
     def test_missing_quote_partition_fails_closed(self) -> None:
         quote_range = FakeRange(np.empty(0, dtype=self.ticks.dtype), complete=False)

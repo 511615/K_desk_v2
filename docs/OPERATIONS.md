@@ -108,6 +108,11 @@ Daily MT5 holding history starts in five-day windows so routine startup does not
 30-second timeout before subdividing. A slow window reconnects and splits Login, then time for a
 remaining singleton. The build must produce complete evidence or fail explicitly; do not reuse
 yesterday's pool or disable the holding gate to bypass a slow source.
+Factor-history daily reads stop at the bounded 61-day lower limit and must never issue progressive
+pre-window anchor lookups. Risk history, holding statistics and factor history may each load up to
+four physical sources concurrently, but a physical source remains serial within each stage. Inspect
+`build_stage_seconds` in accepted coverage before changing
+batch sizes or concurrency; a failed source must prevent publication rather than produce a partial pool.
 
 `-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. Its
 effective entry policy is one qualified dynamic ranking plus two continuously healthy minutes;

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from contextlib import nullcontext
-from datetime import datetime, time, timedelta, timezone
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
+from time import perf_counter
 from typing import Any, Mapping
 
 import pandas as pd
-
 from copy_delay_replay_domain import (
     DelayEvaluation,
     evaluate_delay_portfolio,
@@ -27,10 +28,10 @@ from copy_pool_history_repository import (
     AccountHistoryBundle,
     ReadOnlyPoolHistoryRepository,
     SleeveHistoryBundle,
+    SourceHistoryBundle,
 )
 from copy_product_catalog import default_roundtrip_spread_usd_per_lot, product_spec
 from copy_quote_replay_cache import QuoteReplayCache
-
 
 SERVER_TIMEZONE = timezone(timedelta(hours=3))
 DELAY_GRID_MS = (500, 1_000, 2_000, 3_000, 5_000)
@@ -222,6 +223,11 @@ class CopyPoolFactorService:
         self.warm_missing_quote_partitions = bool(warm_missing_quote_partitions)
         self.historical_delay_enabled = bool(historical_delay_enabled)
         self.history_repository = history_repository or ReadOnlyPoolHistoryRepository()
+        self.last_stage_seconds: dict[str, float] = {
+            "history_load": 0.0,
+            "factor_scoring": 0.0,
+            "total": 0.0,
+        }
 
     def evaluate(
         self,
@@ -231,14 +237,49 @@ class CopyPoolFactorService:
     ) -> pd.DataFrame:
         if frame.empty:
             return pd.DataFrame()
+        total_started = perf_counter()
         accounts: dict[str, AccountHistoryBundle] = {}
         sleeves: dict[str, SleeveHistoryBundle] = {}
-        for source_key, group in frame.groupby("physical_key"):
-            bundle = self.history_repository.load_source(
-                sources[str(source_key)], group, as_of
+        source_groups = [
+            (str(source_key), group)
+            for source_key, group in frame.groupby("physical_key", sort=True)
+        ]
+        if not source_groups:
+            raise RuntimeError("factor history has no routed physical sources")
+        history_started = perf_counter()
+        bundles: dict[str, SourceHistoryBundle] = {}
+        worker_count = min(4, len(source_groups))
+        try:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {
+                    executor.submit(
+                        self.history_repository.load_source,
+                        sources[source_key],
+                        group,
+                        as_of,
+                    ): source_key
+                    for source_key, group in source_groups
+                }
+                for future in as_completed(futures):
+                    source_key = futures[future]
+                    try:
+                        bundles[source_key] = future.result()
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"history load failed for physical source {source_key}: {exc}"
+                        ) from exc
+        except Exception:
+            self.last_stage_seconds["history_load"] = max(
+                0.0, perf_counter() - history_started
             )
+            self.last_stage_seconds["factor_scoring"] = 0.0
+            self.last_stage_seconds["total"] = max(0.0, perf_counter() - total_started)
+            raise
+        for source_key, _group in source_groups:
+            bundle = bundles[source_key]
             accounts.update(bundle.accounts)
             sleeves.update(bundle.sleeves)
+        self.last_stage_seconds["history_load"] = max(0.0, perf_counter() - history_started)
 
         quote_ranges: dict[str, Any] = {}
         try:
@@ -419,6 +460,10 @@ class CopyPoolFactorService:
         finally:
             for quote_range in quote_ranges.values():
                 quote_range.close()
+            self.last_stage_seconds["factor_scoring"] = max(
+                0.0, perf_counter() - history_started - self.last_stage_seconds["history_load"]
+            )
+            self.last_stage_seconds["total"] = max(0.0, perf_counter() - total_started)
 
     def _evaluate_one(
         self,

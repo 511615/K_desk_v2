@@ -4,10 +4,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from pymysql.err import OperationalError
-
 from copy_pool_history_repository import ReadOnlyPoolHistoryRepository
 from copy_trading_live_core import datetime_to_filetime
+from pymysql.err import OperationalError
 
 
 class FakeSource:
@@ -58,8 +57,8 @@ class FakeSource:
         assert "ApiData" not in sql
 
 
-class PreWindowAnchorSource(FakeSource):
-    """Returns a daily anchor only when the repository asks before its scoring window."""
+class OutOfWindowAnchorSource(FakeSource):
+    """Exposes old data only if the repository incorrectly reads beyond 61 days."""
 
     def query(self, sql, params=()):
         self.calls.append((sql, tuple(params)))
@@ -85,7 +84,7 @@ class PreWindowAnchorSource(FakeSource):
         return super().query(sql, params)
 
 
-class Mt4PreWindowAnchorSource(FakeSource):
+class Mt4OutOfWindowAnchorSource(FakeSource):
     platform = "MT4"
 
     def query(self, sql, params=()):
@@ -214,25 +213,24 @@ class HistoryRepositoryTests(unittest.TestCase):
         snapshot_sql, snapshot_params = next(
             (sql, params) for sql, params in source.calls if "mt5_positions_snap" in sql
         )
-        daily_sql, _daily_params = next(
+        daily_sql, daily_params = next(
             (sql, params) for sql, params in source.calls if "mt5_daily_view" in sql
             and "mt5_daily_view history" not in sql
         )
-        _anchor_sql, anchor_params = next(
-            (sql, params) for sql, params in source.calls if "mt5_daily_view" in sql
-            and "mt5_daily_view history" in sql
-        )
         self.assertIn("Datetime >= %s", daily_sql)
         self.assertNotIn("Timestamp >= %s", daily_sql)
-        self.assertIsInstance(anchor_params[-2], int)
-        self.assertIsInstance(anchor_params[-1], int)
+        self.assertEqual(daily_params[-2], int((now - timedelta(days=61)).timestamp()))
+        self.assertEqual(daily_params[-1], int(now.timestamp()))
+        self.assertFalse(any(
+            "mt5_daily_view history" in sql for sql, _params in source.calls
+        ))
         self.assertIn("WHERE Position IN", snapshot_sql)
         self.assertEqual(snapshot_params[0], 99)
         self.assertTrue(all("%s" in sql for sql, _params in source.calls))
 
-    def test_daily_history_includes_nearest_anchor_before_the_scoring_window(self) -> None:
+    def test_mt5_daily_history_never_reads_beyond_the_bounded_61_day_window(self) -> None:
         now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
-        source = PreWindowAnchorSource(now)
+        source = OutOfWindowAnchorSource(now)
         frame = pd.DataFrame([{
             "Login": 7, "account_key": "route:7", "money_scale": 1.0,
             "product": "XAUUSD",
@@ -241,18 +239,26 @@ class HistoryRepositoryTests(unittest.TestCase):
         result = ReadOnlyPoolHistoryRepository().load_source(source, frame, now)
 
         timestamps = [point.timestamp for point in result.accounts["route:7"].equity.points]
-        self.assertIn(now - timedelta(days=90), timestamps)
+        self.assertNotIn(now - timedelta(days=90), timestamps)
+        self.assertIn(now - timedelta(days=59), timestamps)
+        self.assertFalse(any(
+            "mt5_daily_view history" in sql for sql, _params in source.calls
+        ))
 
-    def test_mt4_daily_history_includes_nearest_pre_window_anchor(self) -> None:
+    def test_mt4_daily_history_never_reads_beyond_the_bounded_61_day_window(self) -> None:
         now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
-        source = Mt4PreWindowAnchorSource(now)
+        source = Mt4OutOfWindowAnchorSource(now)
 
         result = ReadOnlyPoolHistoryRepository().load_source(
             source, self._candidates([7]), now
         )
 
         timestamps = [point.timestamp for point in result.accounts["route:7"].equity.points]
-        self.assertIn(now - timedelta(days=90), timestamps)
+        self.assertNotIn(now - timedelta(days=90), timestamps)
+        self.assertIn(now - timedelta(days=59), timestamps)
+        self.assertFalse(any(
+            "mt4_daily history" in sql for sql, _params in source.calls
+        ))
 
     def test_transient_large_batches_split_per_history_stream_without_duplicate_or_missing_accounts(self) -> None:
         now = datetime(2026, 7, 29, 4, tzinfo=timezone.utc)
@@ -264,19 +270,17 @@ class HistoryRepositoryTests(unittest.TestCase):
         expected = set(logins)
         self.assertEqual(set(result.accounts), {f"route:{login}" for login in expected})
         self.assertEqual(set(result.sleeves), {f"route:{login}|XAUUSD" for login in expected})
-        for stream in ("daily", "daily_anchor", "deals", "current"):
+        for stream in ("daily", "deals", "current"):
             successful = source.successful_batches[stream]
             flattened = [login for batch in successful for login in batch]
             self.assertEqual(set(flattened), expected, stream)
             self.assertEqual(len(flattened), len(expected), stream)
             self.assertTrue(all(len(batch) <= source.max_batch for batch in successful), stream)
-            if stream == "daily_anchor":
-                self.assertTrue(all(len(batch) <= source.max_batch for batch in successful), stream)
-            else:
-                self.assertTrue(any(
-                    len(batch) > source.max_batch
-                    for batch in self._attempted_batches(source, stream)
-                ), stream)
+            self.assertTrue(any(
+                len(batch) > source.max_batch
+                for batch in self._attempted_batches(source, stream)
+            ), stream)
+        self.assertNotIn("daily_anchor", source.successful_batches)
         self.assertGreater(source.reset_calls, 0)
 
     def test_transient_timeout_for_one_login_is_propagated_after_split_floor(self) -> None:

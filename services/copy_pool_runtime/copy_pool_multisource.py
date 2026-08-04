@@ -2,30 +2,27 @@ from __future__ import annotations
 
 import math
 import os
-import statistics
 import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 import pymysql
-
+from copy_dynamic_pool_domain import RankingCandidate, build_rank_universe
 from copy_product_catalog import (
     default_roundtrip_spread_usd_per_lot,
     normalize_source_product,
     product_spec,
 )
-from copy_dynamic_pool_domain import RankingCandidate, build_rank_universe
 from copy_trading_live_core import (
     ClientSpec,
     holding_score_multiplier,
     intraday_multiplier,
 )
-
 
 BEIJING = timezone(timedelta(hours=8))
 POOL_SIZE = 30
@@ -939,6 +936,43 @@ class MultiSourceDatabase:
             raise ValueError("At least one login is required.")
         return ",".join(["%s"] * count)
 
+    def _run_physical_groups(
+        self,
+        frame: pd.DataFrame,
+        worker: Callable[[str, pd.DataFrame], Any],
+        *,
+        context: str,
+    ) -> list[tuple[str, Any]]:
+        groups = [
+            (str(source_key), group.copy())
+            for source_key, group in frame.groupby("physical_key", sort=True)
+        ]
+        if not groups:
+            return []
+        results: dict[str, Any] = {}
+        errors: dict[str, Exception] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(groups))) as executor:
+            futures = {
+                executor.submit(worker, source_key, group): source_key
+                for source_key, group in groups
+            }
+            for future in as_completed(futures):
+                source_key = futures[future]
+                try:
+                    results[source_key] = future.result()
+                except Exception as exc:
+                    errors[source_key] = exc
+        if errors:
+            detail = "; ".join(
+                f"{source_key}: {type(exc).__name__}: {exc}"
+                for source_key, exc in sorted(errors.items())
+            )
+            first_error = errors[sorted(errors)[0]]
+            raise RuntimeError(
+                f"{context} failed for physical source {detail}"
+            ) from first_error
+        return [(source_key, results[source_key]) for source_key, _group in groups]
+
     def route_accounts(self) -> tuple[dict[str, dict[int, dict[str, Any]]], dict[str, int]]:
         results: dict[str, dict[int, dict[str, Any]]] = {}
         counts: dict[str, int] = {}
@@ -1485,6 +1519,15 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         return output
 
     def risk_history(self, frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
+        results = self._run_physical_groups(
+            frame,
+            lambda _source_key, group: self._risk_history_serial(group, as_of),
+            context="risk history",
+        )
+        frames = [result for _source_key, result in results if not result.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def _risk_history_serial(self, frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
         rows: list[dict[str, Any]] = []
         start = as_of.astimezone(BEIJING).replace(tzinfo=None) - timedelta(days=60)
         start_unix = int(start.replace(tzinfo=BEIJING).astimezone(timezone.utc).timestamp())
@@ -1529,6 +1572,19 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         return pd.DataFrame(rows)
 
     def holding_statistics(
+        self, frame: pd.DataFrame, as_of: datetime
+    ) -> dict[str, dict[str, float]]:
+        results = self._run_physical_groups(
+            frame.drop_duplicates("account_key"),
+            lambda _source_key, group: self._holding_statistics_serial(group, as_of),
+            context="holding statistics",
+        )
+        output: dict[str, dict[str, float]] = {}
+        for _source_key, values in results:
+            output.update(values)
+        return output
+
+    def _holding_statistics_serial(
         self, frame: pd.DataFrame, as_of: datetime
     ) -> dict[str, dict[str, float]]:
         output: dict[str, dict[str, float]] = {}
@@ -1685,12 +1741,19 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         }
 
     def build_pool(self, as_of: datetime | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+        build_started = time.perf_counter()
+        build_stage_seconds: dict[str, float] = {}
         as_of = as_of or datetime.now(timezone.utc)
+        stage_started = time.perf_counter()
         route_maps, route_counts = self.route_accounts()
+        build_stage_seconds["route_accounts"] = time.perf_counter() - stage_started
+        stage_started = time.perf_counter()
         features, ambiguous = self.scan_trade_features(route_maps, as_of)
+        build_stage_seconds["trade_feature_scan"] = time.perf_counter() - stage_started
         if features.empty:
             raise RuntimeError("No supported account-product candidates were returned by the all-source scan.")
         account_frame = features.drop_duplicates("account_key")
+        stage_started = time.perf_counter()
         profiles = self.current_profiles(account_frame)
         frame = features.merge(profiles, on="account_key", how="inner", validate="many_to_one")
         open_positions = self.current_open_positions(account_frame, as_of)
@@ -1702,6 +1765,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             how="left",
             validate="one_to_one",
         )
+        build_stage_seconds["current_state"] = time.perf_counter() - stage_started
         numeric = [
             "closes_5d", "closes_20d", "closes_60d", "net_5d", "net_20d", "net_60d",
             "gross_profit_20d", "gross_loss_20d", "lots_20d", "observed_spread_cost_20d",
@@ -1790,7 +1854,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             + 0.25 * _percentile_rank(_winsorize(preliminary["stress_ret_20d"]))
         )
 
+        stage_started = time.perf_counter()
         risk = self.risk_history(preliminary.drop_duplicates("account_key"), as_of)
+        build_stage_seconds["risk_history"] = time.perf_counter() - stage_started
         checked = preliminary.merge(risk, on="account_key", how="left", validate="many_to_one")
         for column in (
             "min_balance_60d", "min_equity_60d", "min_margin_level_60d",
@@ -1827,7 +1893,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         eligible["dynamic_score"] = 0.5 + eligible["confidence"] * (eligible["raw_score"] - 0.5) + eligible["is_abook"].astype(float) * 0.02
         eligible = eligible.sort_values(["dynamic_score", "stress_ret_20d"], ascending=False)
 
+        stage_started = time.perf_counter()
         holding_stats = self.holding_statistics(eligible, as_of)
+        build_stage_seconds["holding_statistics"] = time.perf_counter() - stage_started
         eligible["sleeve_key"] = [
             sleeve_key(str(row.account_key), str(row.product))
             for row in eligible.itertuples()
@@ -1843,7 +1911,13 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             raise RuntimeError(
                 "Historical factor service is required; legacy scores cannot authorize Demo execution."
             )
+        stage_started = time.perf_counter()
         factor_rows = self.factor_service.evaluate(self.sources, eligible, as_of)
+        build_stage_seconds["factor_evaluate"] = time.perf_counter() - stage_started
+        factor_stage_seconds = getattr(self.factor_service, "last_stage_seconds", {})
+        for name in ("history_load", "factor_scoring"):
+            value = float(factor_stage_seconds.get(name, 0.0) or 0.0)
+            build_stage_seconds[f"factor_{name}"] = max(0.0, value)
         required_factor_columns = {
             "sleeve_key", "factor_ready", "factor_base_score", "factor_gate_reasons",
             "delay_score", "mdd_20d", "mdd_60d", "current_drawdown",
@@ -2006,6 +2080,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             source.health.selected_clients = int(
                 pool.loc[pool["physical_key"] == source_key, "account_key"].nunique()
             )
+        build_stage_seconds["total"] = time.perf_counter() - build_started
         coverage = {
             "generated_at": datetime.now(BEIJING).isoformat(),
             "as_of": as_of.astimezone(BEIJING).isoformat(),
@@ -2033,6 +2108,10 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             ),
             "active_products": sorted(active_products),
             "product_weight_cap_fallback": product_weight_cap_fallback,
+            "build_stage_seconds": {
+                key: round(max(0.0, float(value)), 3)
+                for key, value in build_stage_seconds.items()
+            },
             "sources": [source.health.public() for source in self.sources.values()],
         }
         return pool.reset_index(drop=True), eligible.reset_index(drop=True), coverage

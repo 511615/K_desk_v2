@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import csv
-import unittest
 import json
+import threading
 import time
+import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,11 +13,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
-
+from copy_dynamic_pool_domain import SchedulerState
+from copy_independent_execution import DemoChildTicket, IndependentCopyBook
 from copy_pool_multisource import (
-    ROUTES,
     MAX_CLIENT_WEIGHT,
     MAX_ROUTE_WEIGHT,
+    ROUTES,
     MultiSourceDatabase,
     MultiSourcePortfolio,
     ProductSpec,
@@ -24,10 +26,10 @@ from copy_pool_multisource import (
     RoutedEvent,
     SourceCursor,
     account_key,
-    normalize_route_capped_weights,
-    normalize_product_budget_weights,
     mt4_source_time_to_utc,
     mt4_source_utc_offset_hours,
+    normalize_product_budget_weights,
+    normalize_route_capped_weights,
     open_risk_multiplier,
     passes_current_open_risk_gate,
     physical_routes,
@@ -45,8 +47,6 @@ from copy_trading_multi_demo import (
     has_complete_hourly_evidence,
     pool_build_day_key,
 )
-from copy_dynamic_pool_domain import SchedulerState
-from copy_independent_execution import DemoChildTicket, IndependentCopyBook
 
 
 def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -> RoutedClient:
@@ -414,6 +414,56 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(result["test-route:123|XAUUSD"]["holding_samples"], 1.0)
         self.assertEqual(result["test-route:123|XAUUSD"]["median_hold_seconds"], 7200.0)
         self.assertEqual(len(calls), 28)
+
+    def test_physical_source_groups_run_with_bounded_stable_concurrency(self) -> None:
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        frame = pd.DataFrame([
+            {"physical_key": f"source-{index}", "Login": index}
+            for index in range(8)
+        ])
+        lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+        calls: list[str] = []
+
+        def worker(source_key: str, group: pd.DataFrame) -> int:
+            nonlocal active, maximum_active
+            with lock:
+                calls.append(source_key)
+                active += 1
+                maximum_active = max(maximum_active, active)
+            try:
+                time.sleep(0.03)
+                return int(group.iloc[0]["Login"])
+            finally:
+                with lock:
+                    active -= 1
+
+        result = database._run_physical_groups(
+            frame, worker, context="test history"
+        )
+
+        self.assertEqual([key for key, _value in result], sorted(calls))
+        self.assertEqual(len(calls), len(set(calls)))
+        self.assertEqual(maximum_active, 4)
+
+    def test_physical_source_group_failure_is_contextual_and_complete(self) -> None:
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        frame = pd.DataFrame([
+            {"physical_key": f"source-{index}", "Login": index}
+            for index in range(6)
+        ])
+
+        def worker(source_key: str, _group: pd.DataFrame) -> str:
+            if source_key == "source-3":
+                raise RuntimeError("source unavailable")
+            time.sleep(0.01)
+            return source_key
+
+        with self.assertRaisesRegex(
+            RuntimeError, "test history failed for physical source source-3.*source unavailable"
+        ):
+            database._run_physical_groups(frame, worker, context="test history")
 
     def test_multisource_schema_is_used_for_restart_validation(self) -> None:
         with TemporaryDirectory() as temporary:

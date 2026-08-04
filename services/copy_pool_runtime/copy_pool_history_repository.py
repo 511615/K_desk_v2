@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 import pandas as pd
-
 from copy_delay_replay_domain import PositionLifecycle
 from copy_pool_equity_reconstruction import (
     AccountMoneyEvent,
@@ -23,11 +22,9 @@ from copy_pool_history_adapter import (
     build_mt4_lifecycles,
     build_mt5_equity_points,
     build_mt5_lifecycles,
-    holding_observations_from_lifecycles,
     holding_observations_from_snapshot_paths,
 )
 from copy_product_catalog import normalize_source_product, product_spec
-
 
 DB_TIMEZONE = timezone(timedelta(hours=8))
 MT5_EXTERNAL_ACTIONS = frozenset({2, 3, 4, 5, 6, 8, 15, 16})
@@ -37,8 +34,6 @@ DAILY_LOGIN_BATCH_SIZE = 10
 TRADE_LOGIN_BATCH_SIZE = 25
 CURRENT_LOGIN_BATCH_SIZE = 50
 SNAPSHOT_ID_BATCH_SIZE = 100
-ANCHOR_INITIAL_LOOKBACK_DAYS = 7
-ANCHOR_MAX_LOOKBACK_DAYS = 2_048
 
 
 class ReadOnlyHistorySource(Protocol):
@@ -134,60 +129,6 @@ def _query_in_chunks(
     return rows
 
 
-def _query_pre_window_anchors(
-    source: ReadOnlyHistorySource,
-    sql_template: str,
-    logins: Sequence[int],
-    cutoff: datetime,
-    *,
-    login_field: str,
-    time_value: Callable[[Mapping[str, Any]], Any],
-    query_time: Callable[[datetime], Any],
-) -> list[dict[str, Any]]:
-    """Find the nearest prior row through bounded indexed Login/time windows."""
-    unresolved = set(int(login) for login in logins)
-    anchors: list[dict[str, Any]] = []
-    upper = cutoff
-    elapsed_days = 0
-    window_days = ANCHOR_INITIAL_LOOKBACK_DAYS
-    while unresolved and elapsed_days < ANCHOR_MAX_LOOKBACK_DAYS:
-        next_elapsed = min(
-            ANCHOR_MAX_LOOKBACK_DAYS, elapsed_days + window_days
-        )
-        lower = cutoff - timedelta(days=next_elapsed)
-        try:
-            rows = _query_in_chunks(
-                source,
-                sql_template,
-                sorted(unresolved),
-                (query_time(lower), query_time(upper)),
-                chunk_size=DAILY_LOGIN_BATCH_SIZE,
-            )
-        except Exception as exc:
-            if not _is_transient_query_error(exc):
-                raise
-            _reset_failed_source(source)
-            rows = _query_in_chunks(
-                source,
-                sql_template,
-                sorted(unresolved),
-                (query_time(lower), query_time(upper)),
-                chunk_size=DAILY_LOGIN_BATCH_SIZE,
-            )
-        latest: dict[int, dict[str, Any]] = {}
-        for row in rows:
-            login = int(row[login_field])
-            current = latest.get(login)
-            if current is None or time_value(row) > time_value(current):
-                latest[login] = row
-        anchors.extend(latest.values())
-        unresolved.difference_update(latest)
-        upper = lower
-        elapsed_days = next_elapsed
-        window_days *= 2
-    return anchors
-
-
 def _db_utc(value: Any) -> datetime:
     if not isinstance(value, datetime):
         value = datetime.fromisoformat(str(value))
@@ -251,22 +192,6 @@ class ReadOnlyPoolHistoryRepository:
                 (int(start.timestamp()), int(as_of.timestamp())),
                 chunk_size=DAILY_LOGIN_BATCH_SIZE,
             ))
-        daily_rows.extend(_query_pre_window_anchors(
-            source,
-            f"SELECT history.Login, history.Timestamp, history.Balance, history.Credit, "
-            f"history.ProfitEquity, history.DailyBalance, history.DailyCredit, "
-            f"history.DailyCharge, history.DailyCorrection, history.DailyBonus, "
-            f"history.DailyAgent, history.DailySOCompensation, "
-            f"history.DailySOCompensationCredit "
-            f"FROM {source.schema}.mt5_daily_view history "
-            f"WHERE history.Login IN ({{marks}}) AND history.Datetime >= %s "
-            f"AND history.Datetime < %s",
-            logins,
-            start,
-            login_field="Login",
-            time_value=lambda row: int(row["Timestamp"]),
-            query_time=lambda value: int(value.timestamp()),
-        ))
         deal_rows.extend(_query_in_chunks(
                 source,
                 f"SELECT Login, Deal, PositionID, TimeMsc, Action, Entry, Symbol, Volume, VolumeExt, "
@@ -430,18 +355,6 @@ class ReadOnlyPoolHistoryRepository:
                 f"WHERE LOGIN IN ({{marks}}) AND TIME >= %s AND TIME < %s ORDER BY LOGIN, TIME",
                 logins, (start_db, end_db), chunk_size=DAILY_LOGIN_BATCH_SIZE,
             ))
-        daily_rows.extend(_query_pre_window_anchors(
-            source,
-            f"SELECT history.LOGIN, history.TIME, history.BALANCE, history.CREDIT, "
-            f"history.DEPOSIT, history.EQUITY FROM {source.schema}.mt4_daily history "
-            f"WHERE history.LOGIN IN ({{marks}}) AND history.TIME >= %s "
-            f"AND history.TIME < %s",
-            logins,
-            start,
-            login_field="LOGIN",
-            time_value=lambda row: _db_utc(row["TIME"]),
-            query_time=lambda value: value.astimezone(DB_TIMEZONE).replace(tzinfo=None),
-        ))
         trade_rows.extend(_query_in_chunks(
                 source,
                 f"SELECT TICKET, LOGIN, CMD, SYMBOL, VOLUME, OPEN_TIME, OPEN_PRICE, CLOSE_TIME, "

@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-03
+last_verified_date: 2026-08-04
 ---
 
 # Dynamic copy-pool monitor
@@ -77,11 +77,11 @@ capital without subtracting its own funding movement. Actual platform equity bel
 `negative_equity`; that code comes only from authoritative platform daily/current equity evidence,
 not from an incomplete reconstructed snapshot path. Later cashflow-adjusted capital at or below zero is the separate hard gate
 `cashflow_adjusted_capital_exhaustion`, so replenishment after losses is rejected without being
-misreported as platform negative equity. Daily drawdown loads the nearest daily anchor before the
-60-day scoring window, ignores only the partial first trading day intersecting the cutoff, and
-accepts an anchor exactly on the server rollover boundary. For a newly funded account, the first
-positive funded observation is also the first day's baseline because no earlier account equity
-state exists. Missing
+misreported as platform negative equity. Daily drawdown uses only the bounded 61-day daily read: the
+extra day supplies a possible rollover baseline for the 60-day scoring window, and the repository
+never searches farther into old account history. If no earlier funded observation exists inside
+that bounded read, a newly funded account's first positive observation supplies its first baseline;
+otherwise 20/60-day coverage remains incomplete and fails closed. Missing
 position-path or intraday-equity evidence remains monitor-only rather than clean. A/TA status adds
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
 entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
@@ -233,11 +233,13 @@ private file is returned wholesale or logged.
 
 The accepted same-day pool cache is valid only when its metadata and coverage file contain the
 exact configured eleven-route and nine-source sets and every source completed successfully.
-Every MT4 and MT5 factor-history load includes the nearest available daily equity row before its
-bounded 61-day range. It searches indexed Login/time windows from 7 days backward and doubles the
-lookback only for unresolved accounts; it does not run a full-history grouped maximum or sort over
-the exported daily view. This read-only anchor is used only as the pre-window capital/day boundary;
-the detailed trade and snapshot reads remain bounded to the existing scoring range.
+Every MT4 and MT5 factor-history load is limited to one bounded 61-day daily-equity range. It never
+performs a second pre-window query or progressively searches older history. Risk history, holding
+statistics and factor history each run across at most four physical sources concurrently, while
+each physical source remains one serial task per stage. Results merge in stable physical-source
+order; any source failure rejects the complete build.
+Coverage records bounded stage timings for route discovery, feature scan, current state, risk,
+holding, factor history/scoring and total build time without exposing SQL or account identity.
 The v7 producer may migrate a same-trading-day v6 cache to the cost-profit model without repeating
 the 60-day database build, but only when the private universe is present and metadata plus coverage
 prove the exact complete eleven-route/nine-source set. Migration preserves all existing hard-gate

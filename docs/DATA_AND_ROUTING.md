@@ -126,13 +126,13 @@ assigned to its client loss budget. They are pruned only after the trading day c
 no Demo child Ticket or source exposure remains. Emergency flatten acceptance is based on the actual
 strategy Ticket set, never on a possibly zero net position.
 
-Factor-history reads retain one additional read-only daily row per account: the latest MT4/MT5
-daily equity anchor strictly before the bounded 61-day range. The repository finds it through
-half-open indexed Login/time windows, beginning with 7 days and progressively doubling only for
-accounts that still have no row; exported daily views are never subjected to a full-history grouped
-maximum or ordered scan. All deal, trade and snapshot reads remain unchanged. The anchor establishes
-the funded capital and server-day boundary; it is not a trade, cashflow or synthetic intraday
-observation.
+Factor-history daily reads are strictly bounded to the 61 days ending at the build cutoff. The
+repository issues no separate pre-window query and never progressively searches older account
+history. The extra bounded day may establish the 60-day funded-capital and server-day boundary; if
+it cannot, the first funded observation inside the range is used only for a new account, otherwise
+coverage fails closed. Deal, trade and snapshot reads remain bounded to the same factor window.
+Risk history, holding statistics and factor history use a global concurrency limit of four within
+each stage and one serial task per physical source. Results merge in stable source order.
 
 The product catalog maps only proven source/Demo equivalents. Suffix and Roll aliases are normalized,
 including `UT100 -> NAS100Roll` and `USOIL -> USOILRoll`; unproven dated futures are excluded rather

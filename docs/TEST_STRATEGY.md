@@ -227,10 +227,11 @@ sleeve key must be omitted from both top-level and per-sleeve output.
 Drawdown regressions require pre-funding zero rows and the first funding movement not to create a
 false loss, raw platform equity below zero to retain `negative_equity`, and later cashflow-adjusted
 capital exhaustion to use its own non-compensable reason. An incomplete reconstructed path cannot
-set the platform-negative code when the authoritative daily aggregate is clean. MT4 and MT5 repository tests require the
-nearest pre-window daily anchor, exact-rollover baseline acceptance and exclusion of only the partial
-first trading day at the 60-day cutoff; a new account's first funded observation supplies its first
-daily baseline.
+set the platform-negative code when the authoritative daily aggregate is clean. MT4 and MT5
+repository tests require one bounded 61-day daily read, prohibit any pre-window history query and
+retain fail-closed 20/60-day coverage; a new account's first funded observation supplies its first
+daily baseline. Factor-service tests require more than one and at most four physical-source history
+loads in flight, one load per source, stable merging and whole-build failure on any source error.
 Dashboard tests also pin hourly score, one/four-hour net P/L, current comprehensive-profit hard-gate
 state and bounded hourly-discovery coverage.
 Producer tests prove that deferred mode performs no Tick-cache load, removes delay from score and

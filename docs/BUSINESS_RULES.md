@@ -134,10 +134,10 @@
   first observation's funding is not subtracted from itself. Actual platform equity below zero is
   the `negative_equity` hard gate, and only authoritative platform daily/current evidence may set it;
   an incomplete reconstructed snapshot path cannot. Capital reaching zero after later deposits/withdrawals are removed
-  is the separate `cashflow_adjusted_capital_exhaustion` hard gate. Daily loss uses the nearest
-  pre-window anchor, ignores the incomplete trading day intersecting the 60-day cutoff and accepts
-  an anchor exactly at rollover. A newly funded account uses its first positive funded observation
-  as its first-day baseline. Real-time quote age, source
+  is the separate `cashflow_adjusted_capital_exhaustion` hard gate. Daily loss uses only the bounded
+  61-day evidence window and never searches older history for an anchor. The extra day may establish
+  the 60-day rollover baseline; a newly funded account uses its first positive funded observation
+  as its first-day baseline, while other insufficient 20/60-day coverage fails closed. Real-time quote age, source
   staleness, signal latency and expiry remain active; new-risk signal age is capped by five seconds
   and holding P25 divided by three.
 - Every ten seconds the copier refreshes client Demo loss budgets, realized trading P/L and
