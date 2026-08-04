@@ -295,7 +295,8 @@ def test_push_discovery_filters_are_validated_and_persisted(tmp_path: Path) -> N
             "excludeHandled": False,
         })
         assert response.status_code == 200
-        payload = response.json()["job"]["payload"]
+        job = response.json()["job"]
+        payload = job["payload"]
         assert payload["requirePeriodProfit"] is False
         assert payload["deepLimit"] == 80
         assert payload["maxOrders"] == 100
@@ -305,6 +306,7 @@ def test_push_discovery_filters_are_validated_and_persisted(tmp_path: Path) -> N
         assert payload["maxDeposit"] == 2000
         assert payload["maxActiveRatio"] == 25
         assert payload["excludeHandled"] is False
+        assert job["max_attempts"] == 2
 
 
 def test_push_discovery_active_job_can_be_resumed(tmp_path: Path) -> None:

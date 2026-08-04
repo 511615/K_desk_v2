@@ -601,7 +601,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             "workers": 4,
         }
         key = "push-discovery:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
-        job = database.create_job("push_discovery", clean_payload, idempotency_key=key, max_attempts=1)
+        job = database.create_job("push_discovery", clean_payload, idempotency_key=key, max_attempts=2)
         return {"ok": True, "job": job}
 
     @app.get("/api/push-discovery/active")

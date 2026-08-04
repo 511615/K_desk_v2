@@ -8,7 +8,7 @@ code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "sr
 tests: ["tests/test_api.py", "tests/test_ledger.py", "tests/test_worker.py", "frontend/src/pushDiscovery.spec.ts", "frontend/src/frontendUpdate.spec.ts", "frontend/src/bonusDiscovery.spec.ts", "frontend/src/positionRiskDiscovery.spec.ts", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: []
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-20
+last_verified_date: 2026-08-04
 ---
 
 # Persistent job progress and recovery
@@ -65,6 +65,11 @@ events retain a sanitized reason. A browser fetch/network error does not convert
 discovery job into a terminal failed state.
 Subprocess output is read independently so cancellation is checked at least every 250 milliseconds,
 including database phases that emit no progress lines.
+Push discovery additionally receives a stage heartbeat from its isolated per-account deep-check
+child at least every 10 seconds. A child exceeding its documented budget is terminated and retained
+as a recoverable account failure, allowing the durable parent job to continue and preserving its
+completed checkpoint rows. A push-discovery Worker restart requeues one interrupted attempt; a
+second interruption remains terminal and explicit.
 
 ## Code and dependencies
 
@@ -73,7 +78,8 @@ claim/recover their assigned job kinds.
 
 ## Tests and acceptance
 
-Tests cover persistence, events, cancellation, legacy mapping and recovery after worker restart.
+Tests cover persistence, events, cancellation, deep-check timeout isolation, legacy mapping and
+recovery after worker restart.
 
 ## Compatibility and deprecation
 
