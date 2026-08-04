@@ -685,8 +685,28 @@ class MultiSourceLiveService(LiveService):
             build_as_of=self.pool_build_as_of,
             as_of=now,
         )
-        if discovered["account_key"].nunique() < 10:
-            raise RuntimeError("Hourly discovery returned fewer than ten qualified accounts.")
+        qualified_accounts = int(discovered["account_key"].nunique())
+        if qualified_accounts == 0:
+            # Hourly evidence is a refinement of the accepted daily pool. A
+            # transient loss of current profitability must not clear the
+            # existing subscription or abort the main risk/state loop.
+            metadata = {
+                **metadata,
+                "status": "insufficient_qualified_accounts",
+                "qualified_accounts": qualified_accounts,
+                "required_qualified_accounts": 1,
+                "pool_retained": True,
+                "as_of": now.astimezone(BEIJING).isoformat(),
+                "build_as_of": self.pool_build_as_of.astimezone(BEIJING).isoformat(),
+            }
+            self.coverage["hourly_discovery"] = metadata
+            atomic_json(self.coverage_path, self.coverage)
+            self.log(
+                "Hourly discovery found "
+                f"{qualified_accounts} qualified accounts; retained the accepted pool "
+                f"and will retry after {REBUILD_RETRY_SECONDS:.0f}s."
+            )
+            return
         aliases = self._hourly_aliases(discovered)
         discovered["client_alias"] = discovered["account_key"].astype(str).map(aliases)
         discovered["daily_activity_eligible"] = discovered.get(

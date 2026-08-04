@@ -1662,7 +1662,7 @@ class MultiSourceTests(unittest.TestCase):
     def test_hourly_discovery_rotates_subscription_without_chasing_current_positions(self) -> None:
         clients = {
             item.account_key: item
-            for item in [client(0, 1000 + index, f"C{index + 1:03d}") for index in range(10)]
+            for item in [client(0, 1000 + index, f"C{index + 1:03d}") for index in range(3)]
         }
         discovered = pd.DataFrame([
             {
@@ -1684,8 +1684,8 @@ class MultiSourceTests(unittest.TestCase):
         class FakeDatabase:
             def refresh_hourly_universe(self, *_args, **_kwargs):
                 return discovered.copy(), {
-                    "factor_ready_sleeves_scanned": 10,
-                    "monitor_accounts": 10,
+                    "factor_ready_sleeves_scanned": 3,
+                    "monitor_accounts": 3,
                     "reserve_accounts": 0,
                 }
 
@@ -1738,8 +1738,8 @@ class MultiSourceTests(unittest.TestCase):
             service.coverage_path = Path(temporary) / "coverage.json"
             service.run_hourly_discovery()
 
-        self.assertEqual(len(service.routed_clients), 10)
-        self.assertEqual(len(service.sleeve_states), 10)
+        self.assertEqual(len(service.routed_clients), 3)
+        self.assertEqual(len(service.sleeve_states), 3)
         inactive = service.pool_frame.loc[
             ~service.pool_frame["daily_activity_eligible"]
         ].iloc[0]
@@ -1750,6 +1750,45 @@ class MultiSourceTests(unittest.TestCase):
         )
         self.assertIsNotNone(service.scheduler_state.last_discovery_at)
         self.assertEqual(service.copy_book.legacy_source_positions, set())
+
+    def test_empty_hourly_discovery_retains_accepted_pool(self) -> None:
+        retained = client(0, 9001, "C001")
+        discovered = pd.DataFrame(columns=["account_key", "sleeve_key", "product"])
+
+        class FakeDatabase:
+            @staticmethod
+            def refresh_hourly_universe(*_args, **_kwargs):
+                return discovered.copy(), {"factor_ready_sleeves_scanned": 9}
+
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.universe_frame = pd.DataFrame([{
+            "account_key": retained.account_key,
+            "sleeve_key": f"{retained.account_key}|XAUUSD",
+            "product": "XAUUSD",
+        }])
+        service.pool_build_as_of = utc_now()
+        service.routed_clients = {retained.account_key: retained}
+        service.pool_frame = pd.DataFrame([{
+            "account_key": retained.account_key,
+            "sleeve_key": f"{retained.account_key}|XAUUSD",
+        }])
+        service.scheduler_state = SchedulerState()
+        service.coverage = {}
+        service.db = FakeDatabase()
+        messages: list[str] = []
+        service.log = messages.append
+
+        with TemporaryDirectory() as temporary:
+            service.coverage_path = Path(temporary) / "coverage.json"
+            service.run_hourly_discovery()
+            persisted = json.loads(service.coverage_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(set(service.routed_clients), {retained.account_key})
+        self.assertEqual(service.pool_frame.iloc[0]["account_key"], retained.account_key)
+        self.assertIsNone(service.scheduler_state.last_discovery_at)
+        self.assertEqual(persisted["hourly_discovery"]["status"], "insufficient_qualified_accounts")
+        self.assertEqual(persisted["hourly_discovery"]["qualified_accounts"], 0)
+        self.assertTrue(any("retained the accepted pool" in message for message in messages))
 
 
 if __name__ == "__main__":
