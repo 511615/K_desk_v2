@@ -174,6 +174,15 @@ def pool_build_day_key(now: datetime) -> str:
 
 
 class MultiSourceLiveService(LiveService):
+    # A v7 accepted snapshot may have been built with the former 0.55 score
+    # floor. Treat it as a same-day migration candidate so startup recomputes
+    # weights from the complete private universe without touching ownership.
+    POOL_PRODUCER = "copy-pool-multisource-v8-weight-floor"
+    LEGACY_WEIGHT_POOL_PRODUCERS = frozenset({
+        "copy-pool-multisource-v6-weight-fallback",
+        "copy-pool-multisource-v7-cost-profit",
+    })
+
     event_public_columns = MULTISOURCE_EVENT_PUBLIC_COLUMNS
     order_public_columns = MULTISOURCE_ORDER_PUBLIC_COLUMNS
 
@@ -257,11 +266,9 @@ class MultiSourceLiveService(LiveService):
             & (hold_p90 <= 24 * 60 * 60)
             & (short_ratio < 0.20)
             & (stress_net > 0)
-            & (eligible["monitor_score"] > 0.55)
         )
         monitor_candidates = eligible.loc[
             eligible["factor_ready"].fillna(False).astype(bool)
-            & (eligible["monitor_score"] > 0.55)
         ].copy()
         if monitor_candidates.empty:
             raise RuntimeError(
@@ -309,9 +316,9 @@ class MultiSourceLiveService(LiveService):
             for index, row in enumerate(ranked_accounts.itertuples(), start=1)
         }
         pool["client_alias"] = pool["account_key"].map(aliases)
-        pool["weight_alpha"] = (
-            pool["adjusted_score"] - 0.55
-        ).clip(lower=0).pow(1.5)
+        # Factor ranks determine proportional allocation after hard and
+        # executable-holding gates. They must not become a second score floor.
+        pool["weight_alpha"] = pool["adjusted_score"].clip(lower=0)
         pool["customer_base_weight"] = 0.0
         for _product, group in pool.loc[pool["activity_eligible"]].groupby("product"):
             normalized = _normalize_capped(
@@ -416,12 +423,17 @@ class MultiSourceLiveService(LiveService):
                     and int(coverage.get("logical_routes_scanned", 0)) == len(ROUTES)
                 )
                 cache_valid = (
-                    meta.get("producer") == "copy-pool-multisource-v7-cost-profit"
+                    meta.get("producer") == self.POOL_PRODUCER
                     and same_day_complete
                 )
                 upgrade_candidate = (
-                    meta.get("producer") == "copy-pool-multisource-v6-weight-fallback"
-                    and meta.get("factor_schema") == "execution-quality-v1"
+                    meta.get("producer") in self.LEGACY_WEIGHT_POOL_PRODUCERS
+                    and (
+                        meta.get("factor_schema") in {
+                            "execution-quality-v1",
+                            "cost-profit-recent-coverage-v1",
+                        }
+                    )
                     and same_day_complete
                     and self.universe_path.exists()
                 )
@@ -465,8 +477,8 @@ class MultiSourceLiveService(LiveService):
                     atomic_json(self.coverage_path, coverage)
                     meta = {
                         **meta,
-                        "producer": "copy-pool-multisource-v7-cost-profit",
-                        "factor_schema": "cost-profit-recent-coverage-v1",
+                        "producer": self.POOL_PRODUCER,
+                        "factor_schema": "cost-profit-recent-coverage-v2-weight-floor",
                         "cache_upgraded_at": beijing_now().isoformat(),
                     }
                     atomic_json(self.pool_build_meta_path, meta)
@@ -507,8 +519,8 @@ class MultiSourceLiveService(LiveService):
             atomic_json(
                 self.pool_build_meta_path,
                 {
-                    "producer": "copy-pool-multisource-v7-cost-profit",
-                    "factor_schema": "cost-profit-recent-coverage-v1",
+                    "producer": self.POOL_PRODUCER,
+                    "factor_schema": "cost-profit-recent-coverage-v2-weight-floor",
                     "pool_build_day": accepted_build_day,
                     "logical_routes": len(ROUTES),
                     "physical_sources": len(self.db.sources),

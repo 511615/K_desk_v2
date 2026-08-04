@@ -186,8 +186,11 @@ class MultiSourceTests(unittest.TestCase):
             universe.to_csv(directory / "pool_universe_private.csv", index=False)
             (directory / "source_coverage.json").write_text(json.dumps(coverage), encoding="utf-8")
             (directory / "pool_build_meta_private.json").write_text(json.dumps({
-                "producer": "copy-pool-multisource-v6-weight-fallback",
-                "factor_schema": "execution-quality-v1",
+                # The deployed v7 cache used the former score floor. Startup
+                # must reweight its complete same-day universe without a full
+                # all-route history rebuild or Ticket-ownership reset.
+                "producer": "copy-pool-multisource-v7-cost-profit",
+                "factor_schema": "cost-profit-recent-coverage-v1",
                 "pool_build_day": pool_build_day_key(utc_now()),
                 "logical_routes": len(ROUTES),
                 "physical_sources": len(source_keys),
@@ -231,6 +234,14 @@ class MultiSourceTests(unittest.TestCase):
             self.assertIn(
                 str(777001),
                 json.dumps(persisted["independent_copy"], sort_keys=True),
+            )
+            migrated_meta = json.loads(
+                (directory / "pool_build_meta_private.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(migrated_meta["producer"], service.POOL_PRODUCER)
+            self.assertEqual(
+                migrated_meta["factor_schema"],
+                "cost-profit-recent-coverage-v2-weight-floor",
             )
 
     def test_mt5_trade_feature_close_and_lot_totals_use_all_close_entries(self) -> None:
@@ -306,6 +317,21 @@ class MultiSourceTests(unittest.TestCase):
                 "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
                 "quality_stress_net_15x_20d_usd": 10.0,
             },
+            {
+                # This sleeve deliberately ranks below route:1 and route:2,
+                # but passes every hard, cost and holding gate. Ranking may
+                # reduce its allocation; it must not turn into a zero-weight
+                # monitor solely because its score is below 0.55.
+                "account_key": "route:4", "Login": 4, "sleeve_key": "route:4|XAUUSD",
+                "route_key": "route", "physical_key": "source-b", "product": "XAUUSD",
+                "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
+                "net_5d_usd": 500.0, "net_20d_usd": 1_000.0,
+                "factor_ready": True, "factor_gate_reasons": "", "is_abook": False,
+                "dynamic_score": 0.01, "open_risk_multiplier": 1.0, "hold_multiplier": 1.0,
+                "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
+                "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
+                "quality_stress_net_15x_20d_usd": 10.0,
+            },
         ])
         coverage = {
             "sources": [
@@ -320,12 +346,21 @@ class MultiSourceTests(unittest.TestCase):
         self.assertFalse(bool(failed["factor_ready"]))
         self.assertIn("cost_adjusted_net_5d_not_positive", failed["factor_gate_reasons"])
         self.assertNotIn("route:3", set(pool["account_key"]))
+        low_scored = pool.set_index("account_key").loc["route:4"]
+        self.assertTrue(bool(low_scored["activity_eligible"]))
+        self.assertGreater(float(low_scored["portfolio_base_weight"]), 0.0)
+        # Three sleeves cannot consume the full portfolio while the existing
+        # 20% per-client cap remains in force; the allocation must still be
+        # positive and bounded rather than filling the remainder by weakening
+        # the cap.
+        self.assertGreater(float(pool["portfolio_base_weight"].sum()), 0.0)
+        self.assertLessEqual(float(pool["portfolio_base_weight"].sum()), 1.0)
         self.assertTrue(bool(upgraded_coverage["same_day_cache_upgraded"]))
         self.assertEqual(upgraded_coverage["factor_model"], "cost_profit_recent_coverage_v1")
-        self.assertEqual(upgraded_coverage["active_accounts"], 2)
+        self.assertEqual(upgraded_coverage["active_accounts"], 3)
         self.assertEqual(
             {row["physical_key"]: row["selected_clients"] for row in upgraded_coverage["sources"]},
-            {"source-a": 2, "source-b": 0},
+            {"source-a": 2, "source-b": 1},
         )
 
     @staticmethod

@@ -1960,10 +1960,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             & (eligible["hold_p90_seconds"] <= 24 * 60 * 60)
             & (eligible["short_trade_ratio"] < 0.20)
             & (eligible["quality_stress_net_15x_20d_usd"] > 0)
-            & (eligible["monitor_score"] > 0.55)
         )
         monitor_candidates = eligible.loc[
-            eligible["factor_ready"] & (eligible["monitor_score"] > 0.55)
+            eligible["factor_ready"]
         ].copy()
         factor_gate_counts: dict[str, int] = {}
         for value in eligible.loc[~eligible["factor_ready"], "factor_gate_reasons"]:
@@ -1979,9 +1978,8 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 f"{reason}={count}" for reason, count in top_reasons
             ) or "none"
             raise RuntimeError(
-                "No monitor sleeves passed factor readiness and score gates; "
+                "No monitor sleeves passed factor readiness and hard gates; "
                 f"factor_ready={int(eligible['factor_ready'].sum())}/{len(eligible)}, "
-                f"monitor_score_above_0_55={int((eligible['monitor_score'] > 0.55).sum())}, "
                 f"top_factor_gates={reason_summary}."
             )
         ranked_universe = build_rank_universe(
@@ -2027,7 +2025,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             for index, row in enumerate(ranked_accounts.itertuples(), start=1)
         }
         pool["client_alias"] = pool["account_key"].map(aliases)
-        pool["weight_alpha"] = (pool["adjusted_score"] - 0.55).clip(lower=0).pow(1.5)
+        # Factor ranks determine proportional allocation after hard and
+        # executable-holding gates. They must not become a second score floor.
+        pool["weight_alpha"] = pool["adjusted_score"].clip(lower=0)
         active_products = {
             str(product) for product in pool.loc[pool["activity_eligible"], "product"].unique()
         }

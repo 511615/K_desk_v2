@@ -59,9 +59,11 @@
   total 100%; the live 40% product-direction cluster risk limit remains independent. An
   active sleeve requires P25 holding above
   10 seconds, median holding from 60 seconds through eight hours, P90 at most 24 hours, fewer than
-  20% closes within ten seconds and positive stressed profit. Product weights and within-product
-  customer weights each normalize to 100%; their product forms portfolio base weights totaling
-  100%. Risk utilization is not embedded in those weights.
+  20% closes within ten seconds and positive stressed profit. After those gates, every sleeve with a
+  positive adjusted score receives proportional weight input; factor ranking is not a second `0.55`
+  hard gate and the allocation does not subtract that value. Existing per-client, sleeve, route and
+  product caps remain in force, while product weights and within-product customer weights normalize
+  where those caps are feasible. Risk utilization is not embedded in those weights.
 - Source execution is customer-owned: `account + source Position` maps to one or more Demo Tickets.
   Open, add, reduce, close and reverse events may touch only those Tickets. Opposing customers remain
   independently open; combination risk may reject or shrink additions but never nets customer
