@@ -386,7 +386,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             service.sleeve_states["route:2|EURUSD"].effective_weight, 0.09
         )
 
-    def test_demo_fast_rank_enters_two_minute_shadow_after_one_qualification(self) -> None:
+    def test_demo_fast_rank_enters_active_immediately_after_one_qualification(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
         service.mt = FakeHedgingMt()
@@ -421,11 +421,12 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
             service.refresh_dynamic_sleeves()
 
-        shadow = service.sleeve_states[key]
-        self.assertEqual(shadow.tier, PoolTier.ENTRY_SHADOW)
-        self.assertEqual(shadow.consecutive_active_qualifications, 1)
-        self.assertEqual(shadow.shadow_started_at, NOW)
-        self.assertEqual(shadow.shadow_ends_at, NOW + timedelta(minutes=2))
+        active = service.sleeve_states[key]
+        self.assertEqual(active.tier, PoolTier.ACTIVE)
+        self.assertEqual(active.consecutive_active_qualifications, 1)
+        self.assertEqual(active.effective_weight, 0.04)
+        self.assertIsNone(active.shadow_started_at)
+        self.assertIsNone(active.shadow_ends_at)
 
     def test_first_pending_reconcile_frame_restarts_entry_shadow_without_losing_rank(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
