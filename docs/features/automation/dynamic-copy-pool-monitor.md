@@ -94,7 +94,11 @@ the clock. An expired reversal may close the prior owned Ticket but cannot open 
 The producer processes source events every 500 ms, refreshes client and sleeve risk every 10
 seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded one/four-hour
 accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. Hourly discovery
-never repeats the 60-day factor query and cannot promote a historical hard-gate failure. Two
+never repeats the 60-day factor query and cannot promote a historical hard-gate failure. A non-empty
+hourly candidate set may publish below the monitor target. If its refreshed candidate set is empty, it records
+`insufficient_qualified_accounts`, retains the last accepted pool without advancing the successful
+discovery schedule, and retries after the one-minute retry floor; this condition never interrupts
+the main risk or recovery-shadow state loop. Two
 consecutive active-zone results and ten healthy shadow minutes are required before execution.
 An entry-shadow health failure caused by a transient operational gate, including the first pending
 source-position reconciliation frame, retains the sleeve's two ranking qualifications but restarts
