@@ -29,6 +29,7 @@ def make_snapshot(root: Path) -> Path:
             "updated_at_beijing": "2026-07-28T20:43:19+08:00",
             "phase": "live",
             "server": "ACCMGlobal-Demo",
+            "account_login": 33304642,
             "symbol": "XAUUSD",
             "risk_profile": "Capital10k",
             "balance_usd": 9978.35,
@@ -224,6 +225,7 @@ def make_snapshot(root: Path) -> Path:
     write_csv(output / "status_timeline_public.csv", [{
         "time_beijing": "2026-07-28T20:40:00+08:00",
         "phase": "live",
+        "account_login": 33304642,
         "equity_usd": 10003.62,
         "position_cap_lots": 0.05,
         "active_weights": 0.02,
@@ -430,6 +432,8 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert payload["sourceCoverage"]["hourlyDiscovery"]["factorReadySleevesScanned"] == 894
     assert payload["sourceCoverage"]["hourlyDiscovery"]["monitorAccounts"] == 30
     assert payload["status"]["executionModel"] == "independent_customer_positions_v2"
+    assert payload["status"]["accountLogin"] == "33304642"
+    assert payload["timeline"][0]["accountLogin"] == "33304642"
     assert payload["status"]["demoFastActivationRequested"] is True
     assert payload["status"]["demoFastActivationEnabled"] is True
     assert payload["status"]["entryRankQualificationsRequired"] == 1

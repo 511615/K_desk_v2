@@ -61,7 +61,8 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   Login, platform/server, alias, normalized product, activity state, holding distribution,
   product/client/base/effective weights and detail link. Additive `clientRisks`, `copyPositions`,
   `ticketMappings` and `exposures` project customer-owned Demo execution without returning private
-  composite keys or comments. Status timeline, source events and Demo order events remain compatible;
+  composite keys or comments. Status and timeline rows additively expose `accountLogin`, identifying
+  the Demo account that produced each equity sample. Source events and Demo order events remain compatible;
   `sourceCoverage` reports eleven logical routes, nine
   physical sources, build funnels, selected counts, freshness, latency and source errors. Pool rows
   additively expose realized P/L, floating P/L, dynamic evaluation, open position count, all-symbol

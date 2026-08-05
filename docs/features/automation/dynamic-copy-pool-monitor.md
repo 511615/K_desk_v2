@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_manual_controls.py", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-04
+last_verified_date: 2026-08-05
 ---
 
 # Dynamic copy-pool monitor
@@ -44,6 +44,10 @@ increasing, reducing, closing and reversing events affect only those mapped Tick
 customers remain independently open; net exposure is display and combination-risk evidence only.
 Existing source positions at startup and positions first observed during shadow are not chased.
 Restart requires persisted and actual Ticket ownership to match exactly.
+The MT5 adapter also pins the Demo Login observed during initialization. Every later account sample
+must retain that Login, `ACCMGlobal-Demo` and Demo trade mode; an IPC sample from another account or
+server is rejected before sizing, risk evaluation, status publication or order execution. The last
+valid dashboard snapshot remains authoritative while the account channel is inconsistent.
 Closed source mappings remain in the current trading-day ledger so realized Demo P/L continues to
 consume the correct client's loss budget; empty closed mappings are pruned on the next trading day.
 Independent order comments are deterministic 16-character identifiers that survive the Demo
@@ -177,6 +181,9 @@ the real source Login and detail link, server/platform, product/direction, sourc
 Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source
 floating P/L and Demo comment-attributed realized plus floating P/L. Legacy snapshots without exact
 per-position evidence display an unavailable state rather than allocating account totals.
+Status and equity-timeline rows include the pinned Demo Login. A Producer schema upgrade rotates a
+legacy timeline without this identity column into a timestamped archive before starting a clean
+current curve, so account-crossed equity samples cannot remain mixed into the displayed series.
 
 The `客户池层级与影子准入` panel is an interactive tabbed read view. Its seven tabs are `活动跟单池`,
 `入场观察`, `监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; each shows the current

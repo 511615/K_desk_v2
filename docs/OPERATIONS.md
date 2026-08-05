@@ -39,6 +39,11 @@ rebuild failure keeps the Demo strategy flat and retries no more than once per m
 source positions are monitor-only; the producer never opens from an old target. Persisted source-to-
 Demo Ticket ownership must exactly match current strategy Tickets before startup. Any unknown or
 missing Ticket is an execution hard stop requiring operator review.
+Startup pins the connected `ACCMGlobal-Demo` Login. If later MT5 Python IPC reads return another
+Login/server, the Producer rejects the sample and performs no sizing, status write or order action
+for that loop; operators must restore the pinned portable terminal session. The previous valid
+snapshot then becomes stale rather than displaying another account's equity. Adding the identity
+column rotates the old status timeline to a timestamped archive on the first upgraded startup.
 The Producer may self-recover a Ticket that was filled immediately before a process interruption
 only when its retained 16-character comment and product uniquely match one persisted source-position
 owner. It records the recovered ownership before resuming reconciliation. Ambiguous, foreign or
