@@ -168,8 +168,10 @@ two-plus-ten shadow and slow-weight policy remains authoritative.
 
 ## UI and behavior
 
-The page refreshes the dashboard snapshot every second. It uses the K_desk dark operations theme,
-Chinese labels and responsive desktop/mobile layouts. Every visible account label, event, mapping and
+The page refreshes the dashboard snapshot every second. The header operator clock advances from the
+browser clock independently of dashboard requests, so a slow or failed snapshot request cannot freeze
+the visible seconds; source freshness and stale-state labels remain tied to Producer evidence. It uses
+the K_desk dark operations theme, Chinese labels and responsive desktop/mobile layouts. Every visible account label, event, mapping and
 filter uses the actual trading Login; the private `C001` alias remains an internal mapping and redirect
 identifier only. Platform/server context remains a secondary line.
 On narrow screens, source-health rows reduce their fixed columns and gaps while retaining the
