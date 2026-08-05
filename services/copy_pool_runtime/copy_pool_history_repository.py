@@ -23,6 +23,7 @@ from copy_pool_history_adapter import (
     build_mt5_equity_points,
     build_mt5_lifecycles,
     holding_observations_from_snapshot_paths,
+    max_simultaneous_losing_positions,
 )
 from copy_product_catalog import normalize_source_product, product_spec
 
@@ -52,6 +53,7 @@ class SleeveHistoryBundle:
     lifecycles: tuple[PositionLifecycle, ...]
     holdings: tuple[TradeHoldingObservation, ...]
     holding_path_complete: bool = False
+    max_losing_positions_30d: int = 0
 
 
 @dataclass(frozen=True)
@@ -291,7 +293,10 @@ class ReadOnlyPoolHistoryRepository:
                     selected, path_map
                 )
                 sleeves[_sleeve_key(account_key, product)] = SleeveHistoryBundle(
-                    account_key, product, selected, holdings, holding_complete
+                    account_key, product, selected, holdings, holding_complete,
+                    max_simultaneous_losing_positions(
+                        selected, path_map, as_of=as_of, window_days=30
+                    ),
                 )
             intervals = tuple(
                 PositionInterval(
@@ -436,7 +441,10 @@ class ReadOnlyPoolHistoryRepository:
                     selected, path_map
                 )
                 sleeves[_sleeve_key(account_key, product)] = SleeveHistoryBundle(
-                    account_key, product, selected, holdings, holding_complete
+                    account_key, product, selected, holdings, holding_complete,
+                    max_simultaneous_losing_positions(
+                        selected, path_map, as_of=as_of, window_days=30
+                    ),
                 )
             intervals = tuple(
                 PositionInterval(

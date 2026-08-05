@@ -160,10 +160,18 @@ def make_snapshot(root: Path) -> Path:
         "pool_tier": "active",
         "factor_ready": True,
         "factor_base_score": 0.82,
-        "factor_model": "cost_profit_recent_coverage_v1",
+        "factor_model": "cost_profit_recent_coverage_carry_v2",
         "factor_rank_cost_profit": 0.81,
         "factor_rank_recent_strength": 0.62,
         "factor_rank_cost_coverage": 0.73,
+        "factor_rank_carry_quality": 0.66,
+        "carry_risk_score": 34.0,
+        "carry_quality_score": 0.66,
+        "carry_hard_failed": False,
+        "carry_gate_reasons": "",
+        "max_floating_loss_ratio_30d": 0.04,
+        "max_underwater_seconds_30d": 7200,
+        "max_losing_positions_30d": 2,
         "factor_copy_net_5d_usd": 20.0,
         "factor_copy_net_20d_usd": 100.0,
         "factor_estimated_copy_cost_5d_usd": 3.0,
@@ -406,10 +414,20 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert row["poolTier"] == "active"
     assert row["factorReady"] is True
     assert row["factorBaseScore"] == 0.82
-    assert row["factorModel"] == "cost_profit_recent_coverage_v1"
+    assert row["factorModel"] == "cost_profit_recent_coverage_carry_v2"
     assert row["factorScores"]["costProfit"] == 0.81
     assert row["factorScores"]["recentStrength"] == 0.62
     assert row["factorScores"]["costCoverage"] == 0.73
+    assert row["factorScores"]["carryQuality"] == 0.66
+    assert row["carryRisk"] == {
+        "riskScore": 34.0,
+        "qualityScore": 0.66,
+        "hardFailed": False,
+        "gateReasons": [],
+        "maxFloatingLossRatio30d": 0.04,
+        "maxUnderwaterSeconds30d": 7200.0,
+        "maxLosingPositions30d": 2,
+    }
     assert row["copyCostEvidence"] == {
         "copyNet5dUsd": 20.0,
         "copyNet20dUsd": 100.0,

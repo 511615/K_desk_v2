@@ -87,9 +87,9 @@ Twelve-hour positions cannot add risk and 24-hour positions close and pause that
 
 Historical Tick delay replay is deferred from V0.1 because its cross-product validation cost is not
 yet accepted. It does not participate in score or hard eligibility, and missing Tick partitions do
-not reject a sleeve. The primary cost_profit_recent_coverage_v1 score is 50% cost-adjusted profit
-per copied trade, 30% recent five-day cost-adjusted profit per copied trade and 20% copy-cost
-coverage. Source P/L is first normalized to USD, then scaled from the 20-day average closed
+not reject a sleeve. The primary cost_profit_recent_coverage_carry_v2 score is 45% cost-adjusted
+profit per copied trade, 25% recent five-day cost-adjusted profit per copied trade, 15% copy-cost
+coverage and 15% carry quality. Source P/L is first normalized to USD, then scaled from the 20-day average closed
 execution size to the selected Demo product's actual minimum lot. Estimated cost is the product
 default round-trip spread at that minimum lot plus a 25% execution reserve; rebates never enter
 either P/L or cost. MT5 close counts and lots share the same exit/reversal Deal population. Five-day
@@ -97,7 +97,13 @@ and 20-day cost-adjusted P/L must both be positive and 20-day cost coverage must
 only rows passing those and all prior hard gates participate in percentile ranking. Missing or
 non-finite cost evidence is a hard rejection. Drawdown,
 holding, negative-equity, stop-out and evidence-quality checks remain non-compensable hard gates,
-not secondary score weights. Drawdown uses cashflow-adjusted equity including synchronized floating
+not secondary score weights. Carry risk combines floating-loss depth, underwater duration and
+simultaneous losing-position count after the cheap profitability gates. Score 70, 10% observed
+maximum floating loss, 48 hours underwater or eight losing positions is a build-time hard rejection.
+Carry evidence does not remove an already selected sleeve from intraday activity or alter an open
+copy; client and portfolio loss-budget controls remain authoritative while trading. Historical depth
+and duration use bounded equity/path proxies in this version and do not claim Tick-level MAE precision.
+Drawdown uses cashflow-adjusted equity including synchronized floating
 P/L. Pre-funding zero-equity rows are ignored and the first positive funded observation establishes
 capital without subtracting its own funding movement. Actual platform equity below zero remains
 `negative_equity`; that code comes only from authoritative platform daily/current equity evidence,

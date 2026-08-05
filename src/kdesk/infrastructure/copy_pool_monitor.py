@@ -425,6 +425,7 @@ class CopyPoolFileSnapshotRepository:
                     "costProfit": _float(row.get("factor_rank_cost_profit")),
                     "recentStrength": _float(row.get("factor_rank_recent_strength")),
                     "costCoverage": _float(row.get("factor_rank_cost_coverage")),
+                    "carryQuality": _float(row.get("factor_rank_carry_quality")),
                     "riskAdjustedReturn5d": _float(row.get("factor_risk_adjusted_return_5d")),
                     "riskAdjustedReturn20d": _float(row.get("factor_risk_adjusted_return_20d")),
                     "spreadStressReturn": _float(row.get("factor_spread_stress_return")),
@@ -483,6 +484,21 @@ class CopyPoolFileSnapshotRepository:
                     "swapDrag": _float(row.get("swap_drag")),
                     "longLossRatio": _float(row.get("long_loss_ratio")),
                     "lossAdditionRatio": _float(row.get("loss_addition_ratio")),
+                },
+                "carryRisk": {
+                    "riskScore": _float(row.get("carry_risk_score")),
+                    "qualityScore": _float(row.get("carry_quality_score")),
+                    "hardFailed": _bool(row.get("carry_hard_failed")),
+                    "gateReasons": _reason_codes(row.get("carry_gate_reasons")),
+                    "maxFloatingLossRatio30d": _float(
+                        row.get("max_floating_loss_ratio_30d")
+                    ),
+                    "maxUnderwaterSeconds30d": _float(
+                        row.get("max_underwater_seconds_30d")
+                    ),
+                    "maxLosingPositions30d": _int(
+                        row.get("max_losing_positions_30d")
+                    ),
                 },
                 "holdMultiplier": _float(row.get("hold_multiplier"), 1.0),
                 "baseWeight": base_weight,

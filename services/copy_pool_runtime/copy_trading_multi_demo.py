@@ -177,10 +177,12 @@ class MultiSourceLiveService(LiveService):
     # A v7 accepted snapshot may have been built with the former 0.55 score
     # floor. Treat it as a same-day migration candidate so startup recomputes
     # weights from the complete private universe without touching ownership.
-    POOL_PRODUCER = "copy-pool-multisource-v8-weight-floor"
+    POOL_PRODUCER = "copy-pool-multisource-v9-carry-risk"
+    POOL_FACTOR_SCHEMA = "cost-profit-recent-coverage-carry-v3"
     LEGACY_WEIGHT_POOL_PRODUCERS = frozenset({
         "copy-pool-multisource-v6-weight-fallback",
         "copy-pool-multisource-v7-cost-profit",
+        "copy-pool-multisource-v8-weight-floor",
     })
 
     event_public_columns = MULTISOURCE_EVENT_PUBLIC_COLUMNS
@@ -424,6 +426,7 @@ class MultiSourceLiveService(LiveService):
                 )
                 cache_valid = (
                     meta.get("producer") == self.POOL_PRODUCER
+                    and meta.get("factor_schema") == self.POOL_FACTOR_SCHEMA
                     and same_day_complete
                 )
                 upgrade_candidate = (
@@ -451,7 +454,10 @@ class MultiSourceLiveService(LiveService):
                         "factor_cost_adjusted_net_20d_usd", "factor_cost_profit_per_trade",
                         "factor_recent_profit_per_trade", "factor_cost_coverage",
                         "factor_rank_cost_profit", "factor_rank_recent_strength",
-                        "factor_rank_cost_coverage",
+                        "factor_rank_cost_coverage", "factor_rank_carry_quality",
+                        "carry_risk_score", "carry_quality_score", "carry_hard_failed",
+                        "max_floating_loss_ratio_30d",
+                        "max_underwater_seconds_30d", "max_losing_positions_30d",
                         "factor_copy_net_5d_usd", "factor_copy_net_20d_usd",
                         "factor_estimated_copy_cost_5d_usd",
                         "factor_estimated_copy_cost_20d_usd",
@@ -463,6 +469,13 @@ class MultiSourceLiveService(LiveService):
                         cache_valid = False
                 elif upgrade_candidate:
                     universe = pd.read_csv(self.universe_path)
+                    carry_required = {
+                        "carry_risk_score", "carry_quality_score", "carry_hard_failed",
+                        "max_floating_loss_ratio_30d",
+                        "max_underwater_seconds_30d", "max_losing_positions_30d",
+                    }
+                    if not carry_required.issubset(universe.columns):
+                        raise ValueError("Legacy universe lacks carry-risk evidence")
                     expected_rows = int(coverage.get("eligible_sleeves", 0) or 0)
                     if expected_rows and len(universe.index) != expected_rows:
                         raise ValueError(
@@ -478,7 +491,7 @@ class MultiSourceLiveService(LiveService):
                     meta = {
                         **meta,
                         "producer": self.POOL_PRODUCER,
-                        "factor_schema": "cost-profit-recent-coverage-v2-weight-floor",
+                        "factor_schema": self.POOL_FACTOR_SCHEMA,
                         "cache_upgraded_at": beijing_now().isoformat(),
                     }
                     atomic_json(self.pool_build_meta_path, meta)
@@ -520,7 +533,7 @@ class MultiSourceLiveService(LiveService):
                 self.pool_build_meta_path,
                 {
                     "producer": self.POOL_PRODUCER,
-                    "factor_schema": "cost-profit-recent-coverage-v2-weight-floor",
+                    "factor_schema": self.POOL_FACTOR_SCHEMA,
                     "pool_build_day": accepted_build_day,
                     "logical_routes": len(ROUTES),
                     "physical_sources": len(self.db.sources),
@@ -571,7 +584,10 @@ class MultiSourceLiveService(LiveService):
             "factor_cost_adjusted_net_20d_usd", "factor_cost_profit_per_trade",
             "factor_recent_profit_per_trade", "factor_cost_coverage",
             "factor_rank_cost_profit", "factor_rank_recent_strength",
-            "factor_rank_cost_coverage",
+            "factor_rank_cost_coverage", "factor_rank_carry_quality", "carry_risk_score",
+            "carry_quality_score", "carry_hard_failed", "carry_gate_reasons",
+            "max_floating_loss_ratio_30d", "max_underwater_seconds_30d",
+            "max_losing_positions_30d",
             "factor_copy_net_5d_usd", "factor_copy_net_20d_usd",
             "factor_estimated_copy_cost_5d_usd",
             "factor_estimated_copy_cost_20d_usd",

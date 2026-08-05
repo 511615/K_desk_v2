@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import pandas as pd
 import pymysql
 from copy_dynamic_pool_domain import RankingCandidate, build_rank_universe
+from copy_pool_factor_domain import calculate_carry_risk_metrics
 from copy_product_catalog import (
     default_roundtrip_spread_usd_per_lot,
     normalize_source_product,
@@ -505,6 +506,11 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
         "current_margin_to_equity": 0.0,
         "current_floating_loss_ratio": 0.0,
         "current_open_risk_multiplier": 1.0,
+        "current_product_oldest_open_seconds": 0.0,
+        "current_product_losing_position_count": 0.0,
+        "max_floating_loss_ratio_30d": 0.0,
+        "max_underwater_seconds_30d": 0.0,
+        "max_losing_positions_30d": 0.0,
     }
     for column, default in defaults.items():
         if column not in ranked:
@@ -533,6 +539,27 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
         + ranked["closed_delta_since_build_usd"]
         + ranked["current_product_floating_pnl_usd"]
     )
+    carry_metrics = [
+        calculate_carry_risk_metrics(
+            max_floating_loss_ratio_30d=max(
+                float(row.max_floating_loss_ratio_30d),
+                float(row.current_floating_loss_ratio),
+            ),
+            max_underwater_seconds_30d=max(
+                float(row.max_underwater_seconds_30d),
+                float(row.current_product_oldest_open_seconds)
+                if float(row.current_product_floating_pnl_usd) < 0 else 0.0,
+            ),
+            max_losing_positions_30d=max(
+                int(row.max_losing_positions_30d),
+                int(row.current_product_losing_position_count),
+            ),
+        )
+        for row in ranked.itertuples()
+    ]
+    ranked["current_carry_risk_score"] = [item.risk_score for item in carry_metrics]
+    ranked["current_carry_quality_score"] = [item.quality_score for item in carry_metrics]
+    ranked["current_carry_hard_failed"] = [item.hard_failed for item in carry_metrics]
     ranked["hourly_hard_eligible"] = (
         ranked["factor_ready"].fillna(False).astype(bool)
         & (ranked["current_comprehensive_net_20d_usd"] > 0)
@@ -1260,6 +1287,8 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             product_positions = pd.DataFrame(columns=[
                 "account_key", "product", "current_product_floating_pnl_raw",
                 "current_product_hedge_ratio",
+                "current_product_oldest_open_seconds",
+                "current_product_losing_position_count",
             ])
         else:
             product_positions = product_positions.copy()
@@ -1269,11 +1298,15 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             ).fillna(0.0).clip(0.0, 1.0)
             product_positions = product_positions.rename(columns={
                 "product_floating_pnl": "current_product_floating_pnl_raw",
+                "product_oldest_open_seconds": "current_product_oldest_open_seconds",
+                "product_losing_position_count": "current_product_losing_position_count",
             })
         refreshed = refreshed.merge(
             product_positions[[
                 "account_key", "product", "current_product_floating_pnl_raw",
                 "current_product_hedge_ratio",
+                "current_product_oldest_open_seconds",
+                "current_product_losing_position_count",
             ]],
             on=["account_key", "product"], how="left", validate="one_to_one",
         )
@@ -1402,6 +1435,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 if source.platform == "MT5":
                     result = source.query(
                         f"SELECT Login, Symbol, COUNT(*) AS position_count, "
+                        f"SUM(CASE WHEN Profit + Storage < 0 THEN 1 ELSE 0 END) AS losing_position_count, "
                         f"SUM(VolumeExt) / 100000000.0 AS gross_lots, "
                         f"SUM(CASE WHEN Action=0 THEN VolumeExt ELSE -VolumeExt END) / 100000000.0 AS net_lots, "
                         f"UNIX_TIMESTAMP(MIN(TimeCreate)) AS oldest_open_epoch, "
@@ -1413,6 +1447,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 else:
                     result = source.query(
                         f"SELECT LOGIN AS Login, SYMBOL AS Symbol, COUNT(*) AS position_count, "
+                        f"SUM(CASE WHEN PROFIT + COMMISSION + SWAPS + TAXES < 0 THEN 1 ELSE 0 END) AS losing_position_count, "
                         f"SUM(VOLUME) / 100.0 AS gross_lots, "
                         f"SUM(CASE WHEN CMD=0 THEN VOLUME ELSE -VOLUME END) / 100.0 AS net_lots, "
                         f"UNIX_TIMESTAMP(MIN(OPEN_TIME)) AS oldest_open_epoch, "
@@ -1433,6 +1468,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         "account_key": str(original.account_key),
                         "product": product,
                         "product_open_position_count": 0.0,
+                        "product_losing_position_count": 0.0,
                         "product_open_gross_lots": 0.0,
                         "product_open_net_lots": 0.0,
                         "product_oldest_open_seconds": 0.0,
@@ -1440,6 +1476,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         "open_source_contract_size": product_spec(product).contract_size,
                     })
                     target["product_open_position_count"] = float(target["product_open_position_count"]) + float(item.get("position_count") or 0)
+                    target["product_losing_position_count"] = float(target["product_losing_position_count"]) + float(item.get("losing_position_count") or 0)
                     target["product_open_gross_lots"] = float(target["product_open_gross_lots"]) + float(item.get("gross_lots") or 0.0)
                     target["product_open_net_lots"] = float(target["product_open_net_lots"]) + float(item.get("net_lots") or 0.0)
                     target["product_oldest_open_seconds"] = max(
@@ -1452,7 +1489,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         float(item.get("source_contract_size") or product_spec(product).contract_size),
                     )
         return pd.DataFrame(rows.values(), columns=[
-            "account_key", "product", "product_open_position_count",
+            "account_key", "product", "product_open_position_count", "product_losing_position_count",
             "product_open_gross_lots", "product_open_net_lots",
             "product_oldest_open_seconds", "product_floating_pnl",
             "open_source_contract_size",
@@ -1774,6 +1811,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             "open_position_count", "open_gross_lots", "xau_gross_lots", "xau_net_lots",
             "oldest_open_seconds", "position_floating",
             "product_open_position_count", "product_open_gross_lots", "product_open_net_lots",
+            "product_losing_position_count",
             "product_oldest_open_seconds", "product_floating_pnl", "open_source_contract_size",
         ]
         for column in numeric:
@@ -1922,6 +1960,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             "sleeve_key", "factor_ready", "factor_base_score", "factor_gate_reasons",
             "delay_score", "mdd_20d", "mdd_60d", "current_drawdown",
             "holding_path_complete", "conservative_break_even_ms",
+            "carry_risk_score", "carry_quality_score", "carry_hard_failed",
+            "max_floating_loss_ratio_30d",
+            "max_underwater_seconds_30d", "max_losing_positions_30d",
             "historical_delay_enabled", "delay_factor_status",
         }
         if factor_rows.empty or not required_factor_columns.issubset(factor_rows.columns):
