@@ -62,13 +62,14 @@ new full preflight instead of entering Demo execution.
 When a valid cache is restored, its accepted build day advances the daily scheduler guard before the
 first loop and a fresh status snapshot is published immediately. This prevents a restart after 05:15
 from launching a duplicate full build while the dashboard continues to show stale prior-day state.
-The accepted cache producer is copy-pool-multisource-v8-weight-floor. A same-trading-day
-copy-pool-multisource-v6-weight-fallback or copy-pool-multisource-v7-cost-profit cache may be
-upgraded in place only when its metadata, coverage and full private universe prove exact 11/11
-logical-route and 9/9 physical-source completion. The upgrade preserves all existing hard
-rejections and recomputes proportional positive-score weights without the retired `0.55` activity
-floor; partial, older-day or malformed snapshots force a complete rebuild. The next 05:15 schedule
-always runs the complete v8 database build. Same-day migration rebases dynamic sleeve weights but restores
+The accepted cache producer is `copy-pool-multisource-v9-carry-risk` with factor schema
+`cost-profit-recent-coverage-carry-v3`. A same-trading-day v6, v7 or v8 cache may be upgraded in
+place only when its metadata, coverage and full private universe prove exact 11/11 logical-route,
+9/9 physical-source and complete carry-risk evidence. A legacy universe without carry-risk evidence
+forces a complete rebuild rather than treating missing evidence as safe. The upgrade preserves all
+existing hard rejections and recomputes proportional positive-score weights without the retired
+`0.55` activity floor; partial, older-day or malformed snapshots also force a complete rebuild. The
+next 05:15 schedule always runs the complete v9 database build. Same-day migration rebases dynamic sleeve weights but restores
 and validates persisted independent Demo Ticket ownership exactly like a normal restart. V0.1 complete builds do not
 load historical Tick partitions. They still require drawdown and holding-quality gates in addition to
 account-product selection, complete open-position risk or independent execution inputs. Bootstrap

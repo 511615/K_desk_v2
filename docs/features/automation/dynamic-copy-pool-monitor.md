@@ -286,12 +286,13 @@ each physical source remains one serial task per stage. Results merge in stable 
 order; any source failure rejects the complete build.
 Coverage records bounded stage timings for route discovery, feature scan, current state, risk,
 holding, factor history/scoring and total build time without exposing SQL or account identity.
-The v8 producer may migrate a same-trading-day v6 or v7 cache without repeating the 60-day database
-build, but only when the private universe is present and metadata plus coverage prove the exact
-complete eleven-route/nine-source set. Migration preserves all existing hard-gate failures, applies
-the current five-day/20-day after-cost and coverage gates across the full cached universe,
-regenerates selection and positive-score weights, and stamps v8 metadata. The next 05:15 schedule
-still performs a complete read-only database rebuild under the v8 model. A migration rebases sleeve
+The v9 producer may migrate a same-trading-day v6, v7 or v8 cache without repeating the 60-day
+database build only when the private universe is present and metadata plus coverage prove the exact
+complete eleven-route/nine-source set and complete carry-risk evidence. A legacy universe without
+carry-risk evidence forces a full rebuild. Migration preserves all existing hard-gate failures,
+applies the current five-day/20-day after-cost and coverage gates across the full cached universe,
+regenerates selection and positive-score weights, and stamps v9/v3 metadata. The next 05:15 schedule
+still performs a complete read-only database rebuild under the v9 model. A migration rebases sleeve
 weights but remains a same-day restart: persisted source-position to Demo-Ticket ownership is
 restored and validated rather than cleared.
 MT5 polling intentionally reads non-trading ledger actions so each physical cursor can advance past
