@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "614b3da14f0e",
+  "registryVersion": "60a0d3ed5830",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -197,6 +197,7 @@
         "frontend/src/pages/WorkbenchPage.vue",
         "frontend/src/pages/CopyPoolPage.vue",
         "frontend/src/copyPool.ts",
+        "frontend/src/beijingTime.ts",
         "services/copy_pool_runtime/run_copy_demo_live.ps1",
         "services/copy_pool_runtime/copy_delay_replay_domain.py",
         "services/copy_pool_runtime/copy_dynamic_pool_domain.py",
@@ -220,6 +221,7 @@
         "tests/test_copy_pool_monitor.py",
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/src/copyPool.spec.ts",
+        "frontend/src/beijingTime.spec.ts",
         "frontend/src/pages/CopyPoolPage.spec.ts",
         "services/copy_pool_runtime/tests/test_copy_manual_controls.py",
         "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py",

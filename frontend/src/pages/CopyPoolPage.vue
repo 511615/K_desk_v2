@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
+import { formatBeijingDateTime as dateTime, formatBeijingTime as timeOnly } from '../beijingTime'
 import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
 import type { PoolTierTab } from '../copyPool'
 import { startFrontendUpdateMonitor } from '../frontendUpdate'
@@ -224,17 +225,6 @@ function signedLots(value: unknown, digits = 2): string {
   return `${parsed > 0 ? '+' : ''}${parsed.toFixed(digits)}`
 }
 
-function timeOnly(value: unknown): string {
-  const text = String(value || '')
-  const date = new Date(text)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-function dateTime(value: unknown): string {
-  const date = typeof value === 'number' ? new Date(value) : new Date(String(value || ''))
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
-}
-
 function demoEntryLabel(value: unknown): string {
   const labels: Record<string, string> = { IN: '开仓', OUT: '平仓', INOUT: '反转', OUT_BY: '对向平仓' }
   return labels[String(value || '').toUpperCase()] || '成交'
@@ -246,7 +236,7 @@ function ownershipLabel(value: unknown): string {
 
 function positionHolding(value: unknown): string {
   const opened = Date.parse(String(value || ''))
-  return Number.isFinite(opened) ? formatDuration(Math.max(0, (Date.now() - opened) / 1000)) : '-'
+  return Number.isFinite(opened) ? formatDuration(Math.max(0, (runtimeClockMs.value - opened) / 1000)) : '-'
 }
 
 function sideLabel(value: unknown): string {
@@ -278,13 +268,13 @@ function delayValue(row: any, phase: 'entry' | 'exit' | 'combined'): unknown {
 function currentHoldingDuration(row: any): string {
   if (row.holdingSeconds != null) return formatDuration(row.holdingSeconds)
   const openedAt = Date.parse(String(row.sourceOpenedAt || ''))
-  return Number.isFinite(openedAt) ? formatDuration((Date.now() - openedAt) / 1000) : '-'
+  return Number.isFinite(openedAt) ? formatDuration((runtimeClockMs.value - openedAt) / 1000) : '-'
 }
 
 function shadowProgress(row: any): string {
   const endsAt = row.shadowEndsAt || row.shadow_ends_at
   if (!endsAt) return '-'
-  const remaining = Date.parse(String(endsAt)) - Date.now()
+  const remaining = Date.parse(String(endsAt)) - runtimeClockMs.value
   return remaining <= 0 ? '等待状态确认' : `剩余 ${formatDuration(remaining / 1000)}`
 }
 
@@ -323,7 +313,7 @@ onBeforeUnmount(() => {
         <span class="status-live" :class="{ stale: payload.stale }"><i></i>{{ payload.stale ? '数据已停滞' : phaseLabel(status.phase) }}</span>
         <span class="badge">只读监控</span>
         <span class="badge">{{ status.clients || pool.length || 0 }} 个客户</span>
-        <span data-testid="runtime-clock">{{ dateTime(runtimeClockMs) }}</span>
+        <span data-testid="runtime-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span>
       </div>
     </section>
 
@@ -334,7 +324,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
         <div class="copy-panel-head demo-account-head">
-          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">{{ dateTime(runtimeClockMs) }}</span></small></div>
+          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span></small></div>
           <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
         </div>
         <div class="demo-account-summary">
@@ -348,11 +338,11 @@ onBeforeUnmount(() => {
         <div class="demo-account-ledgers">
           <div class="demo-ledger">
             <div class="demo-ledger-title"><h3>当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
-            <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间 / 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
+            <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间（北京时间）/ 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
           </div>
           <div class="demo-ledger">
             <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 最近 {{ demoAccountDeals.length }} 条</span></div>
-            <div class="table-wrap demo-account-table"><table><thead><tr><th>成交时间</th><th>Deal / Position</th><th>产品 / 动作</th><th>手数 / 价格</th><th>净损益</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDeals" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDeals.length"><td colspan="6" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
+            <div class="table-wrap demo-account-table"><table><thead><tr><th>成交时间（北京时间）</th><th>Deal / Position</th><th>产品 / 动作</th><th>手数 / 价格</th><th>净损益</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDeals" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDeals.length"><td colspan="6" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
           </div>
         </div>
       </section>
@@ -377,7 +367,7 @@ onBeforeUnmount(() => {
       <section class="health-strip" aria-label="实时链路状态">
         <article><span>可见运行时长</span><b>{{ formatDuration(payload.uptimeSeconds) }}</b></article>
         <article><span>数据库状态</span><b>{{ Number(status.dbSecondsSinceSuccess) <= 3 ? '正常' : '中断' }} · {{ number(status.dbSecondsSinceSuccess, 2) }}秒</b></article>
-        <article><span>最近客户成交</span><b>{{ payload.lastSourceEventAt ? timeOnly(payload.lastSourceEventAt) : '-' }}</b></article>
+        <article><span>最近客户成交（北京时间）</span><b>{{ payload.lastSourceEventAt ? timeOnly(payload.lastSourceEventAt) : '-' }}</b></article>
         <article><span>行情更新时间</span><b>{{ number(status.quoteAgeSeconds, 2) }}秒前</b></article>
         <article><span>95% 多源轮询</span><b :class="{ warning: Number(status.dbPollLatencyP95Seconds) > 2 }">{{ number(status.dbPollLatencyP95Seconds, 2) }}秒</b></article>
         <article><span>连续对账一致</span><b>{{ status.reconcileStreak || 0 }} 次</b></article>
@@ -511,7 +501,7 @@ onBeforeUnmount(() => {
       <section class="copy-panel independent-panel">
         <div class="copy-panel-head"><div><h2>当前跟单</h2><small>每行对应一个来源 Position 到 Demo Ticket 的独立关系；客户之间不相互对冲或平仓</small></div><span>{{ activeCopyPositions.length }} 个来源仓 · {{ currentCopyRowsForDisplay.filter(row => row.demoTicket != null).length }} 个 Demo Ticket</span></div>
         <div v-if="dashboard.isLoading.value" class="empty-inline">正在读取当前跟单状态...</div>
-        <div v-else class="table-wrap current-copy-table"><table><thead><tr><th>单主账号</th><th>服务器 / 平台</th><th>产品 / 方向</th><th>来源 Position / 手数</th><th>Demo Ticket / 手数</th><th>来源开仓</th><th>单主浮盈亏</th><th>我们的收益</th><th>入场延迟</th><th>持仓时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in currentCopyRowsForDisplay" :key="row.currentCopyKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ row.accountLogin || '-' }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ row.accountLogin || '-' }}</b></td><td><b>{{ row.accountServer || '-' }}</b><small class="cell-note">{{ row.accountPlatform || '平台未提供' }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.signedLots > 0 ? '买入' : row.signedLots < 0 ? '卖出' : '方向未提供' }}</small></td><td><b>{{ row.sourcePositionId || '-' }}</b><small class="cell-note">{{ lots(row.sourceLots) }} 手</small></td><td><b>{{ row.demoTicket ?? '尚未复制' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.demoTicket == null ? '-' : `${signedLots(row.signedLots)} 手` }}</small></td><td><b>{{ dateTime(row.sourceOpenedAt) }}</b><small class="cell-note">{{ row.sourceOpenPrice == null ? '开仓价未提供' : `价格 ${number(row.sourceOpenPrice, 5)}` }}</small></td><td :class="{ positive: Number(row.sourcePnlUsd) >= 0, negative: Number(row.sourcePnlUsd) < 0 }"><b>{{ row.sourcePnlUsd == null ? '未提供' : money(row.sourcePnlUsd) }}</b><small class="cell-note">{{ row.sourcePnlUsd == null ? '待运行时投影' : '当前来源仓 · USD' }}</small></td><td :class="{ positive: Number(row.demoPnlUsd) >= 0, negative: Number(row.demoPnlUsd) < 0 }"><b>{{ row.demoPnlUsd == null ? '未提供' : money(row.demoPnlUsd) }}</b><small class="cell-note">{{ row.demoPnlUsd == null ? '待运行时投影' : '已实现 + 浮动 · USD' }}</small></td><td><b>{{ row.entryDelaySeconds == null ? '-' : `${number(row.entryDelaySeconds, 2)}秒` }}</b><small class="cell-note">{{ row.entryDelaySeconds == null ? '等待运行时记录' : '来源到Demo开仓' }}</small></td><td><b>{{ currentHoldingDuration(row) }}</b><small class="cell-note">来源仓</small></td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ row.rejectReason ? copyReasonLabel(row.rejectReason) : '正常跟踪' }}</small></td></tr><tr v-if="!currentCopyRowsForDisplay.length"><td colspan="11" class="empty-cell">当前没有正在复制的来源仓和 Demo Ticket</td></tr></tbody></table></div>
+        <div v-else class="table-wrap current-copy-table"><table><thead><tr><th>单主账号</th><th>服务器 / 平台</th><th>产品 / 方向</th><th>来源 Position / 手数</th><th>Demo Ticket / 手数</th><th>来源开仓（北京时间）</th><th>单主浮盈亏</th><th>我们的收益</th><th>入场延迟</th><th>持仓时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in currentCopyRowsForDisplay" :key="row.currentCopyKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ row.accountLogin || '-' }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ row.accountLogin || '-' }}</b></td><td><b>{{ row.accountServer || '-' }}</b><small class="cell-note">{{ row.accountPlatform || '平台未提供' }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.signedLots > 0 ? '买入' : row.signedLots < 0 ? '卖出' : '方向未提供' }}</small></td><td><b>{{ row.sourcePositionId || '-' }}</b><small class="cell-note">{{ lots(row.sourceLots) }} 手</small></td><td><b>{{ row.demoTicket ?? '尚未复制' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.demoTicket == null ? '-' : `${signedLots(row.signedLots)} 手` }}</small></td><td><b>{{ dateTime(row.sourceOpenedAt) }}</b><small class="cell-note">{{ row.sourceOpenPrice == null ? '开仓价未提供' : `价格 ${number(row.sourceOpenPrice, 5)}` }}</small></td><td :class="{ positive: Number(row.sourcePnlUsd) >= 0, negative: Number(row.sourcePnlUsd) < 0 }"><b>{{ row.sourcePnlUsd == null ? '未提供' : money(row.sourcePnlUsd) }}</b><small class="cell-note">{{ row.sourcePnlUsd == null ? '待运行时投影' : '当前来源仓 · USD' }}</small></td><td :class="{ positive: Number(row.demoPnlUsd) >= 0, negative: Number(row.demoPnlUsd) < 0 }"><b>{{ row.demoPnlUsd == null ? '未提供' : money(row.demoPnlUsd) }}</b><small class="cell-note">{{ row.demoPnlUsd == null ? '待运行时投影' : '已实现 + 浮动 · USD' }}</small></td><td><b>{{ row.entryDelaySeconds == null ? '-' : `${number(row.entryDelaySeconds, 2)}秒` }}</b><small class="cell-note">{{ row.entryDelaySeconds == null ? '等待运行时记录' : '来源到Demo开仓' }}</small></td><td><b>{{ currentHoldingDuration(row) }}</b><small class="cell-note">来源仓</small></td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ row.rejectReason ? copyReasonLabel(row.rejectReason) : '正常跟踪' }}</small></td></tr><tr v-if="!currentCopyRowsForDisplay.length"><td colspan="11" class="empty-cell">当前没有正在复制的来源仓和 Demo Ticket</td></tr></tbody></table></div>
       </section>
 
       <section class="copy-panel pool-panel">
