@@ -32,8 +32,8 @@ fields. It does not place orders, restart services or mutate remote MT/CRM state
 
 ## Documentation updated
 
-Updated AUT-POOL-001, business rules and data/routing authority with the formula, thresholds,
-low-cost evidence limitations, cache contract and hourly behavior.
+Updated AUT-POOL-001, business rules, data/routing authority and operations runbook with the formula,
+thresholds, low-cost evidence limitations, v9/v3 cache contract and hourly behavior.
 
 ## Deployment and rollback
 
