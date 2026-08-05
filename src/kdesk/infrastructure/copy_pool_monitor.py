@@ -905,6 +905,7 @@ class CopyPoolFileSnapshotRepository:
         return {
             "phase": str(row.get("phase") or "unknown"),
             "server": str(row.get("server") or ""),
+            "accountLogin": str(row.get("account_login") or ""),
             "symbol": str(row.get("symbol") or ""),
             "riskProfile": str(row.get("risk_profile") or ""),
             "balanceUsd": _float(row.get("balance_usd")),
@@ -1064,6 +1065,7 @@ class CopyPoolFileSnapshotRepository:
             "time": row.get("time_beijing", ""),
             "phase": row.get("phase", ""),
             "decision": row.get("reason", ""),
+            "accountLogin": str(row.get("account_login") or ""),
             "equityUsd": _float(row.get("equity_usd")),
             "positionCapLots": _float(row.get("position_cap_lots")),
             "activeWeights": _float(row.get("active_weights")),

@@ -71,7 +71,7 @@ ORDER_PUBLIC_COLUMNS = (
     "after_lots", "bid", "ask", "spread_price", "quote_age_seconds", "retcode", "comment",
 )
 TIMELINE_PUBLIC_COLUMNS = (
-    "time_beijing", "phase", "risk_profile", "equity_usd", "position_cap_lots",
+    "time_beijing", "phase", "risk_profile", "account_login", "equity_usd", "position_cap_lots",
     "active_weights", "raw_target_lots", "desired_target_lots", "actual_strategy_lots",
     "gross_long_lots", "gross_short_lots", "spread_price", "db_latency_p95_seconds",
     "strategy_marked_pnl_usd", "cycle_pnl_usd", "reconcile_streak",
@@ -389,6 +389,7 @@ class Mt5Executor:
     def __init__(self, terminal_path: Path, risk_profile: RiskProfile) -> None:
         self.terminal_path = terminal_path
         self.risk_profile = risk_profile
+        self.approved_login: int | None = None
 
     @staticmethod
     def _is_strategy_row(row: Any) -> bool:
@@ -406,6 +407,10 @@ class Mt5Executor:
             raise RuntimeError(f"MT5 state unavailable: {mt5.last_error()}")
         if account.server != ALLOWED_SERVER or int(account.trade_mode) != 0:
             raise RuntimeError("Refusing to run: the connected account is not the approved Demo server.")
+        login = int(account.login)
+        if login <= 0:
+            raise RuntimeError("Refusing to run: the connected Demo account has no valid Login.")
+        self.approved_login = login
         if int(account.margin_mode) != 2:
             raise RuntimeError("Refusing to run: the approved test requires a hedging account.")
         if not terminal.connected:
@@ -439,11 +444,23 @@ class Mt5Executor:
             }
         return configured
 
-    @staticmethod
-    def account() -> Any:
+    def account(self) -> Any:
         value = mt5.account_info()
         if value is None:
             raise RuntimeError(f"MT5 account_info failed: {mt5.last_error()}")
+        actual_login = int(getattr(value, "login", 0) or 0)
+        if self.approved_login is None:
+            raise RuntimeError("MT5 account identity is unavailable before initialization.")
+        if (
+            actual_login != self.approved_login
+            or str(getattr(value, "server", "")) != ALLOWED_SERVER
+            or int(getattr(value, "trade_mode", -1)) != 0
+        ):
+            raise RuntimeError(
+                "MT5 account identity changed during execution: "
+                f"expected Login {self.approved_login} on {ALLOWED_SERVER}, "
+                f"received Login {actual_login} on {getattr(value, 'server', '')}."
+            )
         return value
 
     @staticmethod
@@ -1113,6 +1130,7 @@ class LiveService:
             "updated_at_beijing": beijing_now().isoformat(),
             "phase": self.phase,
             "server": account.server,
+            "account_login": int(account.login),
             "symbol": ALLOWED_SYMBOL,
             "risk_profile": self.profile.name,
             "balance_usd": float(account.balance),
@@ -1161,6 +1179,7 @@ class LiveService:
                     "time_beijing": status["updated_at_beijing"],
                     "phase": status["phase"],
                     "risk_profile": status["risk_profile"],
+                    "account_login": status["account_login"],
                     "equity_usd": status["equity_usd"],
                     "position_cap_lots": status["position_cap_lots"],
                     "active_weights": status["active_weights"],

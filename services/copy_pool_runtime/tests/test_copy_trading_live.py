@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from copy_trading_live_core import (
     ClientSpec,
@@ -29,8 +30,10 @@ from copy_trading_live_core import (
     update_source_position,
 )
 from copy_trading_live_demo import (
+    TIMELINE_PUBLIC_COLUMNS,
     RISK_PROFILES,
     LiveService,
+    Mt5Executor,
     append_csv,
     csv_data_rows,
     ensure_csv_schema,
@@ -73,6 +76,24 @@ class PartialFillMt5Executor(FakeMt5Executor):
     def wait_for_position(self, expected: float) -> None:
         if self.current != expected:
             raise RuntimeError("unexpected residual position")
+
+
+class Mt5AccountIdentityTests(unittest.TestCase):
+    def test_runtime_account_sample_must_match_initialized_demo_login(self) -> None:
+        executor = Mt5Executor(Path("terminal64.exe"), RISK_PROFILES["Capital10k"])
+        executor.approved_login = 33_304_642
+        switched = SimpleNamespace(
+            login=44_400_001,
+            server="ACCMGlobal-Demo",
+            trade_mode=0,
+        )
+
+        with patch("copy_trading_live_demo.mt5.account_info", return_value=switched):
+            with self.assertRaisesRegex(RuntimeError, "account identity changed"):
+                executor.account()
+
+    def test_timeline_contract_records_demo_account_login(self) -> None:
+        self.assertIn("account_login", TIMELINE_PUBLIC_COLUMNS)
 
 
 class FakeRiskMt5:
