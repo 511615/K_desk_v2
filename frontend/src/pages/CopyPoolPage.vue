@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
         <div class="copy-panel-head demo-account-head">
-          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · {{ demoAccount.updatedAt ? dateTime(demoAccount.updatedAt) : '等待账户快照' }}</small></div>
+          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">{{ dateTime(runtimeClockMs) }}</span></small></div>
           <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
         </div>
         <div class="demo-account-summary">

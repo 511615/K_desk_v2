@@ -10,6 +10,7 @@ vi.mock('@tanstack/vue-query', () => ({
         stale: false,
         status: {},
         demoAccount: {
+          updatedAt: '2026-08-05T10:05:00+08:00',
           account: { login: '33304642', server: 'ACCMGlobal-Demo', balanceUsd: 9818.24, equityUsd: 9821.44, marginUsd: 120, freeMarginUsd: 9701.44, marginLevelPercent: 8184.53 },
           positions: [{ ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true }],
           deals: [{ dealTicket: 80001, positionId: 89001, time: '2026-08-05T08:40:00+08:00', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true }],
@@ -68,12 +69,15 @@ describe('CopyPoolPage tier tabs', () => {
     vi.setSystemTime(new Date('2026-08-05T10:06:56+08:00'))
     const wrapper = mount(CopyPoolPage)
     const clock = wrapper.get('[data-testid="runtime-clock"]')
+    const accountClock = wrapper.get('[data-testid="demo-account-clock"]')
 
     expect(clock.text()).toBe('2026/8/5 10:06:56')
+    expect(accountClock.text()).toBe(clock.text())
 
     await vi.advanceTimersByTimeAsync(1000)
 
     expect(clock.text()).toBe('2026/8/5 10:06:57')
+    expect(accountClock.text()).toBe(clock.text())
     wrapper.unmount()
   })
 
