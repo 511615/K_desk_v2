@@ -386,9 +386,9 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             service.sleeve_states["route:2|EURUSD"].effective_weight, 0.09
         )
 
-    def test_demo_fast_rank_scales_all_active_weights_proportionally_to_budget(self) -> None:
+    def test_first_rank_scales_all_active_weights_without_fast_activation_switch(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
-        service.args = SimpleNamespace(demo_fast_activation=True, mode="StagedLive")
+        service.args = SimpleNamespace(demo_fast_activation=False, mode="StagedLive")
         service.mt = FakeHedgingMt()
         service.scheduler_state = mark_scheduler_run(
             SchedulerState(), NOW, risk=True, discovery=True,

@@ -68,46 +68,31 @@ class DynamicStateTests(unittest.TestCase):
         self.row = candidate("A", "XAUUSD", 1.0)
         self.state = SleeveDynamicState(day_start_base_weight=0.10, frozen_daily_loss_budget=15.0)
 
-    def test_two_qualifications_then_ten_minute_shadow(self) -> None:
-        first = update_rank_state(self.state, self.row, NOW, active_zone=True, qualified_zone=True)
-        self.assertEqual(first.tier, PoolTier.MONITOR)
-        shadow = update_rank_state(first, self.row, NOW + timedelta(minutes=15), active_zone=True, qualified_zone=True)
-        self.assertEqual(shadow.tier, PoolTier.ENTRY_SHADOW)
-        active = advance_shadow_state(shadow, NOW + timedelta(minutes=25), shadow_health_ok=True)
+    def test_first_qualified_rank_activates_without_entry_shadow(self) -> None:
+        active = update_rank_state(
+            self.state, self.row, NOW, active_zone=True, qualified_zone=True
+        )
         self.assertEqual(active.tier, PoolTier.ACTIVE)
         self.assertGreater(active.effective_weight, 0)
+        self.assertIsNone(active.shadow_started_at)
+        self.assertIsNone(active.shadow_ends_at)
 
-    def test_demo_fast_activation_uses_one_qualification_and_two_minute_shadow(self) -> None:
-        shadow = update_rank_state(
-            self.state,
-            self.row,
-            NOW,
-            active_zone=True,
-            qualified_zone=True,
-            required_active_qualifications=1,
-            entry_shadow_duration=timedelta(minutes=2),
+    def test_legacy_entry_shadow_promotes_on_next_qualified_rank(self) -> None:
+        legacy = SleeveDynamicState(
+            day_start_base_weight=0.10,
+            frozen_daily_loss_budget=15.0,
+            tier=PoolTier.ENTRY_SHADOW,
+            shadow_started_at=NOW - timedelta(minutes=1),
+            shadow_ends_at=NOW + timedelta(minutes=9),
         )
-        self.assertEqual(shadow.tier, PoolTier.ENTRY_SHADOW)
-        self.assertEqual(shadow.consecutive_active_qualifications, 1)
-        self.assertEqual(shadow.shadow_ends_at, NOW + timedelta(minutes=2))
-        self.assertEqual(
-            advance_shadow_state(
-                shadow,
-                NOW + timedelta(minutes=1),
-                shadow_health_ok=True,
-                entry_shadow_duration=timedelta(minutes=2),
-            ).tier,
-            PoolTier.ENTRY_SHADOW,
+        active = update_rank_state(
+            legacy, self.row, NOW, active_zone=True, qualified_zone=True
         )
-        self.assertEqual(
-            advance_shadow_state(
-                shadow,
-                NOW + timedelta(minutes=2),
-                shadow_health_ok=True,
-                entry_shadow_duration=timedelta(minutes=2),
-            ).tier,
-            PoolTier.ACTIVE,
-        )
+
+        self.assertEqual(active.tier, PoolTier.ACTIVE)
+        self.assertGreater(active.effective_weight, 0)
+        self.assertIsNone(active.shadow_started_at)
+        self.assertIsNone(active.shadow_ends_at)
 
     def test_demo_fast_activation_promotes_fresh_active_zone_without_shadow(self) -> None:
         active = update_rank_state(
@@ -181,9 +166,16 @@ class DynamicStateTests(unittest.TestCase):
         self.assertEqual(late, first)
         self.assertEqual(first.consecutive_active_qualifications, 1)
 
-    def test_shadow_requires_explicit_healthy_observation(self) -> None:
-        first = update_rank_state(self.state, self.row, NOW, active_zone=True, qualified_zone=True)
-        shadow = update_rank_state(first, self.row, NOW + timedelta(minutes=15), active_zone=True, qualified_zone=True)
+    def test_legacy_shadow_still_handles_health_before_its_next_rank(self) -> None:
+        shadow = SleeveDynamicState(
+            day_start_base_weight=0.10,
+            frozen_daily_loss_budget=15.0,
+            tier=PoolTier.ENTRY_SHADOW,
+            consecutive_active_qualifications=2,
+            shadow_started_at=NOW + timedelta(minutes=5),
+            shadow_ends_at=NOW + timedelta(minutes=25),
+            last_ranked_at=NOW + timedelta(minutes=15),
+        )
         with self.assertRaises(TypeError):
             advance_shadow_state(shadow, NOW + timedelta(minutes=25))  # type: ignore[call-arg]
         unhealthy_at = NOW + timedelta(minutes=16)

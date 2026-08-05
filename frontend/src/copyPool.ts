@@ -2,7 +2,6 @@ export type NumericRow = Record<string, unknown>
 
 export const POOL_TIER_TABS = [
   'active',
-  'entry_shadow',
   'monitor',
   'reserve',
   'recovery_shadow',
@@ -266,7 +265,6 @@ export function poolTierReason(row: PoolTierRow): string {
     : String(row.factorGateReasons || '').split(/[|,;]/).map(value => value.trim()).filter(Boolean)
   if (gates.length) return gates.join('、')
   if (row.currentTier === 'active') return '已满足当前执行与风险条件'
-  if (row.currentTier === 'entry_shadow') return '等待影子观察连续健康通过'
   if (row.currentTier === 'recovery_shadow') return '恢复前影子观察中'
   if (row.currentTier === 'execution_suspended') return '执行已暂停，保留监控'
   if (row.currentTier === 'hard_rejected') return '当前未通过硬门槛'

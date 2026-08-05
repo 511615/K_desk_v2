@@ -125,18 +125,21 @@ the clock. An expired reversal may close the prior owned Ticket but cannot open 
 
 The producer processes source events every 500 ms, refreshes client and sleeve risk every 10
 seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded one/four-hour
-accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. Hourly discovery
+accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. A newly ranked
+hard/activity/minimum-lot-qualified sleeve enters `ACTIVE` on its first qualified ranking and can
+copy subsequent new source positions immediately. The old `ENTRY_SHADOW` tier remains readable for
+legacy snapshots but is promoted on its next qualified ranking; no new normal entry shadow is
+created. Hourly discovery
 never repeats the 60-day factor query and cannot promote a historical hard-gate failure. A non-empty
 hourly candidate set may publish below the monitor target. If its refreshed candidate set is empty, it records
 `insufficient_qualified_accounts`, retains the last accepted pool without advancing the successful
 discovery schedule, and retries after the one-minute retry floor; this condition never interrupts
-the main risk or recovery-shadow state loop. Two
-consecutive active-zone results and ten healthy shadow minutes are required before execution.
-An entry-shadow health failure caused by a transient operational gate, including the first pending
-source-position reconciliation frame, retains the sleeve's two ranking qualifications but restarts
-the full ten-minute continuous-health window. Loss of factor qualification, current comprehensive
-product profit or activity eligibility returns the sleeve to monitor immediately, and no weight
-becomes executable before the restarted window completes.
+the main risk or recovery-shadow state loop. Normal entry activation no longer waits for consecutive
+rankings or a healthy entry-shadow window. An entry-shadow health failure caused by a transient
+operational gate is retained only for compatibility with an already persisted legacy
+`ENTRY_SHADOW`; the next qualified ranking promotes it directly. Loss of factor qualification,
+current comprehensive product profit or activity eligibility returns the sleeve to monitor
+immediately, and no new-risk order is allowed while the sleeve is not `ACTIVE`.
 Hourly current-position evidence uses collision-free `current` column names, preserving daily
 build-time floating/hedge columns when a product currently has no open position.
 Hourly monitor-only sleeves receive no provisional execution base weight. Producer status and the
@@ -164,13 +167,12 @@ the source, weight and gates remain eligible; another same-direction Position ca
 More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
 strategy flatten before another opening request is sent.
 
-The optional `-DemoFastActivation` switch is also effective only for `ACCMGlobal-Demo` in
-`StagedLive`. For a fresh sleeve in the active zone that is hard-eligible, activity-eligible and
-minimum-lot feasible, the first 15-minute ranking directly sets `ACTIVE` and its effective weight to
-the current `live_base_weight`; it does not wait for entry shadow or the slow weight-increase limits.
-It does not authorize trading or bypass operational/risk gates, and an existing entry shadow remains
-subject to its health window. Without the switch, and on every other server or mode, the normal
-two-plus-ten shadow and slow-weight policy remains authoritative.
+The `-DemoFastActivation` switch remains accepted for launcher compatibility and is reported in
+status, but it no longer controls ordinary entry activation. For a fresh sleeve in the active zone
+that is hard-eligible, activity-eligible and minimum-lot feasible, the first ranking directly sets
+`ACTIVE` and its effective weight to the current `live_base_weight` in every mode. It does not
+authorize trading or bypass operational/risk gates. Existing loss-recovery shadows remain
+independent and still require their recovery health window.
 
 ## UI and behavior
 
@@ -204,9 +206,10 @@ Status and equity-timeline rows include the pinned Demo Login. A Producer schema
 legacy timeline without this identity column into a timestamped archive before starting a clean
 current curve, so account-crossed equity samples cannot remain mixed into the displayed series.
 
-The `客户池层级与影子准入` panel is an interactive tabbed read view. Its seven tabs are `活动跟单池`,
-`入场观察`, `监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; each shows the current
-account-product sleeve count. Selecting a tab immediately replaces the panel body with that tier's
+The `客户池层级与影子准入` panel is an interactive tabbed read view. Its tabs are `活动跟单池`,
+`监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; the obsolete `入场观察` tab is not
+shown for new runs. Legacy `ENTRY_SHADOW` rows are normalized to `监控池` in the presentation
+layer. Selecting a tab immediately replaces the panel body with that tier's
 account table, including trading Login detail links, product, planned/effective weight, current tier
 and primary reason. Runtime `dynamicSleeves` overrides the daily pool tier when present. Material
 client-risk states for recovery, pause/flatten or hard rejection override both dynamic and daily
@@ -394,9 +397,8 @@ idle source semantics and the bounded explicit Demo minimum-lot exception.
 The minimum-lot budget regression also requires a tiny-weight active client to receive the 20%
 cycle-budget floor only under the explicit Demo switch, proves that a 0.69 USD copied loss does not
 exhaust that floor and preserves weight-proportional budgets elsewhere.
-Producer and dashboard tests also cover the explicit Demo fast-activation scope, direct first-ranking
-activation for fresh eligible sleeves, retained entry-shadow safety, default two-ranking/ten-minute
-compatibility and effective status projection.
+Producer and dashboard tests also cover direct first-ranking activation for fresh eligible sleeves,
+legacy entry-shadow promotion, retained recovery-shadow safety and effective status projection.
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
 MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
 file, preventing DictReader field shifts after a producer schema upgrade.

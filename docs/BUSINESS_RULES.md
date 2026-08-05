@@ -172,17 +172,13 @@
   restart, even when its prior state was copy-eligible. Exact comment-plus-product recovery runs
   first; only a uniquely recovered Ticket remains managed. The orphan source mapping is removed on
   source close and can never create a replacement order.
-- Entry requires two consecutive active-zone rankings followed by ten continuous healthy shadow
-  minutes. A transient operational-gate failure during entry shadow preserves those ranking
-  qualifications but restarts the complete ten-minute health window; a factor-qualification loss,
-  non-positive current comprehensive product profit or activity-eligibility loss returns the sleeve
-  to monitor immediately. No executable weight is granted while health is false.
-  The explicit Demo fast-activation option is effective only for `ACCMGlobal-Demo` in `StagedLive`.
-  A fresh sleeve that is hard-eligible, activity-eligible, minimum-lot feasible and in the active
-  zone enters `ACTIVE` on the first 15-minute ranking and takes its current `live_base_weight`
-  directly, without entry shadow or slow-weight limits. Existing entry shadows retain their health
-  window; operational gates and factor disqualification still reduce weight to zero. Every other
-  server/mode retains the two-ranking/ten-minute shadow and slow-weight default.
+- A fresh sleeve that is hard-eligible, activity-eligible, minimum-lot feasible and in the active
+  zone enters `ACTIVE` on its first 15-minute ranking and takes its current `live_base_weight`
+  directly. Normal entry does not require a ranking count or observation window. A persisted legacy
+  `ENTRY_SHADOW` promotes on its next qualified ranking, while a qualification or activity loss
+  returns it to monitor. `-DemoFastActivation` remains a compatible launcher/status option but is no
+  longer required for direct activation. Terminal, operational, ownership, signal-expiry and risk
+  gates remain mandatory. Loss-limit recovery shadows remain separate and unchanged.
 
 - Copy origin detection uses explicit source identifiers in comments/magic fields and reports each
   source separately. MT5 reconstructed trades use only the opening deal's CPT comment as the source

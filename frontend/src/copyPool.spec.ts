@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, delayGateLabel, formatDuration, linePath, orderActionLabel, phaseLabel, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, delayGateLabel, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
 
 describe('copy pool presentation helpers', () => {
   it('localizes operational states and events', () => {
@@ -35,7 +35,7 @@ describe('copy pool presentation helpers', () => {
     expect(linePath([], 'equityUsd', 200, 100)).toBe('')
   })
 
-  it('resolves current tier lists from public pool, dynamic sleeves and client risk', () => {
+  it('keeps legacy entry-shadow snapshots compatible without exposing an entry-shadow tab', () => {
     const rows = resolvePoolTierRows(
       [
         { clientAlias: 'C001', clientProductKey: 'C001|XAUUSD', accountLogin: '3054777', product: 'XAUUSD', poolTier: 'monitor' },
@@ -48,10 +48,11 @@ describe('copy pool presentation helpers', () => {
       [{ clientAlias: 'C002', status: 'paused', reductionReason: '客户亏损额度冷却中' }],
     )
 
-    expect(poolTierTabLabel('entry_shadow')).toBe('入场观察')
-    expect(rows.map(row => row.currentTier)).toEqual(['entry_shadow', 'execution_suspended'])
+    expect(POOL_TIER_TABS).not.toContain('entry_shadow')
+    expect(rows.map(row => row.currentTier)).toEqual(['monitor', 'execution_suspended'])
     expect(rows[0].accountLogin).toBe('3054777')
-    expect(poolTierReason(rows[0])).toBe('等待影子观察连续健康通过')
+    expect(poolTierLabel('entry_shadow')).toBe('入池影子观察')
+    expect(poolTierReason(rows[0])).toContain('未下调')
     expect(poolTierReason(rows[1])).toBe('客户亏损额度冷却中')
   })
 
