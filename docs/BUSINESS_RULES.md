@@ -127,8 +127,9 @@
   above 50% of equity is a build hard gate. Below those extremes, negative realized/floating
   components, margin use and gross-versus-net hedge evidence reduce the deployable score.
 - V0.1 defers historical Tick delay sensitivity from both scoring and hard eligibility. The primary
-  factor score is 50% cost-adjusted profit per copied trade, 30% recent five-day cost-adjusted
-  profit per copied trade and 20% copy-cost coverage, using cross-sectional percentile ranks.
+  factor score is 45% cost-adjusted profit per copied trade, 25% recent five-day cost-adjusted
+  profit per copied trade, 15% copy-cost coverage and 15% adverse-position carry quality, using
+  cross-sectional percentile ranks.
   Source money is converted to USD first, then source P/L is scaled from the 20-day average closed
   execution size to that Demo product's actual minimum lot. Estimated copy cost is the product
   default round-trip spread at the same minimum lot plus a 25% execution reserve, with rebates
@@ -148,6 +149,16 @@
   as its first-day baseline, while other insufficient 20/60-day coverage fails closed. Real-time quote age, source
   staleness, signal latency and expiry remain active; new-risk signal age is capped by five seconds
   and holding P25 divided by three.
+- Carry risk is a bounded candidate-stage calculation, never a full-universe Tick replay. It combines
+  55% observed maximum floating-loss depth relative to 8%, 30% maximum underwater duration relative
+  to 24 hours and 15% maximum simultaneous losing positions relative to five. The resulting 0-100
+  score maps to `carry quality = 1 - score/100`. A score at least 70, observed 30-day floating-loss
+  ratio at least 10%, underwater duration at least 48 hours or eight simultaneous losing positions
+  is a non-compensable build-time rejection. Carry risk does not remove an already selected sleeve
+  from intraday activity or alter an open copied Position; existing per-client loss budgets and
+  portfolio loss limits remain authoritative during trading. The first version uses bounded 30-day
+  equity drawdown and reconstructed losing-position paths as conservative historical proxies, plus
+  exact current position aggregates; it does not claim Tick-level MAE precision.
 - Every ten seconds the copier refreshes client Demo loss budgets, realized trading P/L and
   authoritative current open risk from selected physical sources. Every 15 minutes it re-ranks the
   current monitor/reserve range. Every hour it reads bounded one/four-hour increments for the

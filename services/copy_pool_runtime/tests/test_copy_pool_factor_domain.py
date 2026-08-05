@@ -5,11 +5,13 @@ import unittest
 
 from copy_pool_factor_domain import (
     AdjustedEquityPoint,
+    CarryRiskMetrics,
     FactorInputs,
     SECONDS_PER_DAY,
     SECONDS_PER_HOUR,
     TradeHoldingObservation,
     calculate_adjusted_equity_metrics,
+    calculate_carry_risk_metrics,
     calculate_factor_result,
     calculate_holding_quality_metrics,
 )
@@ -366,6 +368,74 @@ class HoldingQualityMetricsTests(unittest.TestCase):
 
 
 class FactorResultTests(unittest.TestCase):
+    def test_carry_risk_combines_depth_duration_and_losing_position_count(self) -> None:
+        metrics = calculate_carry_risk_metrics(
+            max_floating_loss_ratio_30d=0.04,
+            max_underwater_seconds_30d=12 * SECONDS_PER_HOUR,
+            max_losing_positions_30d=2,
+        )
+
+        self.assertIsInstance(metrics, CarryRiskMetrics)
+        self.assertAlmostEqual(metrics.risk_score, 48.5)
+        self.assertAlmostEqual(metrics.quality_score, 0.515)
+        self.assertFalse(metrics.hard_failed)
+
+    def test_carry_risk_hard_boundaries_are_noncompensable(self) -> None:
+        cases = (
+            ({"max_floating_loss_ratio_30d": 0.10}, "max_floating_loss_ratio_30d_at_least_10pct"),
+            ({"max_underwater_seconds_30d": 48 * SECONDS_PER_HOUR}, "max_underwater_at_least_48h"),
+            ({"max_losing_positions_30d": 8}, "max_losing_positions_at_least_8"),
+        )
+        for overrides, expected_reason in cases:
+            values = {
+                "max_floating_loss_ratio_30d": 0.0,
+                "max_underwater_seconds_30d": 0.0,
+                "max_losing_positions_30d": 0,
+            }
+            values.update(overrides)
+            metrics = calculate_carry_risk_metrics(**values)
+            result = calculate_factor_result(valid_inputs(
+                cost_profit_score=1.0,
+                recent_strength_score=1.0,
+                cost_coverage_score=1.0,
+                carry_quality_score=metrics.quality_score,
+                carry_hard_failed=metrics.hard_failed,
+                extra_gate_reasons=metrics.gate_reasons,
+            ))
+
+            self.assertTrue(metrics.hard_failed)
+            self.assertFalse(result.eligible)
+            self.assertIn(expected_reason, result.gate_reasons)
+            self.assertIn("carry_risk_hard_gate_failed", result.gate_reasons)
+
+    def test_current_loss_depth_and_duration_do_not_create_intraday_activity_gates(self) -> None:
+        by_loss = calculate_carry_risk_metrics(
+            max_floating_loss_ratio_30d=0.03,
+            max_underwater_seconds_30d=0.0,
+            max_losing_positions_30d=1,
+        )
+        by_duration = calculate_carry_risk_metrics(
+            max_floating_loss_ratio_30d=0.01,
+            max_underwater_seconds_30d=24 * SECONDS_PER_HOUR,
+            max_losing_positions_30d=1,
+        )
+
+        self.assertFalse(by_loss.hard_failed)
+        self.assertLess(by_loss.risk_score, 70.0)
+        self.assertFalse(by_duration.hard_failed)
+        self.assertLess(by_duration.risk_score, 70.0)
+
+    def test_four_factor_model_includes_carry_quality_at_fifteen_percent(self) -> None:
+        result = calculate_factor_result(valid_inputs(
+            cost_profit_score=1.0,
+            recent_strength_score=0.0,
+            cost_coverage_score=0.0,
+            carry_quality_score=1.0,
+        ))
+
+        self.assertAlmostEqual(result.base_score, 0.60)
+        self.assertEqual(result.factor_scores["carry_quality"], 1.0)
+
     def test_cost_profit_recent_coverage_model_is_primary_when_provided(self) -> None:
         result = calculate_factor_result(valid_inputs(
             cost_profit_score=1.0,

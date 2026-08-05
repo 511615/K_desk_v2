@@ -17,10 +17,12 @@ from copy_delay_replay_domain import (
     prepare_validated_quote_array,
 )
 from copy_pool_factor_domain import (
+    CarryRiskMetrics,
     DrawdownMetrics,
     FactorInputs,
     HoldingQualityMetrics,
     calculate_adjusted_equity_metrics,
+    calculate_carry_risk_metrics,
     calculate_factor_result,
     calculate_holding_quality_metrics,
 )
@@ -35,7 +37,7 @@ from copy_quote_replay_cache import QuoteReplayCache
 
 SERVER_TIMEZONE = timezone(timedelta(hours=3))
 DELAY_GRID_MS = (500, 1_000, 2_000, 3_000, 5_000)
-COST_FACTOR_MODEL = "cost_profit_recent_coverage_v1"
+COST_FACTOR_MODEL = "cost_profit_recent_coverage_carry_v2"
 COPY_COST_RESERVE_MULTIPLIER = 1.25
 
 
@@ -45,6 +47,7 @@ class RawSleeveFactor:
     sleeve: SleeveHistoryBundle | None
     drawdown: DrawdownMetrics | None
     holding: HoldingQualityMetrics | None
+    carry: CarryRiskMetrics
     delay: DelayEvaluation | None
     quote_complete: bool
     reasons: tuple[str, ...]
@@ -165,13 +168,23 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
         / result["factor_copy_net_20d_usd"].abs().clip(lower=1.0)
     )
     old_ready = _as_bool(result["factor_ready"])
+    carry_quality = pd.to_numeric(
+        result.get(
+            "carry_quality_score",
+            result.get("factor_carry_quality", pd.Series(1.0, index=result.index)),
+        ),
+        errors="coerce",
+    ).fillna(0.0).clip(0.0, 1.0)
+    carry_hard_failed = _as_bool(
+        result.get("carry_hard_failed", pd.Series(False, index=result.index))
+    )
     cost_pass = (
         evidence_available
         & (result["factor_cost_adjusted_net_5d_usd"] > 0)
         & (result["factor_cost_adjusted_net_20d_usd"] > 0)
         & (result["factor_cost_coverage"] >= 1.0)
     )
-    eligible = old_ready & cost_pass
+    eligible = old_ready & cost_pass & ~carry_hard_failed
     result["factor_rank_cost_profit"] = _rank_eligible(
         result["factor_cost_profit_per_trade"], eligible
     )
@@ -181,10 +194,12 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
     result["factor_rank_cost_coverage"] = _rank_eligible(
         result["factor_cost_coverage"], eligible
     )
+    result["factor_rank_carry_quality"] = _rank_eligible(carry_quality, eligible)
     result["factor_base_score"] = (
-        0.50 * result["factor_rank_cost_profit"]
-        + 0.30 * result["factor_rank_recent_strength"]
-        + 0.20 * result["factor_rank_cost_coverage"]
+        0.45 * result["factor_rank_cost_profit"]
+        + 0.25 * result["factor_rank_recent_strength"]
+        + 0.15 * result["factor_rank_cost_coverage"]
+        + 0.15 * result["factor_rank_carry_quality"]
     )
     reasons: list[str] = []
     for index, value in result["factor_gate_reasons"].fillna("").astype(str).items():
@@ -197,6 +212,8 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
             row_reasons.append("cost_adjusted_net_20d_not_positive")
         if result.at[index, "factor_cost_coverage"] < 1.0:
             row_reasons.append("cost_coverage_below_1")
+        if bool(carry_hard_failed.at[index]):
+            row_reasons.append("carry_risk_hard_gate_failed")
         reasons.append("|".join(dict.fromkeys(row_reasons)))
     result["factor_gate_reasons"] = reasons
     result["factor_ready"] = eligible
@@ -355,6 +372,7 @@ class CopyPoolFactorService:
                     "cost_coverage": item.cost_coverage,
                     "recent_strength": item.recent_strength,
                     "cost_evidence_available": item.cost_evidence_available,
+                    "carry_quality": item.carry.quality_score,
                 }
                 for item in raw_frame["raw"]
             ])
@@ -366,6 +384,7 @@ class CopyPoolFactorService:
                 holding = raw.holding
                 delay = raw.delay
                 extra = list(raw.reasons)
+                extra.extend(raw.carry.gate_reasons)
                 if raw.cost_evidence_available:
                     if raw.cost_adjusted_net_5d_usd <= 0:
                         extra.append("cost_adjusted_net_5d_not_positive")
@@ -419,6 +438,8 @@ class CopyPoolFactorService:
                         holding is None or holding.hard_failed
                         or raw.sleeve is None
                     ),
+                    carry_quality_score=float(ranked.at[index, "carry_quality"]),
+                    carry_hard_failed=raw.carry.hard_failed,
                     coverage_20d=bool(drawdown and drawdown.coverage_20d),
                     coverage_60d=bool(drawdown and drawdown.coverage_60d),
                     daily_drawdown_coverage=bool(
@@ -447,14 +468,17 @@ class CopyPoolFactorService:
             cost_profit_rank = _rank_eligible(metrics["cost_profit_per_trade"], qualified)
             recent_rank = _rank_eligible(metrics["recent_profit_per_trade"], qualified)
             coverage_rank = _rank_eligible(metrics["cost_coverage"], qualified)
+            carry_rank = _rank_eligible(metrics["carry_quality"], qualified)
             for index, row in enumerate(output):
                 row["factor_rank_cost_profit"] = float(cost_profit_rank.iloc[index])
                 row["factor_rank_recent_strength"] = float(recent_rank.iloc[index])
                 row["factor_rank_cost_coverage"] = float(coverage_rank.iloc[index])
+                row["factor_rank_carry_quality"] = float(carry_rank.iloc[index])
                 row["factor_base_score"] = (
-                    0.50 * row["factor_rank_cost_profit"]
-                    + 0.30 * row["factor_rank_recent_strength"]
-                    + 0.20 * row["factor_rank_cost_coverage"]
+                    0.45 * row["factor_rank_cost_profit"]
+                    + 0.25 * row["factor_rank_recent_strength"]
+                    + 0.15 * row["factor_rank_cost_coverage"]
+                    + 0.15 * row["factor_rank_carry_quality"]
                 )
             return pd.DataFrame(output)
         finally:
@@ -491,6 +515,41 @@ class CopyPoolFactorService:
                 sleeve.holdings, server_utc_offset=SERVER_TIMEZONE,
                 rollover_time=time(0, 0), as_of=as_of, window_days=60,
             )
+        current_floating_loss_ratio = max(
+            0.0, float(getattr(row, "floating_loss_ratio", 0.0) or 0.0)
+        )
+        current_product_floating = float(
+            getattr(row, "product_floating_pnl_usd", 0.0) or 0.0
+        )
+        current_underwater_seconds = (
+            max(0.0, float(getattr(row, "product_oldest_open_seconds", 0.0) or 0.0))
+            if current_product_floating < 0 else 0.0
+        )
+        current_losing_positions = int(max(
+            0.0,
+            float(getattr(row, "product_losing_position_count", 0.0) or 0.0),
+        ))
+        historical_underwater = max(
+            (
+                float(item.long_loss_seconds)
+                for item in (sleeve.holdings if sleeve is not None else ())
+                if item.closed_at >= as_of - timedelta(days=30)
+            ),
+            default=0.0,
+        )
+        carry = calculate_carry_risk_metrics(
+            max_floating_loss_ratio_30d=max(
+                drawdown.mdd_20d if drawdown is not None else 1.0,
+                current_floating_loss_ratio,
+            ),
+            max_underwater_seconds_30d=max(
+                historical_underwater, current_underwater_seconds
+            ),
+            max_losing_positions_30d=max(
+                sleeve.max_losing_positions_30d if sleeve is not None else 0,
+                current_losing_positions,
+            ),
+        )
         delay = None
         quote_complete = bool(quote_range is not None and quote_range.complete and len(quote_range.ticks))
         if self.historical_delay_enabled and not quote_complete:
@@ -567,7 +626,7 @@ class CopyPoolFactorService:
             net_5d_usd / max(abs(net_20d_usd), estimated_copy_cost_20d, 1.0)
         )
         return RawSleeveFactor(
-            account=account, sleeve=sleeve, drawdown=drawdown, holding=holding,
+            account=account, sleeve=sleeve, drawdown=drawdown, holding=holding, carry=carry,
             delay=delay, quote_complete=quote_complete, reasons=tuple(reasons),
             risk_return_5d=float(row.ret_5d) / max(1.0 + mdd, 1e-9),
             risk_return_20d=float(row.ret_20d) / max(1.0 + mdd, 1e-9),
@@ -632,6 +691,14 @@ class CopyPoolFactorService:
             "factor_rank_cost_profit": float(ranked.get("cost_profit_per_trade", 0.0)),
             "factor_rank_recent_strength": float(ranked.get("recent_profit_per_trade", 0.0)),
             "factor_rank_cost_coverage": float(ranked.get("cost_coverage", 0.0)),
+            "factor_rank_carry_quality": float(ranked.get("carry_quality", 0.0)),
+            "carry_risk_score": raw.carry.risk_score,
+            "carry_quality_score": raw.carry.quality_score,
+            "carry_hard_failed": raw.carry.hard_failed,
+            "carry_gate_reasons": "|".join(raw.carry.gate_reasons),
+            "max_floating_loss_ratio_30d": raw.carry.max_floating_loss_ratio_30d,
+            "max_underwater_seconds_30d": raw.carry.max_underwater_seconds_30d,
+            "max_losing_positions_30d": raw.carry.max_losing_positions_30d,
             "holding_path_complete": bool(raw.sleeve and raw.sleeve.holding_path_complete),
             "overnight_ratio": holding.overnight_ratio if holding else 1.0,
             "weekend_ratio": holding.weekend_ratio if holding else 1.0,

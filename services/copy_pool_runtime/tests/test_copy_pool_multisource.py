@@ -103,6 +103,11 @@ class MultiSourceTests(unittest.TestCase):
             "hold_p25_seconds": 30.0, "median_hold_seconds": 300.0,
             "hold_p90_seconds": 1_000.0, "short_trade_ratio": 0.01,
             "quality_stress_net_15x_20d_usd": 10.0,
+            "carry_risk_score": 10.0, "carry_quality_score": 0.90,
+            "carry_hard_failed": False,
+            "max_floating_loss_ratio_30d": 0.01,
+            "max_underwater_seconds_30d": 600.0,
+            "max_losing_positions_30d": 1,
         }])
 
         restored_book = IndependentCopyBook()
@@ -241,7 +246,7 @@ class MultiSourceTests(unittest.TestCase):
             self.assertEqual(migrated_meta["producer"], service.POOL_PRODUCER)
             self.assertEqual(
                 migrated_meta["factor_schema"],
-                "cost-profit-recent-coverage-v2-weight-floor",
+                "cost-profit-recent-coverage-carry-v3",
             )
 
     def test_mt5_trade_feature_close_and_lot_totals_use_all_close_entries(self) -> None:
@@ -356,12 +361,43 @@ class MultiSourceTests(unittest.TestCase):
         self.assertGreater(float(pool["portfolio_base_weight"].sum()), 0.0)
         self.assertLessEqual(float(pool["portfolio_base_weight"].sum()), 1.0)
         self.assertTrue(bool(upgraded_coverage["same_day_cache_upgraded"]))
-        self.assertEqual(upgraded_coverage["factor_model"], "cost_profit_recent_coverage_v1")
+        self.assertEqual(upgraded_coverage["factor_model"], "cost_profit_recent_coverage_carry_v2")
         self.assertEqual(upgraded_coverage["active_accounts"], 3)
         self.assertEqual(
             {row["physical_key"]: row["selected_clients"] for row in upgraded_coverage["sources"]},
             {"source-a": 2, "source-b": 1},
         )
+
+    def test_current_product_positions_counts_only_currently_losing_positions(self) -> None:
+        sql_calls: list[str] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "readonly"
+
+            @staticmethod
+            def query(sql: str, _params: object = ()) -> list[dict[str, object]]:
+                sql_calls.append(sql)
+                return [{
+                    "Login": 1, "Symbol": "XAUUSD", "position_count": 3,
+                    "losing_position_count": 2, "gross_lots": 0.03,
+                    "net_lots": 0.01, "oldest_open_epoch": 0,
+                    "floating_pnl": -20.0, "source_contract_size": 100.0,
+                }]
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        frame = pd.DataFrame([{
+            "physical_key": "source", "Login": 1, "account_key": "route:1",
+        }])
+
+        result = database.current_product_positions(
+            frame, datetime(2026, 8, 5, tzinfo=timezone.utc)
+        ).iloc[0]
+
+        self.assertEqual(result["product_open_position_count"], 3.0)
+        self.assertEqual(result["product_losing_position_count"], 2.0)
+        self.assertIn("Profit + Storage < 0", sql_calls[0])
 
     @staticmethod
     def _csv_service(directory: Path) -> MultiSourceLiveService:
@@ -711,9 +747,13 @@ class MultiSourceTests(unittest.TestCase):
                 "current_product_floating_pnl_usd": -200.0 if index == 1 else 0.0,
                 "current_equity_usd": 1_000.0,
                 "current_margin_to_equity": 0.10,
-                "current_floating_loss_ratio": 0.0,
+                "current_floating_loss_ratio": 0.03 if index == 2 else 0.0,
                 "current_open_risk_multiplier": 1.0,
+                "current_product_oldest_open_seconds": 24 * 60 * 60 if index == 3 else 0.0,
+                "current_product_losing_position_count": 1 if index in (2, 3) else 0,
             })
+            if index == 3:
+                rows[-1]["current_product_floating_pnl_usd"] = -1.0
 
         selected, metadata = rank_hourly_universe(pd.DataFrame(rows))
 
@@ -721,6 +761,9 @@ class MultiSourceTests(unittest.TestCase):
         self.assertIn("route:104", selected_accounts)
         self.assertNotIn("route:0", selected_accounts)
         self.assertNotIn("route:1", selected_accounts)
+        by_account = selected.set_index("account_key")
+        self.assertTrue(bool(by_account.loc["route:2", "hourly_activity_eligible"]))
+        self.assertTrue(bool(by_account.loc["route:3", "hourly_activity_eligible"]))
         self.assertEqual(metadata["monitor_accounts"], 30)
         self.assertEqual(metadata["reserve_accounts"], 70)
         self.assertEqual(selected["account_key"].nunique(), 100)

@@ -11,6 +11,7 @@ from copy_pool_history_adapter import (
     coverage_from_flags,
     holding_observations_from_lifecycles,
     holding_observations_from_snapshot_paths,
+    max_simultaneous_losing_positions,
 )
 from copy_trading_live_core import datetime_to_filetime
 
@@ -20,6 +21,33 @@ def product(value: object) -> str | None:
 
 
 class HistoryAdapterTests(unittest.TestCase):
+    def test_max_simultaneous_losing_positions_uses_synchronized_recent_snapshots(self) -> None:
+        as_of = datetime(2026, 8, 5, tzinfo=timezone.utc)
+        lifecycles = build_mt4_lifecycles([
+            {"TICKET": ticket, "CMD": 0, "SYMBOL": "XAUUSD", "VOLUME": 1,
+             "OPEN_TIME": "2026-07-20T00:00:00+00:00", "CLOSE_TIME": "2026-08-04T00:00:00+00:00",
+             "OPEN_PRICE": 3300.0, "CLOSE_PRICE": 3301.0, "PROFIT": 1.0,
+             "COMMISSION": 0.0, "SWAPS": 0.0, "TAXES": 0.0}
+            for ticket in (1, 2, 3)
+        ], account_key="a", product_resolver=product,
+           contract_size_resolver=lambda _value: 100.0)
+        shared = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        old = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+        result = max_simultaneous_losing_positions(
+            lifecycles,
+            {
+                "1": [(shared, -2.0), (old, -2.0)],
+                "2": [(shared, -1.0)],
+                "3": [(shared, 3.0)],
+                "unrelated": [(shared, -9.0)],
+            },
+            as_of=as_of,
+            window_days=30,
+        )
+
+        self.assertEqual(result, 2)
+
     def test_mt5_groups_complete_positions_and_keeps_losses(self) -> None:
         rows = []
         for position_id, profit, offset in ((10, 12.0, 0), (11, -7.0, 10_000)):

@@ -80,6 +80,17 @@ class HoldingQualityMetrics:
 
 
 @dataclass(frozen=True)
+class CarryRiskMetrics:
+    max_floating_loss_ratio_30d: float
+    max_underwater_seconds_30d: float
+    max_losing_positions_30d: int
+    risk_score: float
+    quality_score: float
+    hard_failed: bool
+    gate_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FactorInputs:
     risk_adjusted_return_5d: float
     risk_adjusted_return_20d: float
@@ -109,6 +120,8 @@ class FactorInputs:
     cost_profit_score: float | None = None
     recent_strength_score: float | None = None
     cost_coverage_score: float | None = None
+    carry_quality_score: float | None = None
+    carry_hard_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -367,6 +380,47 @@ def _quantile_90(values: list[float]) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
+def calculate_carry_risk_metrics(
+    *,
+    max_floating_loss_ratio_30d: float,
+    max_underwater_seconds_30d: float,
+    max_losing_positions_30d: int,
+) -> CarryRiskMetrics:
+    """Summarize low-cost adverse-position risk without tick replay.
+
+    Historical equity drawdown and losing-position holding paths are accepted as
+    conservative proxies. Runtime snapshots can progressively improve the
+    observed maxima without retaining every quote or position snapshot.
+    """
+    depth = max(0.0, float(max_floating_loss_ratio_30d))
+    duration = max(0.0, float(max_underwater_seconds_30d))
+    positions = max(0, int(max_losing_positions_30d))
+    risk_score = 100.0 * (
+        0.55 * min(depth / 0.08, 1.0)
+        + 0.30 * min(duration / (24 * SECONDS_PER_HOUR), 1.0)
+        + 0.15 * min(positions / 5.0, 1.0)
+    )
+    hard_reasons: list[str] = []
+    if depth >= 0.10:
+        hard_reasons.append("max_floating_loss_ratio_30d_at_least_10pct")
+    if duration >= 48 * SECONDS_PER_HOUR:
+        hard_reasons.append("max_underwater_at_least_48h")
+    if positions >= 8:
+        hard_reasons.append("max_losing_positions_at_least_8")
+    if risk_score >= 70.0:
+        hard_reasons.append("carry_risk_score_at_least_70")
+
+    return CarryRiskMetrics(
+        max_floating_loss_ratio_30d=depth,
+        max_underwater_seconds_30d=duration,
+        max_losing_positions_30d=positions,
+        risk_score=risk_score,
+        quality_score=max(0.0, 1.0 - risk_score / 100.0),
+        hard_failed=bool(hard_reasons),
+        gate_reasons=tuple(hard_reasons),
+    )
+
+
 def calculate_holding_quality_metrics(
     observations: Iterable[TradeHoldingObservation],
     *,
@@ -516,6 +570,10 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         "delay_score": inputs.delay_score,
         "return_to_drawdown": inputs.return_to_drawdown,
         "holding_quality": inputs.holding_quality,
+        "carry_quality": (
+            inputs.carry_quality_score
+            if inputs.carry_quality_score is not None else 0.0
+        ),
     }
     factor_scores = {name: _clamp_unit(value) for name, value in raw_scores.items()}
     configured_weights = {
@@ -531,10 +589,21 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         inputs.cost_profit_score is not None
         and inputs.recent_strength_score is not None
         and inputs.cost_coverage_score is not None
+        and inputs.carry_quality_score is not None
     ):
-        # Production V1: the requested three-factor model is the primary
-        # ordering signal. Risk/holding/drawdown remain hard gates and are
-        # exposed separately for auditability; they do not dilute this score.
+        # Production V2 adds adverse-position quality to the transparent
+        # primary ordering signal. Hard failures remain non-compensable.
+        base_score = (
+            0.45 * _clamp_unit(inputs.cost_profit_score)
+            + 0.25 * _clamp_unit(inputs.recent_strength_score)
+            + 0.15 * _clamp_unit(inputs.cost_coverage_score)
+            + 0.15 * _clamp_unit(inputs.carry_quality_score)
+        )
+    elif (
+        inputs.cost_profit_score is not None
+        and inputs.recent_strength_score is not None
+        and inputs.cost_coverage_score is not None
+    ):
         base_score = (
             0.50 * _clamp_unit(inputs.cost_profit_score)
             + 0.30 * _clamp_unit(inputs.recent_strength_score)
@@ -574,6 +643,8 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         reasons.append("stop_out_compensation")
     if inputs.holding_hard_failed:
         reasons.append("holding_quality_hard_gate_failed")
+    if inputs.carry_hard_failed:
+        reasons.append("carry_risk_hard_gate_failed")
     return FactorResult(
         eligible=not reasons,
         base_score=base_score,

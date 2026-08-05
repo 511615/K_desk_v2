@@ -117,33 +117,37 @@ class FactorServiceTests(unittest.TestCase):
             result = apply_cost_factor_model(frame).iloc[0]
             self.assertFalse(bool(result["factor_ready"]))
             self.assertIn("missing_copy_cost_evidence", result["factor_gate_reasons"])
-            self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_v1")
+            self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_carry_v2")
 
-    def test_cost_factor_model_uses_copy_lot_costs_weighted_50_30_20_and_hard_gates(self) -> None:
+    def test_cost_factor_model_uses_four_factors_and_excludes_carry_hard_failures_from_ranks(self) -> None:
         frame = pd.DataFrame([
             {
                 "sleeve_key": "route:1|XAUUSD", "product": "XAUUSD",
                 "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
                 "net_5d_usd": 20.0, "net_20d_usd": 300.0,
                 "factor_ready": True, "factor_gate_reasons": "",
+                "carry_quality_score": 1.0, "carry_hard_failed": False,
             },
             {
                 "sleeve_key": "route:2|XAUUSD", "product": "XAUUSD",
                 "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
                 "net_5d_usd": 50.0, "net_20d_usd": 200.0,
                 "factor_ready": False, "factor_gate_reasons": "legacy_hard_gate",
+                "carry_quality_score": 1.0, "carry_hard_failed": False,
             },
             {
                 "sleeve_key": "route:3|XAUUSD", "product": "XAUUSD",
                 "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
                 "net_5d_usd": 20.0, "net_20d_usd": 100.0,
                 "factor_ready": True, "factor_gate_reasons": "",
+                "carry_quality_score": 1.0, "carry_hard_failed": False,
             },
             {
                 "sleeve_key": "route:4|XAUUSD", "product": "XAUUSD",
                 "closes_5d": 2, "closes_20d": 10, "lots_20d": 1.0,
                 "net_5d_usd": 1.0, "net_20d_usd": 20.0,
                 "factor_ready": True, "factor_gate_reasons": "",
+                "carry_quality_score": 0.0, "carry_hard_failed": True,
             },
         ])
 
@@ -159,16 +163,19 @@ class FactorServiceTests(unittest.TestCase):
         self.assertAlmostEqual(strongest["factor_cost_adjusted_net_20d_usd"], 22.5)
         # Percentiles are calculated only after every hard gate, so the
         # legacy-hard-failed and after-cost-failed rows cannot move the score.
-        self.assertAlmostEqual(strongest["factor_base_score"], 0.925)
+        self.assertAlmostEqual(strongest["factor_base_score"], 0.90)
         self.assertAlmostEqual(
             strongest["factor_base_score"],
-            0.50 * strongest["factor_rank_cost_profit"]
-            + 0.30 * strongest["factor_rank_recent_strength"]
-            + 0.20 * strongest["factor_rank_cost_coverage"],
+            0.45 * strongest["factor_rank_cost_profit"]
+            + 0.25 * strongest["factor_rank_recent_strength"]
+            + 0.15 * strongest["factor_rank_cost_coverage"]
+            + 0.15 * strongest["factor_rank_carry_quality"],
         )
         self.assertFalse(bool(result.loc["route:2|XAUUSD", "factor_ready"]))
         self.assertIn("legacy_hard_gate", result.loc["route:2|XAUUSD", "factor_gate_reasons"])
         self.assertFalse(bool(rejected["factor_ready"]))
+        self.assertIn("carry_risk_hard_gate_failed", rejected["factor_gate_reasons"])
+        self.assertEqual(rejected["factor_rank_carry_quality"], 0.0)
         self.assertIn("cost_adjusted_net_5d_not_positive", rejected["factor_gate_reasons"])
         self.assertIn("cost_adjusted_net_20d_not_positive", rejected["factor_gate_reasons"])
         self.assertIn("cost_coverage_below_1", rejected["factor_gate_reasons"])
@@ -219,6 +226,8 @@ class FactorServiceTests(unittest.TestCase):
         self.assertGreater(result.iloc[0]["delay_score"], 0)
         self.assertEqual(result.iloc[0]["entry_p95_ms"], 1500)
         self.assertEqual(result.iloc[0]["mdd_60d"], 0)
+        self.assertGreater(result.iloc[0]["carry_risk_score"], 0)
+        self.assertIn("factor_rank_carry_quality", result.columns)
         self.assertTrue(quote_range.closed)
 
     def test_history_sources_run_with_stable_bounded_concurrency(self) -> None:
@@ -313,7 +322,7 @@ class FactorServiceTests(unittest.TestCase):
 
         result = service.evaluate({"source": object()}, frame, self.as_of).iloc[0]
 
-        self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_v1")
+        self.assertEqual(result["factor_model"], "cost_profit_recent_coverage_carry_v2")
         self.assertAlmostEqual(result["factor_copy_net_20d_usd"], 5.0)
         self.assertAlmostEqual(result["factor_estimated_copy_cost_20d_usd"], 7.5)
         self.assertAlmostEqual(result["factor_cost_adjusted_net_20d_usd"], -2.5)

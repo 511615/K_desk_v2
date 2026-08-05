@@ -34,13 +34,18 @@ the status `dynamic_sleeves` list only after matching each private sleeve key to
 `client_routes_private.json` alias plus public product row, then exposes the alias/product state and
 the fixed scheduler timestamps. Unmapped state, raw private keys and free-form private gate text are
 dropped.
-The public pool also carries the v7 factor-model identifier, normalized five/20-day copied P/L,
-estimated five/20-day copy cost, cost-adjusted P/L, cost coverage and the three percentile factor
+The public pool also carries the current factor-model identifier, normalized five/20-day copied P/L,
+estimated five/20-day copy cost, cost-adjusted P/L, cost coverage and four percentile factor
 scores. These fields are derived from the complete private universe and expose no credentials,
 contacts or private route structures. Hourly score, one/four-hour P/L, current comprehensive-profit eligibility and discovery coverage are
 also public snapshot fields. K_desk does not query them from MySQL. The producer obtains them from
 the accepted `pool_universe_private.csv` plus bounded current-session reads; the daily historical
 factor evidence remains immutable until the next complete build.
+The additive carry-risk evidence contains its 0-100 score, 0-1 quality score, hard-gate state,
+bounded reason codes, maximum floating-loss ratio, maximum underwater seconds and maximum losing
+position count. Current MT4/MT5 product-position aggregates count losing positions directly in the
+existing grouped read. Historical depth and duration reuse bounded equity/position-path evidence;
+no Tick partition or unbounded pre-window query is added.
 
 The producer treats each append-only public CSV header as a versioned local contract. Before startup
 counter/latency restoration and before every append, `events_public.csv`, `orders_public.csv` and
@@ -76,7 +81,8 @@ Open-position risk reads all market positions for each candidate, not only XAUUS
 `mt5_positions` plus the current account `Profit`, `Equity` and `Margin`; MT4 uses `CMD IN (0,1)`
 rows with the 1970 close sentinel plus current user equity/margin. The producer persists open count,
 all-symbol gross lots, XAUUSD gross/net lots, oldest-open seconds, floating P/L, floating-loss ratio,
-margin/equity and hedge ratio by composite identity. Confirmed Cent/USC scales only money fields by
+margin/equity and hedge ratio by composite identity. Product aggregates also persist the count of
+positions whose current profit, commission and swap sum is negative. Confirmed Cent/USC scales only money fields by
 0.01; position counts, lots and ages remain unchanged.
 
 The producer persists independent execution under `independent_copy`. A source key contains the

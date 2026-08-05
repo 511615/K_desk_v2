@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from math import isfinite
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -331,6 +331,37 @@ def holding_observations_from_snapshot_paths(
             additions_while_loss=additions_while_loss,
         ))
     return tuple(output), complete
+
+
+def max_simultaneous_losing_positions(
+    lifecycles: Iterable[PositionLifecycle],
+    snapshots_by_position: Mapping[str, Sequence[tuple[datetime, float]]],
+    *,
+    as_of: datetime,
+    window_days: int = 30,
+) -> int:
+    """Return the maximum negative Position count in observed minute snapshots."""
+    if window_days <= 0:
+        raise ValueError("window_days must be positive")
+    end = _aware(as_of)
+    start = end - timedelta(days=window_days)
+    selected_ids = {str(item.position_id) for item in lifecycles}
+    latest: dict[tuple[datetime, str], tuple[datetime, float]] = {}
+    for position_id in selected_ids:
+        for timestamp, floating in snapshots_by_position.get(position_id, ()):
+            observed_at = _aware(timestamp)
+            if not start <= observed_at <= end:
+                continue
+            bucket = observed_at.replace(second=0, microsecond=0)
+            key = (bucket, position_id)
+            prior = latest.get(key)
+            if prior is None or observed_at >= prior[0]:
+                latest[key] = (observed_at, float(floating))
+    counts: dict[datetime, int] = {}
+    for (bucket, _position_id), (_timestamp, floating) in latest.items():
+        if floating < 0:
+            counts[bucket] = counts.get(bucket, 0) + 1
+    return max(counts.values(), default=0)
 
 
 def coverage_from_flags(
