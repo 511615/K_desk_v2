@@ -139,7 +139,7 @@ UNKNOWN_HOURLY_PUBLIC_COLUMNS = HOURLY_EVIDENCE_COLUMNS | {
     "recent_net_1h_usd",
     "recent_net_4h_usd",
 }
-DEFAULT_ENTRY_QUALIFICATIONS = 2
+DEFAULT_ENTRY_QUALIFICATIONS = 1
 DEFAULT_ENTRY_SHADOW_DURATION = timedelta(minutes=10)
 DEMO_FAST_ENTRY_QUALIFICATIONS = 1
 DEMO_FAST_ENTRY_SHADOW_DURATION = timedelta(minutes=2)
@@ -1994,14 +1994,8 @@ class MultiSourceLiveService(LiveService):
                     getattr(self.args, "demo_fast_activation", False)
                 ),
                 "demo_fast_activation_enabled": fast_activation,
-                "entry_rank_qualifications_required": (
-                    DEMO_FAST_ENTRY_QUALIFICATIONS
-                    if fast_activation else DEFAULT_ENTRY_QUALIFICATIONS
-                ),
-                "entry_shadow_minutes": (
-                    DEMO_FAST_ENTRY_SHADOW_DURATION.total_seconds() / 60.0
-                    if fast_activation else DEFAULT_ENTRY_SHADOW_DURATION.total_seconds() / 60.0
-                ),
+                "entry_rank_qualifications_required": DEFAULT_ENTRY_QUALIFICATIONS,
+                "entry_shadow_minutes": 0.0,
                 "active_weights": sum(execution_weights.values()),
                 "monitor_sleeves": len(self.pool_frame),
                 "active_copy_clients": len(active_accounts),

@@ -130,12 +130,12 @@ four physical sources concurrently, but a physical source remains serial within 
 `build_stage_seconds` in accepted coverage before changing
 batch sizes or concurrency; a failed source must prevent publication rather than produce a partial pool.
 
-`-DemoFastActivation` is a separate explicit `ACCMGlobal-Demo`/`StagedLive` test switch. For a fresh
-hard/activity/minimum-lot-qualified sleeve in the active zone, its first 15-minute ranking enters
-`ACTIVE` directly and sets effective weight to the current live base weight, without entry shadow or
-slow-weight limits. Existing entry shadows still require healthy observation, and operational gates,
-terminal permission and factor qualification remain mandatory. Other server/mode combinations retain
-two rankings plus ten minutes and slow-weight recovery even when the switch is passed.
+Normal entry activation is direct: a fresh hard/activity/minimum-lot-qualified sleeve in the active
+zone enters `ACTIVE` on its first 15-minute ranking and receives its current live base weight. There
+is no ordinary entry observation period. `-DemoFastActivation` remains accepted only as a
+compatibility/status flag. An already persisted legacy `ENTRY_SHADOW` is promoted on its next
+qualified ranking. Operational gates, terminal permission, ownership and factor qualification
+remain mandatory; loss-recovery shadows are separate and are not bypassed.
 The independent 25% client-risk utilization ceiling remains enabled. If direct or gradual effective
 weights exceed it, the Producer scales every positive sleeve by the same ratio instead of removing
 the budget excess from low-ranked sleeves first.
