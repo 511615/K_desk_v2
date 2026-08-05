@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: () => ({
@@ -58,7 +58,25 @@ vi.mock('../frontendUpdate', () => ({ startFrontendUpdateMonitor: () => () => un
 
 import CopyPoolPage from './CopyPoolPage.vue'
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('CopyPoolPage tier tabs', () => {
+  it('advances the header clock once per second independently of dashboard refreshes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-05T10:06:56+08:00'))
+    const wrapper = mount(CopyPoolPage)
+    const clock = wrapper.get('[data-testid="runtime-clock"]')
+
+    expect(clock.text()).toBe('2026/8/5 10:06:56')
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(clock.text()).toBe('2026/8/5 10:06:57')
+    wrapper.unmount()
+  })
+
   it('shows the current Demo account positions and real deal history at the top', () => {
     const wrapper = mount(CopyPoolPage)
 

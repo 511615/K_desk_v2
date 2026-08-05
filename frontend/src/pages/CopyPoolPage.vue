@@ -12,7 +12,9 @@ const selectedPoolTier = ref<PoolTierTab>('active')
 const controlsSaving = ref(false)
 const controlsMessage = ref('')
 const controlForm = ref({ autoTradingEnabled: true, equityFloorEnabled: true, dailyLossEnabled: true, cycleLossEnabled: true })
+const runtimeClockMs = ref(Date.now())
 let stopFrontendUpdateMonitor: () => void = () => undefined
+let runtimeClockTimer: ReturnType<typeof setInterval> | undefined
 
 const dashboard = useQuery({
   queryKey: ['copy-pool-dashboard'],
@@ -229,7 +231,7 @@ function timeOnly(value: unknown): string {
 }
 
 function dateTime(value: unknown): string {
-  const date = new Date(String(value || ''))
+  const date = typeof value === 'number' ? new Date(value) : new Date(String(value || ''))
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
@@ -296,10 +298,16 @@ function openRiskSeverity(row: any): number {
 
 onMounted(() => {
   document.title = '动态跟单监控 · K_desk'
+  runtimeClockTimer = setInterval(() => {
+    runtimeClockMs.value = Date.now()
+  }, 250)
   stopFrontendUpdateMonitor = startFrontendUpdateMonitor(() => window.location.reload())
 })
 
-onBeforeUnmount(() => stopFrontendUpdateMonitor())
+onBeforeUnmount(() => {
+  if (runtimeClockTimer !== undefined) clearInterval(runtimeClockTimer)
+  stopFrontendUpdateMonitor()
+})
 </script>
 
 <template>
@@ -315,7 +323,7 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
         <span class="status-live" :class="{ stale: payload.stale }"><i></i>{{ payload.stale ? '数据已停滞' : phaseLabel(status.phase) }}</span>
         <span class="badge">只读监控</span>
         <span class="badge">{{ status.clients || pool.length || 0 }} 个客户</span>
-        <span>{{ dateTime(payload.updatedAt) }}</span>
+        <span data-testid="runtime-clock">{{ dateTime(runtimeClockMs) }}</span>
       </div>
     </section>
 
