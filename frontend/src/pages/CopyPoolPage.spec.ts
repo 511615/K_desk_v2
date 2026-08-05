@@ -9,6 +9,11 @@ vi.mock('@tanstack/vue-query', () => ({
         available: true,
         stale: false,
         status: {},
+        demoAccount: {
+          account: { login: '33304642', server: 'ACCMGlobal-Demo', balanceUsd: 9818.24, equityUsd: 9821.44, marginUsd: 120, freeMarginUsd: 9701.44, marginLevelPercent: 8184.53 },
+          positions: [{ ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true }],
+          deals: [{ dealTicket: 80001, positionId: 89001, time: '2026-08-05T08:40:00+08:00', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true }],
+        },
         pool: [
           {
             clientAlias: 'C001',
@@ -54,6 +59,19 @@ vi.mock('../frontendUpdate', () => ({ startFrontendUpdateMonitor: () => () => un
 import CopyPoolPage from './CopyPoolPage.vue'
 
 describe('CopyPoolPage tier tabs', () => {
+  it('shows the current Demo account positions and real deal history at the top', () => {
+    const wrapper = mount(CopyPoolPage)
+
+    const accountPanel = wrapper.get('[data-testid="demo-account-panel"]')
+    expect(accountPanel.text()).toContain('33304642')
+    expect(accountPanel.text()).toContain('当前持仓')
+    expect(accountPanel.text()).toContain('90001')
+    expect(accountPanel.text()).toContain('历史成交')
+    expect(accountPanel.text()).toContain('80001')
+    expect(accountPanel.text()).toContain('本策略')
+    expect(wrapper.html().indexOf('data-testid="demo-account-panel"')).toBeLessThan(wrapper.html().indexOf('data-testid="risk-controls"'))
+  })
+
   it('switches account lists by current tier without exposing aliases', async () => {
     const wrapper = mount(CopyPoolPage)
 

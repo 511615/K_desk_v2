@@ -44,6 +44,10 @@ Login/server, the Producer rejects the sample and performs no sizing, status wri
 for that loop; operators must restore the pinned portable terminal session. The previous valid
 snapshot then becomes stale rather than displaying another account's equity. Adding the identity
 column rotates the old status timeline to a timestamped archive on the first upgraded startup.
+The Producer also atomically refreshes `demo_account_public.json` every five seconds after the same
+Login/server identity checks. Current positions come from the live terminal; the bounded 30-day,
+200-Deal history query is cached for ten seconds. A failed or crossed-account sample cannot replace
+the last valid public ledger. The 8777 process never initializes MT5 to serve this panel.
 The Producer may self-recover a Ticket that was filled immediately before a process interruption
 only when its retained 16-character comment and product uniquely match one persisted source-position
 owner. It records the recovered ownership before resuming reconciliation. Ambiguous, foreign or

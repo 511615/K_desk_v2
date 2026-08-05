@@ -59,6 +59,10 @@ ORDER_RECONCILE_SECONDS = 5.0
 MAX_DEVIATION_POINTS = 50
 LATENCY_GATE_WINDOW = 30
 MIN_LATENCY_GATE_SAMPLES = 20
+DEMO_ACCOUNT_SNAPSHOT_SECONDS = 5.0
+DEMO_ACCOUNT_HISTORY_CACHE_SECONDS = 10.0
+DEMO_ACCOUNT_HISTORY_DAYS = 30
+DEMO_ACCOUNT_HISTORY_LIMIT = 200
 
 EVENT_PUBLIC_COLUMNS = (
     "event_id", "time_beijing", "client_alias", "source_side", "source_entry",
@@ -390,6 +394,8 @@ class Mt5Executor:
         self.terminal_path = terminal_path
         self.risk_profile = risk_profile
         self.approved_login: int | None = None
+        self._demo_history_cached_at = 0.0
+        self._demo_history_cache: list[dict[str, Any]] = []
 
     @staticmethod
     def _is_strategy_row(row: Any) -> bool:
@@ -462,6 +468,128 @@ class Mt5Executor:
                 f"received Login {actual_login} on {getattr(value, 'server', '')}."
             )
         return value
+
+    @staticmethod
+    def _utc_iso_from_seconds(value: Any) -> str:
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError, OverflowError):
+            return ""
+
+    @staticmethod
+    def _utc_iso_from_milliseconds(value: Any) -> str:
+        try:
+            return datetime.fromtimestamp(float(value) / 1000.0, tz=timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError, OverflowError):
+            return ""
+
+    @staticmethod
+    def _deal_entry_label(value: Any) -> str:
+        labels = {
+            int(getattr(mt5, "DEAL_ENTRY_IN", 0)): "IN",
+            int(getattr(mt5, "DEAL_ENTRY_OUT", 1)): "OUT",
+            int(getattr(mt5, "DEAL_ENTRY_INOUT", 2)): "INOUT",
+            int(getattr(mt5, "DEAL_ENTRY_OUT_BY", 3)): "OUT_BY",
+        }
+        return labels.get(int(value), "UNKNOWN")
+
+    @staticmethod
+    def _trade_side(value: Any) -> str:
+        return "BUY" if int(value) == int(getattr(mt5, "DEAL_TYPE_BUY", 0)) else "SELL"
+
+    def demo_account_snapshot(
+        self,
+        *,
+        history_days: int = DEMO_ACCOUNT_HISTORY_DAYS,
+        history_limit: int = DEMO_ACCOUNT_HISTORY_LIMIT,
+    ) -> dict[str, Any]:
+        self.account()
+        positions_raw = mt5.positions_get()
+        if positions_raw is None:
+            raise RuntimeError(f"MT5 positions_get failed: {mt5.last_error()}")
+        positions = [
+            {
+                "ticket": int(getattr(position, "ticket", 0) or 0),
+                "position_id": int(
+                    getattr(position, "identifier", 0)
+                    or getattr(position, "ticket", 0)
+                    or 0
+                ),
+                "product": str(getattr(position, "symbol", "") or ""),
+                "side": self._trade_side(getattr(position, "type", 0)),
+                "lots": float(getattr(position, "volume", 0.0) or 0.0),
+                "open_price": float(getattr(position, "price_open", 0.0) or 0.0),
+                "current_price": float(getattr(position, "price_current", 0.0) or 0.0),
+                "stop_loss": float(getattr(position, "sl", 0.0) or 0.0),
+                "take_profit": float(getattr(position, "tp", 0.0) or 0.0),
+                "floating_pnl_usd": float(getattr(position, "profit", 0.0) or 0.0),
+                "swap_usd": float(getattr(position, "swap", 0.0) or 0.0),
+                "opened_at": self._utc_iso_from_seconds(getattr(position, "time", 0)),
+                "strategy_owned": self._is_strategy_row(position),
+            }
+            for position in positions_raw
+            if str(getattr(position, "symbol", "") or "")
+        ]
+        positions.sort(key=lambda row: (row["opened_at"], row["ticket"]), reverse=True)
+
+        now_monotonic = time.monotonic()
+        if now_monotonic - self._demo_history_cached_at >= DEMO_ACCOUNT_HISTORY_CACHE_SECONDS:
+            now = utc_now()
+            deals_raw = mt5.history_deals_get(now - timedelta(days=max(1, history_days)), now)
+            if deals_raw is None:
+                raise RuntimeError(f"MT5 history_deals_get failed: {mt5.last_error()}")
+            trade_types = {
+                int(getattr(mt5, "DEAL_TYPE_BUY", 0)),
+                int(getattr(mt5, "DEAL_TYPE_SELL", 1)),
+            }
+            deals = []
+            for deal in deals_raw:
+                if (
+                    int(getattr(deal, "type", -1)) not in trade_types
+                    or not str(getattr(deal, "symbol", "") or "")
+                ):
+                    continue
+                profit = float(getattr(deal, "profit", 0.0) or 0.0)
+                commission = float(getattr(deal, "commission", 0.0) or 0.0)
+                swap = float(getattr(deal, "swap", 0.0) or 0.0)
+                fee = float(getattr(deal, "fee", 0.0) or 0.0)
+                deals.append({
+                    "deal_ticket": int(getattr(deal, "ticket", 0) or 0),
+                    "order_ticket": int(getattr(deal, "order", 0) or 0),
+                    "position_id": int(getattr(deal, "position_id", 0) or 0),
+                    "time": self._utc_iso_from_milliseconds(getattr(deal, "time_msc", 0)),
+                    "product": str(getattr(deal, "symbol", "") or ""),
+                    "entry": self._deal_entry_label(getattr(deal, "entry", -1)),
+                    "side": self._trade_side(getattr(deal, "type", 0)),
+                    "lots": float(getattr(deal, "volume", 0.0) or 0.0),
+                    "price": float(getattr(deal, "price", 0.0) or 0.0),
+                    "profit_usd": profit,
+                    "commission_usd": commission,
+                    "swap_usd": swap,
+                    "fee_usd": fee,
+                    "net_pnl_usd": profit + commission + swap + fee,
+                    "strategy_owned": self._is_strategy_row(deal),
+                })
+            deals.sort(key=lambda row: (row["time"], row["deal_ticket"]), reverse=True)
+            self._demo_history_cache = deals[:max(1, history_limit)]
+            self._demo_history_cached_at = now_monotonic
+
+        verified = self.account()
+        return {
+            "updated_at_beijing": beijing_now().isoformat(),
+            "account": {
+                "login": int(verified.login),
+                "server": str(verified.server),
+                "currency": str(getattr(verified, "currency", "USD") or "USD"),
+                "balance_usd": float(getattr(verified, "balance", 0.0) or 0.0),
+                "equity_usd": float(getattr(verified, "equity", 0.0) or 0.0),
+                "margin_usd": float(getattr(verified, "margin", 0.0) or 0.0),
+                "free_margin_usd": float(getattr(verified, "margin_free", 0.0) or 0.0),
+                "margin_level_percent": float(getattr(verified, "margin_level", 0.0) or 0.0),
+            },
+            "positions": positions,
+            "deals": list(self._demo_history_cache),
+        }
 
     @staticmethod
     def terminal() -> Any:
@@ -879,6 +1007,7 @@ class LiveService:
         self.private_state_path = self.output_dir / "runtime_state_private.json"
         self.private_routes_path = self.output_dir / "client_routes_private.json"
         self.status_path = self.output_dir / "status.json"
+        self.demo_account_path = self.output_dir / "demo_account_public.json"
         self.event_path = self.output_dir / "events_public.csv"
         self.order_path = self.output_dir / "orders_public.csv"
         self.pool_path = self.output_dir / "pool_public.csv"
@@ -908,6 +1037,7 @@ class LiveService:
         self.last_error = ""
         self.last_pool_reload_day = ""
         self.last_timeline_write = 0.0
+        self.last_demo_account_write = 0.0
         self.pending_source_snapshot: dict[tuple[int, int, str], float] | None = None
         self.pending_source_snapshot_count = 0
         self.external_position_conflict = False
@@ -1172,6 +1302,13 @@ class LiveService:
 
     def write_status(self) -> None:
         status = self.public_status()
+        now_monotonic = time.monotonic()
+        if (
+            now_monotonic - self.last_demo_account_write >= DEMO_ACCOUNT_SNAPSHOT_SECONDS
+            or not self.demo_account_path.is_file()
+        ):
+            atomic_json(self.demo_account_path, self.mt.demo_account_snapshot())
+            self.last_demo_account_write = now_monotonic
         atomic_json(self.status_path, status)
         if time.monotonic() - self.last_timeline_write >= 5.0:
             self._append_timeline_csv(

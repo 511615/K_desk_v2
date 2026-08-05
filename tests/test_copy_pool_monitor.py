@@ -106,6 +106,51 @@ def make_snapshot(root: Path) -> Path:
         }),
         encoding="utf-8",
     )
+    (output / "demo_account_public.json").write_text(json.dumps({
+        "updated_at_beijing": "2026-07-28T20:43:19+08:00",
+        "account": {
+            "login": 33304642,
+            "server": "ACCMGlobal-Demo",
+            "currency": "USD",
+            "balance_usd": 9978.35,
+            "equity_usd": 10003.62,
+            "margin_usd": 120.0,
+            "free_margin_usd": 9883.62,
+            "margin_level_percent": 8336.35,
+        },
+        "positions": [{
+            "ticket": 90001,
+            "position_id": 90001,
+            "product": "XAUUSD",
+            "side": "BUY",
+            "lots": 0.01,
+            "open_price": 4000.0,
+            "current_price": 4003.0,
+            "stop_loss": 0.0,
+            "take_profit": 0.0,
+            "floating_pnl_usd": 3.2,
+            "swap_usd": -0.1,
+            "opened_at": "2026-07-28T20:40:00+08:00",
+            "strategy_owned": True,
+        }],
+        "deals": [{
+            "deal_ticket": 80001,
+            "order_ticket": 81001,
+            "position_id": 89001,
+            "time": "2026-07-28T19:40:00+08:00",
+            "product": "XAUUSD",
+            "entry": "OUT",
+            "side": "SELL",
+            "lots": 0.01,
+            "price": 4002.0,
+            "profit_usd": 2.5,
+            "commission_usd": -0.4,
+            "swap_usd": 0.0,
+            "fee_usd": 0.0,
+            "net_pnl_usd": 2.1,
+            "strategy_owned": True,
+        }],
+    }), encoding="utf-8")
     write_csv(output / "pool_public.csv", [{
         "client_alias": "C001",
         "product": "XAUUSD",
@@ -433,6 +478,10 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert payload["sourceCoverage"]["hourlyDiscovery"]["monitorAccounts"] == 30
     assert payload["status"]["executionModel"] == "independent_customer_positions_v2"
     assert payload["status"]["accountLogin"] == "33304642"
+    assert payload["demoAccount"]["account"]["login"] == "33304642"
+    assert payload["demoAccount"]["positions"][0]["ticket"] == 90001
+    assert payload["demoAccount"]["positions"][0]["strategyOwned"] is True
+    assert payload["demoAccount"]["deals"][0]["netPnlUsd"] == pytest.approx(2.1)
     assert payload["timeline"][0]["accountLogin"] == "33304642"
     assert payload["status"]["demoFastActivationRequested"] is True
     assert payload["status"]["demoFastActivationEnabled"] is True
@@ -715,9 +764,10 @@ def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
         "ok": True,
         "available": False,
         "stale": True,
-        "message": "尚未发现实时跟单状态文件",
-        "status": {},
-        "pool": [],
+            "message": "尚未发现实时跟单状态文件",
+            "status": {},
+            "demoAccount": {"account": {}, "positions": [], "deals": []},
+            "pool": [],
         "timeline": [],
         "events": [],
         "orders": [],
