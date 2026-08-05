@@ -158,6 +158,7 @@ class CopyPoolFileSnapshotRepository:
     def __init__(self, output_dir: Path) -> None:
         self.output_dir = output_dir.resolve()
         self.status_path = self.output_dir / "status.json"
+        self.demo_account_path = self.output_dir / "demo_account_public.json"
         self.pool_path = self.output_dir / "pool_public.csv"
         self.events_path = self.output_dir / "events_public.csv"
         self.orders_path = self.output_dir / "orders_public.csv"
@@ -253,6 +254,7 @@ class CopyPoolFileSnapshotRepository:
                 "stale": True,
                 "message": "尚未发现实时跟单状态文件",
                 "status": {},
+                "demoAccount": {"account": {}, "positions": [], "deals": []},
                 "pool": [],
                 "timeline": [],
                 "events": [],
@@ -527,6 +529,9 @@ class CopyPoolFileSnapshotRepository:
             independent_positions, routes
         )
         current_copies = self._current_copies(independent_positions, routes)
+        demo_account = self._demo_account(
+            _read_json(self.demo_account_path), status, limit=order_limit
+        )
 
         return {
             "ok": True,
@@ -539,6 +544,7 @@ class CopyPoolFileSnapshotRepository:
             "routeCoverage": {"linked": sum(bool(row["detailPath"]) for row in pool), "total": len(pool)},
             "sourceCoverage": self._source_coverage(status, coverage),
             "status": self._public_status(status),
+            "demoAccount": demo_account,
             "pool": pool,
             "timeline": [self._timeline_row(row) for row in timeline_rows if row.get("time_beijing")],
             "events": [
@@ -559,6 +565,78 @@ class CopyPoolFileSnapshotRepository:
             "dynamicSleeves": dynamic_sleeves,
             "scheduler": self._scheduler(status.get("scheduler")),
             "controls": self.controls(),
+        }
+
+    @staticmethod
+    def _demo_account(
+        row: dict[str, Any], status: dict[str, Any], *, limit: int
+    ) -> dict[str, Any]:
+        account = row.get("account") if isinstance(row.get("account"), dict) else {}
+        login = str(account.get("login") or "")
+        server = str(account.get("server") or "")
+        if (
+            not login
+            or login != str(status.get("account_login") or "")
+            or server != str(status.get("server") or "")
+        ):
+            return {"updatedAt": "", "account": {}, "positions": [], "deals": []}
+
+        positions = []
+        for item in row.get("positions") or []:
+            if not isinstance(item, dict):
+                continue
+            positions.append({
+                "ticket": _int(item.get("ticket")),
+                "positionId": _int(item.get("position_id")),
+                "product": str(item.get("product") or ""),
+                "side": str(item.get("side") or ""),
+                "lots": _float(item.get("lots")),
+                "openPrice": _float(item.get("open_price")),
+                "currentPrice": _float(item.get("current_price")),
+                "stopLoss": _float(item.get("stop_loss")),
+                "takeProfit": _float(item.get("take_profit")),
+                "floatingPnlUsd": _float(item.get("floating_pnl_usd")),
+                "swapUsd": _float(item.get("swap_usd")),
+                "openedAt": str(item.get("opened_at") or ""),
+                "strategyOwned": _bool(item.get("strategy_owned")),
+            })
+
+        deals = []
+        for item in (row.get("deals") or [])[:max(0, limit)]:
+            if not isinstance(item, dict):
+                continue
+            deals.append({
+                "dealTicket": _int(item.get("deal_ticket")),
+                "orderTicket": _int(item.get("order_ticket")),
+                "positionId": _int(item.get("position_id")),
+                "time": str(item.get("time") or ""),
+                "product": str(item.get("product") or ""),
+                "entry": str(item.get("entry") or ""),
+                "side": str(item.get("side") or ""),
+                "lots": _float(item.get("lots")),
+                "price": _float(item.get("price")),
+                "profitUsd": _float(item.get("profit_usd")),
+                "commissionUsd": _float(item.get("commission_usd")),
+                "swapUsd": _float(item.get("swap_usd")),
+                "feeUsd": _float(item.get("fee_usd")),
+                "netPnlUsd": _float(item.get("net_pnl_usd")),
+                "strategyOwned": _bool(item.get("strategy_owned")),
+            })
+
+        return {
+            "updatedAt": str(row.get("updated_at_beijing") or ""),
+            "account": {
+                "login": login,
+                "server": server,
+                "currency": str(account.get("currency") or "USD"),
+                "balanceUsd": _float(account.get("balance_usd")),
+                "equityUsd": _float(account.get("equity_usd")),
+                "marginUsd": _float(account.get("margin_usd")),
+                "freeMarginUsd": _float(account.get("free_margin_usd")),
+                "marginLevelPercent": _float(account.get("margin_level_percent")),
+            },
+            "positions": positions,
+            "deals": deals,
         }
 
     @staticmethod

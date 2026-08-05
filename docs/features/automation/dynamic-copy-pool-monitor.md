@@ -20,6 +20,13 @@ all-route, cross-product dynamic customer-pool Demo experiment. It presents acco
 sleeves, independent source-position to Demo-ticket ownership, effective weights, client loss
 budgets, execution decisions, account equity and safety gates.
 
+The first operational panel is the pinned Demo account ledger. It identifies the current Login and
+server, shows balance, equity, used/free margin and margin level, then lists every actual MT5 open
+position and the most recent 30-day trading Deals. Rows distinguish copier-owned activity from
+other account activity. The Producer writes this account-scoped projection atomically every five
+seconds and caches the bounded history query for ten seconds; the 8777 monitor only reads the local
+projection. MT5 comments, Magic values, private source keys and credentials are never exposed.
+
 ## Independent execution model
 
 Selection and monitoring use `account + normalized product` sleeves across every supported Demo

@@ -63,6 +63,9 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   `ticketMappings` and `exposures` project customer-owned Demo execution without returning private
   composite keys or comments. Status and timeline rows additively expose `accountLogin`, identifying
   the Demo account that produced each equity sample. Source events and Demo order events remain compatible;
+  additive `demoAccount` projects the pinned Login's account summary, actual open positions and a
+  bounded recent MT5 Deal ledger. Position/Deal rows expose public Ticket, product, direction,
+  volume, price, P/L and strategy-ownership fields, but never MT5 Comment, Magic or private source keys.
   `sourceCoverage` reports eleven logical routes, nine
   physical sources, build funnels, selected counts, freshness, latency and source errors. Pool rows
   additively expose realized P/L, floating P/L, dynamic evaluation, open position count, all-symbol

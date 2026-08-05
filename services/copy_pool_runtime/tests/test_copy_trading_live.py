@@ -95,6 +95,71 @@ class Mt5AccountIdentityTests(unittest.TestCase):
     def test_timeline_contract_records_demo_account_login(self) -> None:
         self.assertIn("account_login", TIMELINE_PUBLIC_COLUMNS)
 
+    def test_demo_account_snapshot_exposes_positions_and_cached_real_deals(self) -> None:
+        executor = Mt5Executor(Path("terminal64.exe"), RISK_PROFILES["Capital10k"])
+        executor.approved_login = 33_304_642
+        account = SimpleNamespace(
+            login=33_304_642,
+            server="ACCMGlobal-Demo",
+            trade_mode=0,
+            currency="USD",
+            balance=9_900.0,
+            equity=9_925.5,
+            margin=120.0,
+            margin_free=9_805.5,
+            margin_level=8_271.25,
+        )
+        position = SimpleNamespace(
+            ticket=70001,
+            identifier=70001,
+            symbol="XAUUSD",
+            type=0,
+            volume=0.01,
+            price_open=4_080.5,
+            price_current=4_083.1,
+            sl=0.0,
+            tp=0.0,
+            profit=26.0,
+            swap=-0.5,
+            time=1_775_000_000,
+            magic=26_072_801,
+            comment="CPV2:C001:SECRET",
+        )
+        deal = SimpleNamespace(
+            ticket=80001,
+            order=81001,
+            position_id=69001,
+            time_msc=1_775_000_100_000,
+            symbol="XAUUSD",
+            entry=1,
+            type=1,
+            volume=0.01,
+            price=4_082.0,
+            profit=12.0,
+            commission=-0.4,
+            swap=-0.1,
+            fee=-0.05,
+            magic=26_072_801,
+            comment="CPV2:C001:SECRET",
+        )
+
+        with (
+            patch("copy_trading_live_demo.mt5.account_info", return_value=account),
+            patch("copy_trading_live_demo.mt5.positions_get", return_value=(position,)),
+            patch("copy_trading_live_demo.mt5.history_deals_get", return_value=(deal,)) as history,
+        ):
+            first = executor.demo_account_snapshot(history_days=30, history_limit=50)
+            second = executor.demo_account_snapshot(history_days=30, history_limit=50)
+
+        self.assertEqual(first["account"]["login"], 33_304_642)
+        self.assertEqual(first["positions"][0]["ticket"], 70001)
+        self.assertTrue(first["positions"][0]["strategy_owned"])
+        self.assertEqual(first["deals"][0]["deal_ticket"], 80001)
+        self.assertAlmostEqual(first["deals"][0]["net_pnl_usd"], 11.45)
+        self.assertEqual(second["deals"], first["deals"])
+        self.assertEqual(history.call_count, 1)
+        self.assertNotIn("SECRET", json.dumps(first))
+
 
 class FakeRiskMt5:
     @staticmethod

@@ -24,6 +24,14 @@ const dashboard = useQuery({
 
 const payload = computed<any>(() => dashboard.data.value || {})
 const status = computed<any>(() => payload.value.status || {})
+const demoAccount = computed<any>(() => payload.value.demoAccount || {})
+const demoAccountSummary = computed<any>(() => demoAccount.value.account || {})
+const demoAccountPositions = computed<any[]>(() => demoAccount.value.positions || [])
+const demoAccountDeals = computed<any[]>(() => demoAccount.value.deals || [])
+const demoAccountFloatingPnl = computed(() => demoAccountPositions.value.reduce(
+  (total, row) => total + Number(row.floatingPnlUsd || 0) + Number(row.swapUsd || 0),
+  0,
+))
 const pool = computed<any[]>(() => payload.value.pool || [])
 const sourceCoverage = computed<any>(() => payload.value.sourceCoverage || {})
 const sourceRows = computed<any[]>(() => sourceCoverage.value.sources || [])
@@ -225,6 +233,20 @@ function dateTime(value: unknown): string {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
+function demoEntryLabel(value: unknown): string {
+  const labels: Record<string, string> = { IN: '开仓', OUT: '平仓', INOUT: '反转', OUT_BY: '对向平仓' }
+  return labels[String(value || '').toUpperCase()] || '成交'
+}
+
+function ownershipLabel(value: unknown): string {
+  return value ? '本策略' : '其他交易'
+}
+
+function positionHolding(value: unknown): string {
+  const opened = Date.parse(String(value || ''))
+  return Number.isFinite(opened) ? formatDuration(Math.max(0, (Date.now() - opened) / 1000)) : '-'
+}
+
 function sideLabel(value: unknown): string {
   const parsed = Number(value)
   return parsed > 0 ? '多头' : parsed < 0 ? '空头' : '空仓'
@@ -302,6 +324,31 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
     <div v-else-if="!payload.available" class="panel-state">{{ payload.message || '当前没有可显示的跟单数据' }}</div>
 
     <template v-else>
+      <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
+        <div class="copy-panel-head demo-account-head">
+          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · {{ demoAccount.updatedAt ? dateTime(demoAccount.updatedAt) : '等待账户快照' }}</small></div>
+          <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
+        </div>
+        <div class="demo-account-summary">
+          <div><span>账号</span><b>{{ demoAccountSummary.login || status.accountLogin || '-' }}</b></div>
+          <div><span>余额</span><b>{{ money(demoAccountSummary.balanceUsd ?? status.balanceUsd) }} USD</b></div>
+          <div><span>权益</span><b>{{ money(demoAccountSummary.equityUsd ?? status.equityUsd) }} USD</b></div>
+          <div><span>已用 / 可用保证金</span><b>{{ money(demoAccountSummary.marginUsd) }} / {{ money(demoAccountSummary.freeMarginUsd) }}</b></div>
+          <div><span>保证金率</span><b>{{ number(demoAccountSummary.marginLevelPercent, 2) }}%</b></div>
+          <div><span>当前持仓盈亏</span><b :class="demoAccountFloatingPnl >= 0 ? 'positive' : 'negative'">{{ demoAccountFloatingPnl >= 0 ? '+' : '' }}{{ money(demoAccountFloatingPnl) }} USD</b></div>
+        </div>
+        <div class="demo-account-ledgers">
+          <div class="demo-ledger">
+            <div class="demo-ledger-title"><h3>当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
+            <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间 / 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
+          </div>
+          <div class="demo-ledger">
+            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 最近 {{ demoAccountDeals.length }} 条</span></div>
+            <div class="table-wrap demo-account-table"><table><thead><tr><th>成交时间</th><th>Deal / Position</th><th>产品 / 动作</th><th>手数 / 价格</th><th>净损益</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDeals" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDeals.length"><td colspan="6" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
       <section class="copy-panel risk-control-panel" data-testid="risk-controls">
         <div class="copy-panel-head"><div><h2>人工风控控制</h2><small>仅本机可修改；关闭保护不会自动解除已触发的硬停，需单独请求恢复影子</small></div><span :class="status.dailyHardStop ? 'negative' : 'positive'">{{ status.dailyHardStop ? '当前硬停' : '未硬停' }}</span></div>
         <div class="risk-control-grid">
@@ -500,6 +547,26 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 .status-live { display: inline-flex; align-items: center; gap: 7px; color: var(--kdesk-text); }
 .status-live i { width: 7px; height: 7px; background: var(--kdesk-success); border-radius: 50%; box-shadow: 0 0 0 3px #34c8901f; }
 .status-live.stale i { background: var(--kdesk-danger); box-shadow: 0 0 0 3px #f45c6b1f; }
+.demo-account-panel { margin-top: 11px; padding: 0; overflow: hidden; }
+.demo-account-head { margin: 0; padding: 11px 12px; border-bottom: 1px solid var(--kdesk-border); }
+.demo-account-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-bottom: 1px solid var(--kdesk-border); }
+.demo-account-summary>div { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--kdesk-border); }
+.demo-account-summary>div:last-child { border-right: 0; }
+.demo-account-summary span,.demo-account-summary b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.demo-account-summary span { color: var(--kdesk-muted); font-size: 10px; }
+.demo-account-summary b { margin-top: 4px; font-size: 13px; }
+.demo-account-ledgers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.demo-ledger { min-width: 0; padding: 10px 11px 11px; }
+.demo-ledger:first-child { border-right: 1px solid var(--kdesk-border); }
+.demo-ledger-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+.demo-ledger-title h3 { margin: 0; font-size: 12px; }
+.demo-ledger-title span { color: var(--kdesk-muted); font-size: 10px; }
+.demo-account-table { max-height: 230px; border: 1px solid var(--kdesk-border); }
+.demo-account-table table { min-width: 760px; }
+.demo-account-table th { white-space: nowrap; }
+.demo-account-table td { vertical-align: top; }
+.ownership-badge { display: inline-block; min-width: 48px; padding: 2px 5px; border: 1px solid #28c89a66; color: var(--kdesk-success); text-align: center; font-size: 10px; }
+.ownership-badge.external { border-color: #d7a63b66; color: var(--kdesk-warning); }
 .copy-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 11px 0; }
 .copy-summary-grid article { min-width: 0; padding: 11px 12px; background: var(--kdesk-surface); border: 1px solid var(--kdesk-border); border-radius: 5px; }
 .copy-summary-grid span,.copy-summary-grid small { display: block; color: var(--kdesk-muted); font-size: 11px; }
@@ -672,6 +739,11 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
 .empty-inline { padding: 16px; text-align: center; color: var(--kdesk-muted); font-size: 11px; }
 .warning { color: var(--kdesk-warning) !important; }
 @media (max-width: 1100px) {
+  .demo-account-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .demo-account-summary>div:nth-child(3) { border-right: 0; }
+  .demo-account-summary>div:nth-child(-n+3) { border-bottom: 1px solid var(--kdesk-border); }
+  .demo-account-ledgers { grid-template-columns: 1fr; }
+  .demo-ledger:first-child { border-right: 0; border-bottom: 1px solid var(--kdesk-border); }
   .risk-control-grid { grid-template-columns: 1fr 1fr; }
   .health-strip { grid-template-columns: repeat(4, 1fr); }
   .health-strip article:nth-child(4n) { border-right: 0; }
@@ -711,6 +783,10 @@ onBeforeUnmount(() => stopFrontendUpdateMonitor())
   .open-risk-row>strong { text-align: left; }
 }
 @media (max-width: 520px) {
+  .demo-account-summary { grid-template-columns: 1fr 1fr; }
+  .demo-account-summary>div:nth-child(3) { border-right: 1px solid var(--kdesk-border); }
+  .demo-account-summary>div:nth-child(2n) { border-right: 0; }
+  .demo-account-summary>div:nth-child(-n+4) { border-bottom: 1px solid var(--kdesk-border); }
   .copy-summary-grid,.health-strip { grid-template-columns: 1fr 1fr; }
   .health-strip article:nth-child(2n) { border-right: 0; }
   .health-strip article:nth-child(-n+6) { border-bottom: 1px solid var(--kdesk-border); }
