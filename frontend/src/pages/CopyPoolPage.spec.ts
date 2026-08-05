@@ -13,7 +13,7 @@ vi.mock('@tanstack/vue-query', () => ({
           updatedAt: '2026-08-05T10:05:00+08:00',
           account: { login: '33304642', server: 'ACCMGlobal-Demo', balanceUsd: 9818.24, equityUsd: 9821.44, marginUsd: 120, freeMarginUsd: 9701.44, marginLevelPercent: 8184.53 },
           positions: [{ ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true }],
-          deals: [{ dealTicket: 80001, positionId: 89001, time: '2026-08-05T08:40:00+08:00', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true }],
+          deals: [{ dealTicket: 80001, positionId: 89001, time: '2026-08-05T00:40:00Z', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true }],
         },
         pool: [
           {
@@ -71,12 +71,12 @@ describe('CopyPoolPage tier tabs', () => {
     const clock = wrapper.get('[data-testid="runtime-clock"]')
     const accountClock = wrapper.get('[data-testid="demo-account-clock"]')
 
-    expect(clock.text()).toBe('2026/8/5 10:06:56')
+    expect(clock.text()).toBe('北京时间 2026/8/5 10:06:56')
     expect(accountClock.text()).toBe(clock.text())
 
     await vi.advanceTimersByTimeAsync(1000)
 
-    expect(clock.text()).toBe('2026/8/5 10:06:57')
+    expect(clock.text()).toBe('北京时间 2026/8/5 10:06:57')
     expect(accountClock.text()).toBe(clock.text())
     wrapper.unmount()
   })
@@ -90,6 +90,7 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).toContain('90001')
     expect(accountPanel.text()).toContain('历史成交')
     expect(accountPanel.text()).toContain('80001')
+    expect(accountPanel.text()).toContain('2026/8/5 08:40:00')
     expect(accountPanel.text()).toContain('本策略')
     expect(wrapper.html().indexOf('data-testid="demo-account-panel"')).toBeLessThan(wrapper.html().indexOf('data-testid="risk-controls"'))
   })
