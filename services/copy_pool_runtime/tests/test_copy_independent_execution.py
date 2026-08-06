@@ -1142,7 +1142,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
         self.assertEqual(mt.actions, [("close", 772, 0.01)])
 
-    def test_explicit_demo_override_allows_one_minimum_lot_per_direction(self) -> None:
+    def test_explicit_demo_override_allows_independent_minimum_lots_within_cluster_budget(self) -> None:
         mt = FakeHedgingMt()
         service = self.sizing_service(mt)
         service.args = SimpleNamespace(
@@ -1157,6 +1157,11 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         service.copy_book.clients["route:1"].loss_budget_usd = 5.0
 
         self.assertTrue(service._minimum_lot_feasible("route:1", "XAUUSD"))
+        service._stress_usage = lambda _excluded: (
+            0.01,
+            {("XAUUSD", 1): 0.01},
+            {},
+        )
         with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
             service, "_position_hold_seconds", return_value=0.0
         ):
@@ -1168,9 +1173,39 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             service, "_position_hold_seconds", return_value=0.0
         ):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
-        self.assertEqual((target, reason), (0.0, "below_minimum_risk_lot"))
+        self.assertEqual((target, reason), (0.01, "risk_allowed_demo_minimum"))
 
-    def test_demo_minimum_override_keeps_one_owner_without_reconcile_churn(self) -> None:
+        # An existing same-direction minimum lot must not prevent another
+        # active source from receiving its own minimum lot while the cluster
+        # stress budget still has room.
+        mt.add(203, "CPV2:C002:SAME-DIRECTION", 0, 0.01)
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
+            target, reason = service._desired_copy_lots(position, allow_increase=True)
+        self.assertEqual((target, reason), (0.01, "risk_allowed_demo_minimum"))
+
+    def test_gate_rejection_keeps_specific_reason_in_position_state(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="StagedLive",
+        )
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 880, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        service.quote_allows_open = lambda _product: False
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
+            service._sync_independent_position(position, "gate_reason", allow_increase=True)
+
+        self.assertEqual(position.status, "risk_rejected")
+        self.assertTrue(position.reject_reason.startswith("execution_gate_blocked:"))
+
+    def test_demo_minimum_override_keeps_independent_owners_without_reconcile_churn(self) -> None:
         mt = FakeHedgingMt()
         service = self.sizing_service(mt)
         service.args = SimpleNamespace(
@@ -1196,9 +1231,9 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             service.reconcile_independent_copies(allow_increase=True)
             service.reconcile_independent_copies(allow_increase=True)
 
-        self.assertEqual([action[0] for action in mt.actions], ["open"])
+        self.assertEqual([action[0] for action in mt.actions], ["open", "open"])
         self.assertEqual(first.copied_signed_lots, 0.01)
-        self.assertEqual(second.copied_signed_lots, 0.0)
+        self.assertEqual(second.copied_signed_lots, 0.01)
 
     def test_open_request_storm_guard_hard_stops_before_another_order(self) -> None:
         service = self.service(FakeHedgingMt())

@@ -56,7 +56,7 @@ vi.mock('@tanstack/vue-query', () => ({
         clientRisks: [{ clientAlias: 'C002', status: 'risk_rejected', reductionReason: '当前综合收益为负' }],
         events: [
           { eventId: 1, time: '2026-08-05T01:30:00Z', accountLogin: '3054777', product: 'XAUUSD', sourceSide: 'BUY', sourceLots: 0.2, sourceEntry: 'IN', decision: '已更新独立来源仓', dbLatencySeconds: 0.4 },
-          { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 'OUT', decision: '仅监控', dbLatencySeconds: 0.5 },
+          { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 1, decision: '仅监控', dbLatencySeconds: 0.5 },
         ],
         orders: [],
         copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],
@@ -125,7 +125,7 @@ describe('CopyPoolPage tier tabs', () => {
     expect(table.text()).not.toContain('89003')
   })
 
-  it('switches account lists by current tier without exposing aliases', async () => {
+  it('switches account lists by current tier without exposing aliases or source-only closes', async () => {
     const wrapper = mount(CopyPoolPage)
 
     expect(wrapper.get('[role="tablist"]').text()).toContain('活动跟单池1')
@@ -139,7 +139,8 @@ describe('CopyPoolPage tier tabs', () => {
     expect(wrapper.text()).toContain('5200101')
     expect(wrapper.text()).toContain('当前综合收益为负')
     expect(wrapper.text()).not.toContain('C002')
-    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('5200101')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('5200101')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('当前层级暂无事件')
     expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('3054777')
   })
 
@@ -152,7 +153,8 @@ describe('CopyPoolPage tier tabs', () => {
 
     const hardReject = wrapper.get('[data-testid="event-tier-tabs"]').findAll('button').find(button => button.text().includes('硬门拒绝'))!
     await hardReject.trigger('click')
-    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('5200101')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('5200101')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('当前层级暂无事件')
     expect(wrapper.get('[aria-label="客户池层级"]').find('[aria-selected="true"]').text()).toContain('硬门拒绝')
   })
 

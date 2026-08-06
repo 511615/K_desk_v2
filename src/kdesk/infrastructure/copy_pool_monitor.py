@@ -1190,6 +1190,24 @@ class CopyPoolFileSnapshotRepository:
         }
 
     @staticmethod
+    def _event_decision(value: object) -> str:
+        """Expose only a stable execution outcome, never private reason text."""
+        raw = str(value or "").strip().lower()
+        if "signal_expired" in raw:
+            return "signal_expired"
+        if "risk_rejected" in raw:
+            return "risk_rejected"
+        if "legacy_monitor_only" in raw:
+            return "legacy_monitor_only"
+        if raw.endswith(":monitor") or raw == "monitor":
+            return "monitor"
+        if raw.endswith(":active") or raw == "active":
+            return "active"
+        if "closed" in raw:
+            return "closed"
+        return ""
+
+    @staticmethod
     def _event_row(
         row: dict[str, str], routes: dict[str, dict[str, str]]
     ) -> dict[str, Any]:
@@ -1217,6 +1235,7 @@ class CopyPoolFileSnapshotRepository:
             "grossLongLots": _float(row.get("gross_long_lots")),
             "grossShortLots": _float(row.get("gross_short_lots")),
             "dbLatencySeconds": _float(row.get("db_latency_seconds")),
+            "decision": CopyPoolFileSnapshotRepository._event_decision(row.get("reason")),
             "phase": row.get("phase", ""),
         }
 

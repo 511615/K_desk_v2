@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { formatBeijingDateTime as dateTime, formatBeijingTime as timeOnly } from '../beijingTime'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyStatusLabel, currentCopyRows, eventExecutionLabel, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, poolTierTabLabel, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from '../copyPool'
 import type { PoolTierTab } from '../copyPool'
 import { startFrontendUpdateMonitor } from '../frontendUpdate'
 
@@ -198,12 +198,16 @@ const schedulerRows = computed(() => [
 ])
 
 const activity = computed(() => {
-  const source = (payload.value.events || []).map((row: any) => ({
+  const source = (payload.value.events || [])
+    // A source close without an owned Demo Ticket is accounting noise here;
+    // the current-copy/history panels remain the source of truth for exits.
+    .filter((row: any) => Number(row.sourceEntry) === 0 || ['IN', 'OPEN'].includes(String(row.sourceEntry || '').toUpperCase()))
+    .map((row: any) => ({
     key: row.eventId,
     time: row.time,
     kind: '客户成交',
     subject: `${row.accountLogin || '来源账号'} ${sourceSideLabel(row.sourceSide)} ${lots(row.sourceLots)} 手`,
-    reason: `${row.product || '-'} · ${sourceEntryLabel(row.sourceEntry)} · ${row.decision || '已更新独立来源仓'}`,
+    reason: `${row.product || '-'} · ${sourceEntryLabel(row.sourceEntry)} · ${eventExecutionLabel(row)}`,
     latency: `${number(row.dbLatencySeconds, 2)}秒`,
     warning: false,
     tier: tierByAccountProduct.value.get(`${String(row.accountLogin || '')}|${String(row.product || '').toUpperCase()}`) || 'monitor',

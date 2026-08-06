@@ -295,6 +295,12 @@ export function delayGateLabel(value: unknown): string {
 
 export function copyReasonLabel(value: unknown): string {
   return ({
+    active: '已进入复制执行',
+    closed: '来源仓已平仓',
+    monitor: '仅监控，未复制',
+    legacy_monitor_only: '旧仓仅监控，未追单',
+    signal_expired: '信号已过期，未复制',
+    risk_rejected: '风控拒绝，未复制',
     risk_allowed: '风控通过',
     source_closed: '来源仓已平仓',
     old_or_shadow_position: '旧仓或影子期仓位不追单',
@@ -306,6 +312,20 @@ export function copyReasonLabel(value: unknown): string {
     execution_gate_blocked: '点差、延迟或外部仓位闸门阻止开仓',
     client_not_in_current_pool: '客户已不在当前池中',
   } as Record<string, string>)[String(value || '')] || String(value || '已通过')
+}
+
+export function eventExecutionLabel(row: Record<string, unknown>): string {
+  const decision = String(row.decision || '').trim()
+  if (decision === 'active' && Math.abs(Number(row.desiredTargetLots) || 0) > 1e-9) {
+    return '跟单成功'
+  }
+  if (decision === 'risk_rejected'
+    && Math.abs(Number(row.desiredTargetLots) || 0) <= 1e-9
+    && Math.abs(Number(row.rawTargetLots) || 0) > 1e-9
+    && Math.abs(Number(row.rawTargetLots) || 0) < 0.01) {
+    return '未跟单：目标手数低于最小手'
+  }
+  return `未跟单：${copyReasonLabel(decision || 'execution_gate_blocked')}`
 }
 
 export function sourceActionLabel(value: unknown): string {
