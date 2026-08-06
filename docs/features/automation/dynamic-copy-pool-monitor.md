@@ -222,6 +222,8 @@ per-position evidence display an unavailable state rather than allocating accoun
 Status and equity-timeline rows include the pinned Demo Login. A Producer schema upgrade rotates a
 legacy timeline without this identity column into a timestamped archive before starting a clean
 current curve, so account-crossed equity samples cannot remain mixed into the displayed series.
+Detailed execution-gate sub-reasons in the current-copy view are localized for operators while the
+underlying bounded reason codes remain additive and compatible.
 
 The `客户池层级与影子准入` panel is an interactive tabbed read view. Its tabs are `活动跟单池`,
 `监控池`, `候补池`, `恢复观察`, `执行暂停` and `硬门拒绝`; the obsolete `入场观察` tab is not
