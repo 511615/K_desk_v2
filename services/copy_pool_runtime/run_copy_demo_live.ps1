@@ -32,6 +32,9 @@ param(
 
     [string] $TerminalPath = 'D:\risk\mt5_backtest_terminal\terminal64.exe',
 
+    [ValidateRange(1, [long]::MaxValue)]
+    [long] $DemoLogin = 33304642,
+
     [string] $PythonPath = 'C:\Users\amber\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 )
 
@@ -177,6 +180,7 @@ try {
         '--input-dir', $InputDir,
         '--output-dir', $OutputDir,
         '--terminal', $TerminalPath,
+        '--demo-login', [string] $DemoLogin,
         '--risk-profile', $RiskProfile,
         '--mode', $Mode,
         '--shadow-minutes', $ShadowMinutes.ToString([System.Globalization.CultureInfo]::InvariantCulture),

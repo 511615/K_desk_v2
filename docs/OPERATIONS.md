@@ -39,9 +39,17 @@ rebuild failure keeps the Demo strategy flat and retries no more than once per m
 source positions are monitor-only; the producer never opens from an old target. Persisted source-to-
 Demo Ticket ownership must exactly match current strategy Tickets before startup. Any unknown or
 missing Ticket is an execution hard stop requiring operator review.
-Startup pins the connected `ACCMGlobal-Demo` Login. If later MT5 Python IPC reads return another
-Login/server, the Producer rejects the sample and performs no sizing, status write or order action
-for that loop; operators must restore the pinned portable terminal session. The previous valid
+The launcher passes the explicitly approved Demo Login through `-DemoLogin` (currently `33304642`).
+After MT5 IPC initialization, the Producer uses the portable terminal's saved account session to
+select that Login on `ACCMGlobal-Demo` if another account is active, then verifies the exact Login,
+Demo trade mode, hedging mode and connection before pinning it. The selection check tolerates the
+terminal's asynchronous reconnect only by requiring three consecutive matching samples within ten
+seconds; it never treats an intervening Live sample as approved. It does not read or persist an MT5
+password. Selection failure or an unstable/mismatched post-selection identity aborts startup. Because MT5 may
+disable AutoTrading after an account change, the Producer remains unable to send orders until the
+operator enables AutoTrading once on the already selected Demo session; do not start a separate MT5
+Python probe afterward. If later IPC reads return another Login/server, the Producer rejects the
+sample and performs no sizing, status write or order action for that loop. The previous valid
 snapshot then becomes stale rather than displaying another account's equity. Adding the identity
 column rotates the old status timeline to a timestamped archive on the first upgraded startup.
 The Producer also atomically refreshes `demo_account_public.json` every five seconds after the same

@@ -164,7 +164,7 @@ class ReadOnlyPoolHistoryRepository:
             str(row.account_key): float(row.money_scale) for row in account_rows.itertuples()
         }
         logins = sorted(login_to_account)
-        start = as_of.astimezone(timezone.utc) - timedelta(days=61)
+        start = as_of.astimezone(timezone.utc) - timedelta(days=31)
         if source.platform == "MT5":
             return self._load_mt5(source, candidates, login_to_account, money_scale, logins, start, as_of)
         return self._load_mt4(source, candidates, login_to_account, money_scale, logins, start, as_of)

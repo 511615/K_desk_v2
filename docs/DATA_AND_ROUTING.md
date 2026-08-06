@@ -34,8 +34,8 @@ the status `dynamic_sleeves` list only after matching each private sleeve key to
 `client_routes_private.json` alias plus public product row, then exposes the alias/product state and
 the fixed scheduler timestamps. Unmapped state, raw private keys and free-form private gate text are
 dropped.
-The public pool also carries the current factor-model identifier, normalized five/20-day copied P/L,
-estimated five/20-day copy cost, cost-adjusted P/L, cost coverage and four percentile factor
+The public pool also carries the current factor-model identifier, normalized seven/30-day copied P/L,
+estimated seven/30-day copy cost, cost-adjusted P/L, cost coverage and four percentile factor
 scores. These fields are derived from the complete private universe and expose no credentials,
 contacts or private route structures. Hourly score, one/four-hour P/L, current comprehensive-profit eligibility and discovery coverage are
 also public snapshot fields. K_desk does not query them from MySQL. The producer obtains them from
@@ -122,7 +122,7 @@ private state. Successful transitions are removed individually. Within one proce
 remain pending and coalesce with later source events. On restart, only reductions/closes remain
 executable; opens are cancelled and reversals retain only the old-direction close. Invalid journal
 records fail startup so a possible risk-release instruction is never silently lost.
-The daily 20-day holding-statistics read is also complete-data only. MT5 starts with five-day
+The daily 30-day holding-statistics read is also complete-data only. MT5 starts with five-day
 Login-batch windows instead of waiting for one 20-day aggregate to time out. A slow window splits
 Logins and then time recursively down to six hours; opening/closing timestamps are merged by
 Login/Position/product before holding duration is derived. MT4 first uses its indexed aggregate and
@@ -134,7 +134,7 @@ strategy Ticket set, never on a possibly zero net position.
 
 Factor-history daily reads are strictly bounded to the 61 days ending at the build cutoff. The
 repository issues no separate pre-window query and never progressively searches older account
-history. The extra bounded day may establish the 60-day funded-capital and server-day boundary; if
+history. The extra bounded day may establish the 30-day funded-capital and server-day boundary; if
 it cannot, the first funded observation inside the range is used only for a new account, otherwise
 coverage fails closed. Deal, trade and snapshot reads remain bounded to the same factor window.
 Risk history, holding statistics and factor history use a global concurrency limit of four within
@@ -151,18 +151,25 @@ never scales lots.
 | --- | --- | --- | --- |
 | AC GB MT5 | `int_sass_crm_ac`, code 1 | `int_sass_crm_ac_mt5_live_new` | - |
 | AC CN MT5 | `sass_crm_ac`, code 1 | `sass_crm_ac_mt5_live` | - |
-| AC CN MT5 live3 | `sass_crm_ac`, code 3 | `sass_crm_ac_mt5_live3` | - |
+| AC CN MT5 live3 | `sass_crm_ac`, code 3 | `sass_crm_ac_mt5_live3` | `AC CN MT5 Live3` |
 | AC CN MT4 | `sass_crm_ac`, code 2 | `mt4_export_syc` | `AC MT4` |
 | AC GB MT4 | `int_sass_crm_ac`, code 2 | `mt4_export_syc` | `AC MT4` resolved by account route |
 | DBG CN MT5 | `crm_cn`, code 4 | `mt5_export_new` | `DBG MT5` |
 | DBG GB MT5 | `crm_vn`, code 2 | `mt5_export_new` | `DBG MT5` resolved by account route |
 | DBG MT5 Live2 | `crm_vn`, code 5 | `crm_vn_mt5_live2` | `DBG MT5` / `DBG GB MT5 Live2` resolved by account route |
-| DBG MT4 CN1 | `crm_cn`, code 1 | `crm_cn_mt4_live1` | RiskDash live1 |
-| DBG MT4 CN2 | `crm_cn`, code 3 | `crm_cn_mt4_live2` | RiskDash live2 |
-| DBG MT4 VN3 | `crm_vn`, code 1 | `crm_vn_mt4_live3` | RiskDash live3 |
+| DBG MT4 CN1 | `crm_cn`, code 1 | `crm_cn_mt4_live1` | `DBG CN MT4 Live1` / RiskDash live1 |
+| DBG MT4 CN2 | `crm_cn`, code 3 | `crm_cn_mt4_live2` | `DBG CN MT4 Live2` / RiskDash live2 |
+| DBG MT4 VN3 | `crm_vn`, code 1 | `crm_vn_mt4_live3` | `DBG VN MT4 Live3` / RiskDash live3 |
 
 The same numeric login can exist on multiple logical servers. CRM schema and server code are part
 of account identity. A shared physical trading schema must never be used to infer the CRM route.
+When a newly created account exists in an indexed physical `mt4_users_view` or `mt5_users_view` but
+its CRM mapping has not arrived, interactive account reads may use a fail-closed
+`unique_trade_user_fallback`. It is allowed only for the canonical logical route of that physical
+source and only after every other independent source on the same database host and platform proves
+that it does not contain the Login. A shared physical schema's other logical routes, any duplicate
+independent-source Login, missing users view, or users-view query failure remains unavailable. The
+lookup response exposes this as `routeValidation`; it is not CRM-route confirmation.
 Same-name discovery groups by CRM `user_id` across server codes within that CRM schema. Every
 returned account retains its own server code and is queried through the corresponding logical
 trading source; the selected account's source must never be reused for a related account.

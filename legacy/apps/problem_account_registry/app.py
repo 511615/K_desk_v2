@@ -105,6 +105,7 @@ MYSQL_SOURCES = [
         "server": "AC CN MT5 live3",
         "kind": "mt5_deals",
         "default_currency": "USD",
+        "aliases": ["AC CN MT5 Live3"],
         "crm_schema": "sass_crm_ac",
         "mt_server_code": "3",
         "account_route": {"schema": "sass_crm_ac", "mt_server_code": "3"},
@@ -185,6 +186,7 @@ MYSQL_SOURCES = [
         "platform": "MT4",
         "server": "DBG MT4 CN1",
         "kind": "mt4_trades",
+        "aliases": ["DBG CN MT4 Live1"],
         "crm_schema": "crm_cn",
         "mt_server_code": "1",
         "account_route": {"schema": "crm_cn", "mt_server_code": "1"},
@@ -198,6 +200,7 @@ MYSQL_SOURCES = [
         "platform": "MT4",
         "server": "DBG MT4 CN2",
         "kind": "mt4_trades",
+        "aliases": ["DBG CN MT4 Live2"],
         "crm_schema": "crm_cn",
         "mt_server_code": "3",
         "account_route": {"schema": "crm_cn", "mt_server_code": "3"},
@@ -211,6 +214,7 @@ MYSQL_SOURCES = [
         "platform": "MT4",
         "server": "DBG MT4 VN3",
         "kind": "mt4_trades",
+        "aliases": ["DBG VN MT4 Live3"],
         "crm_schema": "crm_vn",
         "mt_server_code": "1",
         "account_route": {"schema": "crm_vn", "mt_server_code": "1"},
@@ -1173,20 +1177,85 @@ def source_allowed(source: dict, platform: str = "", server: str = "") -> bool:
     return True
 
 
-def source_account_exists(cur, source: dict, account: str) -> bool:
+def source_physical_identity(source: dict) -> tuple[str, str, str, str, str]:
+    """Identify the physical read-only export behind one or more logical CRM routes."""
+    return (
+        normalize_text(source.get("host")).casefold(),
+        normalize_text(source.get("schema")).casefold(),
+        normalize_text(source.get("table")).casefold(),
+        normalize_text(source.get("kind")).casefold(),
+        normalize_text(source.get("platform")).upper(),
+    )
+
+
+def source_trade_user_exists(cur, source: dict, account: str) -> bool:
+    if source.get("kind") == "mt5_deals":
+        sql = f"select Login from `{source['schema']}`.`mt5_users_view` where Login = %s limit 1"
+    else:
+        sql = f"select LOGIN from `{source['schema']}`.`mt4_users_view` where LOGIN = %s limit 1"
+    cur.execute(sql, (int(account),))
+    return bool(cur.fetchone())
+
+
+def source_account_route_status(cur, source: dict, account: str) -> str:
+    """Validate a logical CRM route, with a fail-closed unique trade-user fallback.
+
+    Some newly-created accounts arrive in the trade export before CRM mapping.  The fallback is
+    intentionally restricted to the first logical route for one physical source and only when no
+    other independent source on the same DB host/platform has the same Login.
+    """
     route = source.get("account_route")
     if not isinstance(route, dict):
-        return True
+        return "not_routed"
     schema = normalize_text(route.get("schema"))
     server_code = normalize_text(route.get("mt_server_code"))
     if not schema or not server_code:
-        return True
+        return "not_routed"
+    source_key = source_physical_identity(source)
+    registry_key = tuple(
+        (source_physical_identity(item), normalize_text(item.get("name")))
+        for item in MYSQL_SOURCES
+    )
+    cache_key = ("source-route-status", registry_key, source_key, normalize_text(source.get("name")), normalize_text(account))
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
     cur.execute(
         f"select mt_login from `{schema}`.`mt_users_account` "
         "where mt_login = %s and mt_server_code = %s limit 1",
         (int(account), server_code),
     )
-    return bool(cur.fetchone())
+    if cur.fetchone():
+        return account_cache_set(cache_key, "crm_confirmed")
+
+    # A physical export can back several logical CRM routes.  Without CRM evidence, only its
+    # configured canonical route may represent a unique trade-user fallback.
+    shared_sources = [item for item in MYSQL_SOURCES if source_physical_identity(item) == source_key]
+    canonical_source = shared_sources[0] if shared_sources else source
+    if canonical_source is not source and normalize_text(canonical_source.get("name")) != normalize_text(source.get("name")):
+        return account_cache_set(cache_key, "shared_physical_source")
+    try:
+        if not source_trade_user_exists(cur, source, account):
+            return account_cache_set(cache_key, "missing")
+        for candidate in MYSQL_SOURCES:
+            if source_physical_identity(candidate) == source_key:
+                continue
+            if normalize_text(candidate.get("host")).casefold() != normalize_text(source.get("host")).casefold():
+                continue
+            if normalize_text(candidate.get("platform")).upper() != normalize_text(source.get("platform")).upper():
+                continue
+            if source_trade_user_exists(cur, candidate, account):
+                return account_cache_set(cache_key, "ambiguous_trade_user_fallback")
+    except Exception:
+        # We cannot prove uniqueness when a compatible users view is unavailable.
+        return account_cache_set(cache_key, "trade_user_fallback_unavailable")
+    return account_cache_set(cache_key, "unique_trade_user_fallback")
+
+
+def source_account_exists(cur, source: dict, account: str) -> bool:
+    return source_account_route_status(cur, source, account) in {
+        "not_routed", "crm_confirmed", "unique_trade_user_fallback",
+    }
 
 
 def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None:
@@ -1211,6 +1280,7 @@ def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None
         with conn.cursor() as cur:
             if not source_account_exists(cur, source, account):
                 return None
+            route_validation = source_account_route_status(cur, source, account)
             cur.execute(sql, (int(account),))
             row = cur.fetchone() or {}
             account_meta = account_money_meta(source_name=source.get("name"))
@@ -1248,6 +1318,7 @@ def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None
         "symbols": symbols,
         "latestSource": {"platform": source.get("platform", ""), "server": source.get("server", "")},
         "accountMeta": account_meta,
+        "routeValidation": route_validation,
         "refreshedAt": now_text(),
     }
 
@@ -1446,12 +1517,13 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
     return out
 
 
-def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: str = "", end: str = "", limit: int = 50000) -> list[dict]:
+def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: str = "", end: str = "", limit: int | None = 50000) -> list[dict]:
     where = ["Login = %s", "Action in (0, 1)", "Entry in (0, 1)"]
     args: list[object] = [int(account)]
     if symbol:
         where.append("Symbol = %s")
         args.append(symbol)
+    limit_clause = "limit %s" if limit is not None else ""
     sql = f"""
         select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
                Symbol, Price, Volume, VolumeExt, VolumeClosed, VolumeClosedExt,
@@ -1460,9 +1532,10 @@ def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: 
         from `{source['schema']}`.`{source['table']}`
         where {' and '.join(where)}
         order by PositionID, Time, Deal
-        limit %s
+        {limit_clause}
     """
-    args.append(limit * 2)
+    if limit is not None:
+        args.append(limit * 2)
     with mysql_trade_connect(source) as conn:
         with conn.cursor() as cur:
             if not source_account_exists(cur, source, account):
@@ -1477,7 +1550,7 @@ def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: 
         trades = [row for row in trades if (parse_trade_time(row.get("close_time")) or datetime.min) >= start_dt]
     if end_dt:
         trades = [row for row in trades if (parse_trade_time(row.get("open_time")) or datetime.max) <= end_dt]
-    return trades[:limit]
+    return trades if limit is None else trades[:limit]
 
 
 def query_mysql_mt4_source(
@@ -2101,9 +2174,13 @@ def query_copy_followers_source(
     source_orders: list[dict],
     *,
     copy_channels: list[str] | None = None,
+    start: str = "",
+    end: str = "",
     comment_batch_size: int = 500,
     position_batch_size: int = 5000,
 ) -> dict:
+    range_start = parse_trade_time(start)
+    range_end = parse_trade_time(end)
     requested_ids = {
         normalize_text(order.get("orderId"))
         for order in source_orders
@@ -2132,19 +2209,31 @@ def query_copy_followers_source(
                 for offset in range(0, len(exact_comments), comment_batch_size):
                     batch = exact_comments[offset:offset + comment_batch_size]
                     placeholders = ",".join(["%s"] * len(batch))
+                    time_clause = ""
+                    time_args: list[object] = []
+                    if start:
+                        time_clause += " and Time >= %s"
+                        time_args.append(start)
+                    if end:
+                        time_clause += " and Time <= %s"
+                        time_args.append(end)
                     sql = f"""
                         select Deal, Login, `Order`, PositionID, Time, TimeMsc, Action, Entry,
                                Symbol, Volume, VolumeExt, Profit, Commission, Storage, Fee, Comment
                         from `{source['schema']}`.`{source['table']}`
-                        where Comment in ({placeholders}) and Action in (0,1) and Entry in (0,2)
+                        where Comment in ({placeholders}) and Action in (0,1) and Entry in (0,2){time_clause}
                         order by TimeMsc, Deal
                     """
-                    cur.execute(sql, tuple(batch))
+                    cur.execute(sql, (*batch, *time_args))
                     candidate_rows.extend(cur.fetchall())
             else:
                 candidate_rows = []
                 windows, _ = _copy_source_windows(source_orders)
-                for start, end, window_ids in windows:
+                for source_start, source_end, window_ids in windows:
+                    window_start = max(source_start, range_start) if range_start else source_start
+                    window_end = min(source_end, range_end) if range_end else source_end
+                    if window_start > window_end:
+                        continue
                     if channels:
                         comments = sorted(
                             f"{channel}#{order_id}"
@@ -2164,8 +2253,8 @@ def query_copy_followers_source(
                         order by OPEN_TIME, TICKET
                     """
                     cur.execute(sql, (
-                        start.strftime("%Y-%m-%d %H:%M:%S"),
-                        end.strftime("%Y-%m-%d %H:%M:%S"),
+                        window_start.strftime("%Y-%m-%d %H:%M:%S"),
+                        window_end.strftime("%Y-%m-%d %H:%M:%S"),
                         *comment_args,
                     ))
                     candidate_rows.extend(cur.fetchall())
@@ -2254,6 +2343,13 @@ def query_copy_followers_source(
                         "currency": normalize_text(meta.get("currency")), "displayCurrency": normalize_text(meta.get("displayCurrency")),
                         "isCentAccount": bool(meta.get("isCentAccount")),
                     })
+    if range_start or range_end:
+        result_rows = [
+            row for row in result_rows
+            if (opened := parse_trade_time(row.get("openTime")))
+            and (not range_start or opened >= range_start)
+            and (not range_end or opened <= range_end)
+        ]
     result_rows.sort(key=lambda row: (
         row["account"],
         row.get("openTime") or "",
@@ -2332,6 +2428,12 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         raise ValueError("账号格式无效")
     platform = normalize_text(filters.get("platform")).upper()
     server = normalize_text(filters.get("server"))
+    start = normalize_text(filters.get("start"))
+    end = normalize_text(filters.get("end"))
+    scope_start = parse_trade_time(start)
+    scope_end = parse_trade_time(end)
+    if start and end and scope_start and scope_end and scope_start > scope_end:
+        raise ValueError("跟单开始时间不能晚于结束时间")
     cache_key = (
         "copy-origins",
         login,
@@ -2340,7 +2442,18 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
     cached = account_cache_get(cache_key)
     if cached is not None:
         return cached
-    rows = query_db_trades(login, platform=platform, server=server, limit=50000)
+    rows = query_db_trades(login, platform=platform, server=server, start=start, end=end, limit=50000)
+    # A broad overlap predicate can fill the safety page with older positions before the selected
+    # opening-time window. Retry without the analytical cap only when that page is saturated.
+    if (scope_start or scope_end) and len(rows) >= 50000:
+        rows = query_db_trades(login, platform=platform, server=server, start=start, end=end, limit=None)
+    if scope_start or scope_end:
+        rows = [
+            row for row in rows
+            if (opened := parse_trade_time(row.get("open_time")))
+            and (not scope_start or opened >= scope_start)
+            and (not scope_end or opened <= scope_end)
+        ]
     order_ids = list(dict.fromkeys(
         order_id
         for row in rows
@@ -2433,6 +2546,7 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         if source:
             follower_requests.append((origin, source, copy_channels))
     if follower_requests:
+        follower_scope = {key: value for key, value in {"start": start, "end": end}.items() if value}
         with ThreadPoolExecutor(
             max_workers=min(4, len(follower_requests)),
             thread_name_prefix="copy-followers",
@@ -2443,6 +2557,7 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
                     source,
                     origin.get("sourceOrders", []),
                     copy_channels=copy_channels,
+                    **follower_scope,
                 ): (origin, source)
                 for origin, source, copy_channels in follower_requests
             }
@@ -10571,11 +10686,16 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     html { color-scheme:dark; }
     body { min-height:100vh; background:radial-gradient(circle at 72% -12%,#0b3970 0,transparent 36%),linear-gradient(145deg,#020b18 0%,#06152b 52%,#020a16 100%); color:var(--ink); }
     body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:linear-gradient(#148cff12 1px,transparent 1px),linear-gradient(90deg,#148cff12 1px,transparent 1px); background-size:38px 38px; mask-image:linear-gradient(to bottom,#000,transparent 90%); }
-    .topbar { height:64px; position:relative; z-index:2; background:#030d1eeb; border-bottom:1px solid #176fbd; box-shadow:0 4px 24px #006ed933; }
+    .topbar { height:64px; position:relative; z-index:2; display:grid; grid-template-columns:minmax(170px,1fr) auto minmax(170px,1fr); align-items:center; padding:0 28px; background:#030d1eeb; border-bottom:1px solid #176fbd; box-shadow:0 4px 24px #006ed933; }
     .brand { display:flex; align-items:center; gap:10px; color:#f2f8ff; text-shadow:0 0 12px #168cff77; }
     .brand::before { content:""; width:25px; height:25px; border-radius:50%; border:4px solid #168cff; border-right-color:#22d3ee; box-shadow:0 0 15px #168cff99; }
-    .back { color:#b9d8fa; border-color:#245586; background:#081b36; }
+    .back { justify-self:start; color:#b9d8fa; border-color:#245586; background:#081b36; }
     .back:hover,.back:focus-visible { color:#fff; border-color:#168cff; background:#0b3767; box-shadow:0 0 12px #168cff55; }
+    .detail-account-search { position:relative; display:grid; grid-template-columns:minmax(150px,210px) auto; gap:7px; justify-self:end; align-items:center; }
+    .detail-account-search input { min-height:34px; padding:6px 9px; font-size:13px; }
+    .detail-account-search button { min-height:34px; padding:6px 11px; font-size:13px; }
+    .detail-account-search-status { position:absolute; top:calc(100% + 5px); right:0; width:max-content; max-width:300px; padding:4px 7px; border:1px solid #245586; border-radius:4px; background:#06162b; color:#9bb7d5; font-size:12px; box-shadow:0 6px 16px #0008; }
+    .detail-account-search-status:empty { display:none; }
     main { position:relative; z-index:1; width:min(1540px,calc(100% - 32px)); }
     .account-head,.quick-mark,.toolbar,.section { background:linear-gradient(145deg,#081b35ee,#06162cee); border-color:#194a7c; box-shadow:0 14px 34px #0007,inset 0 1px 0 #2a73ad33; }
     .account-head { overflow:hidden; border-top:1px solid #238ee8; border-radius:10px 10px 0 0; }
@@ -10725,6 +10845,11 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .copy-panel:last-child { margin-bottom:0; }
     .copy-panel-title { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 16px; border-bottom:1px solid #234e79; color:#dbeafe; background:#092744; }
     .copy-panel .risk-note { border-top:0; border-bottom:1px solid #12385f; }
+    .ea-range-controls { display:flex; align-items:end; flex-wrap:wrap; gap:10px; padding:12px 16px; border-bottom:1px solid #12385f; background:#06162b; }
+    .ea-range-controls label { display:grid; gap:5px; font-size:12px; }
+    .ea-range-controls input { min-height:34px; }
+    .ea-range-controls button { min-height:34px; }
+    .ea-range-hint { flex:1 1 180px; padding-bottom:8px; color:var(--muted); font-size:12px; }
     .copy-group-block { margin:12px; overflow:hidden; border:1px solid #1b4f7d; border-radius:6px; background:#06162b; }
     .copy-group-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 14px; border-bottom:1px solid #1b4f7d; }
     .copy-group-head span { color:var(--muted); font-size:12px; }
@@ -10884,6 +11009,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       .toxic-sync-kpis div:nth-child(4) { border-left:0; }
     }
     @media (max-width:620px) {
+      .topbar { height:auto; min-height:64px; grid-template-columns:auto minmax(0,1fr); gap:7px 12px; padding:8px 12px 10px; }
+      .brand { justify-self:center; font-size:14px; }
+      .brand::before { width:21px; height:21px; border-width:3px; }
+      .detail-account-search { grid-column:1/-1; grid-template-columns:minmax(0,1fr) auto; width:100%; }
+      .detail-account-search input { min-width:0; }
+      .detail-account-search-status { max-width:calc(100vw - 24px); }
       .account-head { flex-direction:column; } .toolbar { grid-template-columns:1fr; }
       .quick-mark-main,.quick-fields { grid-template-columns:1fr; }
       .quick-mark-main #saveBtn { grid-column:auto; }
@@ -10898,7 +11029,15 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
   </style>
 </head>
 <body>
-  <header class="topbar"><a class="back" href="/">← 返回台账</a><div class="brand">账号详情</div><span></span></header>
+  <header class="topbar">
+    <a class="back" href="/">← 返回台账</a>
+    <div class="brand">账号详情</div>
+    <form class="detail-account-search" id="detailAccountSearchForm" role="search">
+      <input id="detailAccountSearch" inputmode="numeric" autocomplete="off" placeholder="搜索账号" aria-label="搜索账号" />
+      <button type="submit" id="detailAccountSearchBtn">查询</button>
+      <span class="detail-account-search-status" id="detailAccountSearchStatus" role="status" aria-live="polite"></span>
+    </form>
+  </header>
   <main>
     <section class="account-head">
       <div><div class="account-id" id="accountId"></div><div class="badges" id="badges"></div></div>
@@ -11053,6 +11192,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
   <dialog id="copyDialog" class="toxic-dialog">
     <div class="dialog-head"><b>跟单查询</b><div class="dialog-head-actions"><span class="status" id="copyExportStatus"></span><button id="exportCopyReportBtn" type="button">导出 Excel</button><button id="closeCopyDialog" type="button">关闭</button></div></div>
     <div class="toxic-body">
+      <div class="ea-range-controls">
+        <label>开始时间<input id="copyOriginStart" type="datetime-local" /></label>
+        <label>结束时间<input id="copyOriginEnd" type="datetime-local" /></label>
+        <button id="applyCopyOriginRange" type="button">查询</button>
+        <span class="ea-range-hint">按开仓时间筛选 CPT 和 Signal；留空为全历史</span>
+      </div>
       <section class="copy-panel">
         <div class="copy-panel-title"><b>CPT 单主与跟单人员收益</b><span class="section-sub">按源订单定位单主，并汇总所有跟单账号的实际收益</span></div>
         <div class="risk-note" id="copyOriginStatus">等待查询...</div>
@@ -11070,6 +11215,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     <div class="toxic-body">
       <section class="copy-panel">
         <div class="copy-panel-title"><b>相同 Comment 的 EA 账户收益</b><span class="section-sub">跨服务器按 Comment 匹配；同服务器同时核对 ExpertID / MAGIC，并逐账户列出匹配线索</span></div>
+        <div class="ea-range-controls">
+          <label>开始时间<input id="eaCommentStart" type="datetime-local" /></label>
+          <label>结束时间<input id="eaCommentEnd" type="datetime-local" /></label>
+          <button id="applyEaCommentRange" type="button">查询</button>
+          <span class="ea-range-hint">按开仓时间筛选；留空为全历史</span>
+        </div>
         <div class="risk-note" id="eaCommentStatus">等待查询...</div>
         <div id="eaCommentResults"><div class="empty-state">尚未查询 EA comment</div></div>
       </section>
@@ -11298,7 +11449,21 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;
     }
     function filters(){return state.initialFilters||{platform:$("platform").value,server:$("server").value,symbol:$("symbol").value};}
+    async function openAccountFromDetailSearch(event){
+      event.preventDefault();const input=$("detailAccountSearch"),button=$("detailAccountSearchBtn"),status=$("detailAccountSearchStatus"),account=input.value.trim();
+      if(!/^\d+$/.test(account)){status.textContent=account?'请输入数字账号':'请输入账号';input.focus();return;}
+      button.disabled=true;status.textContent='正在定位账号...';
+      try{
+        const data=await json(`/api/account-lookup?account=${encodeURIComponent(account)}`),matches=(data.databases||[]).length?data.databases:[data.database].filter(Boolean);
+        if(!matches.length)throw new Error('未找到该账号');
+        const current=filters(),selected=matches.find(item=>item.latestSource?.platform===current.platform&&item.latestSource?.server===current.server)||matches[0],source=selected.latestSource||{};
+        const query=new URLSearchParams();if(source.platform)query.set('platform',source.platform);if(source.server)query.set('server',source.server);
+        location.assign(`/account/${encodeURIComponent(account)}${query.size?`?${query}`:''}`);
+      }catch(err){status.textContent=err.message||'账号查询失败';button.disabled=false;}
+    }
     function automationDialogQuery(){const q=new URLSearchParams(filters());[...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});q.sort();return q;}
+    function copyOriginDialogQuery(){const q=automationDialogQuery(),start=databaseTime($("copyOriginStart").value),end=databaseTime($("copyOriginEnd").value,true);if(start&&end&&start>end)throw new Error('跟单开始时间不能晚于结束时间');if(start)q.set('start',start);if(end)q.set('end',end);q.sort();return q;}
+    function eaCommentDialogQuery(){const q=automationDialogQuery(),start=databaseTime($("eaCommentStart").value),end=databaseTime($("eaCommentEnd").value,true);if(start&&end&&start>end)throw new Error('EA 开始时间不能晚于结束时间');if(start)q.set('start',start);if(end)q.set('end',end);q.sort();return q;}
     function clearAutomationDialogCache(){state.dialogCache.copy.clear();state.dialogCache.ea.clear();state.dialogCache.relationship.clear();state.relationshipNetwork=null;}
     const RELATIONSHIP_GRAPH_WIDTH=1000,RELATIONSHIP_GRAPH_HEIGHT=620,RELATIONSHIP_GRAPH_CACHE_SCALE=3;
     const relationshipGraph=$('relationshipNetworkGraph');
@@ -11421,9 +11586,10 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       $("copyGroupStatus").textContent=`识别到 ${groups.length} 个 Signal 跟单组 · ${data.definition||''}`;
       $("copyGroupResults").innerHTML=groups.map(group=>{const t=group.totals||{},members=group.members||[],source=[group.platform,group.server].filter(Boolean).join(' / '),statusText=Object.entries(t.statusCounts||{}).map(([key,value])=>`${key} ${value}`).join('、')||'-',share=t.rebateShareOfClientLoss===null||t.rebateShareOfClientLoss===undefined?'-':`${num(Number(t.rebateShareOfClientLoss)*100,1)}%`,limitations=(group.limitations||[]).filter(Boolean),rows=members.map(row=>{const href=`/account/${encodeURIComponent(row.account)}?platform=${encodeURIComponent(group.platform||'')}&server=${encodeURIComponent(group.server||'')}`;return `<tr class="${String(row.account)===String(LOGIN)?'current-account':''}"><td><a class="account-link" href="${esc(href)}">${esc(row.account)}</a></td><td>${esc(row.status||'-')}</td><td>${num(row.closedOrders,0)}</td><td>${num(row.openOrders,0)}</td><td>${num(row.closedLots,4)}</td><td class="${profitClass(row.closedNetProfit)}">${money(row.closedNetProfit)}</td><td class="${profitClass(row.floatingNetProfit)}">${money(row.floatingNetProfit)}</td><td class="${profitClass(row.combinedNetProfit)}"><b>${money(row.combinedNetProfit)}</b></td><td>${money(row.rebate)}</td><td>${esc(row.currency||'-')}</td><td>${esc(row.firstClose||'-')}</td><td>${esc(row.lastClose||'-')}</td></tr>`;}).join('');return `<section class="copy-group-block"><div class="copy-group-head"><div><b>${esc(group.signalTag||'-')}</b><br><span>${esc(source)} · 当前账号 ${esc(group.account||LOGIN)}</span></div><span>${group.truncated?'账户列表达到安全上限，结果可能不完整':`${num(t.accounts,0)} 个账户`}</span></div><div class="risk-summary">${copyRiskStat('账户 / 盈利 / 亏损',`${num(t.accounts,0)} / ${num(t.profitableAccounts,0)} / ${num(t.losingAccounts,0)}`)}${copyRiskStat('平仓单 / 当前持仓',`${num(t.closedOrders,0)} / ${num(t.openOrders,0)}`)}${copyRiskStat('累计平仓手数',num(t.closedLots,4))}${copyRiskStat('Status 分布',esc(statusText))}${copyRiskStat('平仓净盈亏',money(t.closedNetProfit),profitClass(t.closedNetProfit))}${copyRiskStat('持仓浮动盈亏',money(t.floatingNetProfit),profitClass(t.floatingNetProfit))}${copyRiskStat('整组交易盈亏',money(t.combinedNetProfit),profitClass(t.combinedNetProfit))}${copyRiskStat('产生返佣',money(t.rebate))}${copyRiskStat('平均每手返佣',t.rebatePerLot===null||t.rebatePerLot===undefined?'-':money(t.rebatePerLot))}${copyRiskStat('返佣 / 客户亏损',share)}${copyRiskStat('B-book 粗算剩余',money(t.estimatedPlatformAfterRebate),profitClass(t.estimatedPlatformAfterRebate))}${copyRiskStat('数据口径','交易盈亏与返佣分列')}</div><div class="risk-note">B-book 粗算剩余 = 客户交易亏损 − 返佣；不含外部对冲、LP、奖金、出入金和其他成本。${limitations.length?` 限制：${esc(limitations.join('；'))}`:''}</div><div class="table-wrap"><table class="risk-table copy-group-table"><thead><tr><th>账户</th><th>Status</th><th>平仓单</th><th>持仓单</th><th>平仓手数</th><th>平仓净盈亏</th><th>浮动盈亏</th><th>综合交易盈亏</th><th>返佣</th><th>币种</th><th>首次平仓</th><th>最后平仓</th></tr></thead><tbody>${rows||'<tr><td colspan="12"><div class="empty-state">该组暂无交易数据</div></td></tr>'}</tbody></table></div></section>`;}).join('');
     }
-    async function openCopyOrigins(){
-      $("copyDialog").showModal();$("copyOriginStatus").textContent='正在定位单主并汇总全部跟单人员收益...';$("copyOriginRows").innerHTML='<div class="empty-state">查询单主、源订单和跟单人员中...</div>';$("copyGroupStatus").textContent='正在读取 users.comment 并汇总整组历史收益...';$("copyGroupResults").innerHTML='<div class="empty-state">Signal 跟单组查询中...</div>';
-      const q=automationDialogQuery(),cacheKey=q.toString();
+    async function loadCopyOrigins(){
+      let q;try{q=copyOriginDialogQuery();}catch(err){$("copyOriginStatus").textContent=err.message;$("copyOriginRows").innerHTML='<div class="empty-state">请修正时间范围后重新查询</div>';$("copyGroupStatus").textContent=err.message;$("copyGroupResults").innerHTML='<div class="empty-state">请修正时间范围后重新查询</div>';return;}
+      $("copyOriginStatus").textContent='正在定位单主并汇总全部跟单人员收益...';$("copyOriginRows").innerHTML='<div class="empty-state">查询单主、源订单和跟单人员中...</div>';$("copyGroupStatus").textContent='正在读取 users.comment 并汇总整组收益...';$("copyGroupResults").innerHTML='<div class="empty-state">Signal 跟单组查询中...</div>';
+      const cacheKey=q.toString();
       let request=state.dialogCache.copy.get(cacheKey);
       if(!request){
         request=Promise.allSettled([json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-origins?${q}`),json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/copy-group-profit?${q}`)]);
@@ -11434,6 +11600,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       if(originResult.status==='fulfilled')renderCopyOrigins(originResult.value);else{$("copyOriginStatus").textContent=originResult.reason?.message||'CPT 单主查询失败';$("copyOriginRows").innerHTML='<div class="empty-state">查询失败</div>';}
       if(groupResult.status==='fulfilled')renderCopyGroupProfit(groupResult.value);else{$("copyGroupStatus").textContent=groupResult.reason?.message||'Signal 整组收益查询失败';$("copyGroupResults").innerHTML='<div class="empty-state">查询失败</div>';}
     }
+    async function openCopyOrigins(){$("copyDialog").showModal();await loadCopyOrigins();}
     function renderEaCommentGroups(data){
       const groups=data.groups||[],errors=(data.errors||[]).filter(Boolean),eaSummary=data.eaSummary||{},routeSummary=data.possibleCopyRouteSummary||{};
       if(!data.detected||!groups.length){$("eaCommentStatus").textContent=errors.length?`未找到可查询的 EA comment；${errors.join('；')}`:'当前筛选范围内没有识别到有效的 EA comment';$("eaCommentResults").innerHTML='<div class="empty-state">没有相同 comment 的 EA 收益数据</div>';return;}
@@ -11446,17 +11613,19 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         return `<details class="copy-group-block ea-group-block" open><summary class="copy-group-head"><div><b>${esc(groupLabel)}：${esc(group.comment||'-')}</b>${isRoute?' <span class="badge">不计入 EA 汇总</span>':''}<br><span>${esc(group.classificationEvidence||'')} · ${esc(groupIdentifier)} · ${esc((group.servers||[group.server]).filter(Boolean).join(' / ')||'-')} · 当前账号 ${num(group.currentOrders,0)} 单 / ${num(group.currentVolume,4)} 手 / 净盈亏 ${money(group.currentNetProfit)}</span></div><span>${num(totals.accounts,0)} 个账户</span></summary><div class="risk-summary">${copyRiskStat('账户 / 盈利 / 亏损',`${num(totals.accounts,0)} / ${num(totals.profitableAccounts,0)} / ${num(totals.losingAccounts,0)}`)}${copyRiskStat('已平仓订单',`${num(totals.orders,0)} 单`)}${copyRiskStat('累计手数',num(totals.volume,4))}${copyRiskStat(`毛盈亏${currency?` (${currency})`:''}`,money(totals.grossProfit),profitClass(totals.grossProfit))}${copyRiskStat('手续费 / Fee',money(totals.commission),profitClass(totals.commission))}${copyRiskStat('利息 / Swap',money(totals.swap),profitClass(totals.swap))}${copyRiskStat('税费',money(totals.taxes),profitClass(totals.taxes))}${copyRiskStat(`净盈亏${currency?` (${currency})`:''}`,money(totals.netProfit),profitClass(totals.netProfit))}</div>${limitations.length?`<div class="risk-note">${esc(limitations.join('；'))}</div>`:''}<div class="table-wrap"><table class="risk-table copy-follower-table"><thead><tr><th>数据库</th><th>服务器</th><th>账户</th><th>EA标识</th><th>匹配线索</th><th>平仓订单</th><th>手数</th><th>毛盈亏</th><th>手续费 / Fee</th><th>利息</th><th>税费</th><th>净盈亏</th><th>币种</th><th>品种</th><th>首次 / 最后</th><th>样例订单号</th></tr></thead><tbody>${rows||'<tr><td colspan="16"><div class="empty-state">未找到使用此 Comment 的已平仓交易</div></td></tr>'}</tbody></table></div></details>`;
       }).join('');
     }
-    async function openEaCommentGroups(){
-      $("eaCommentDialog").showModal();$("eaCommentStatus").textContent='正在识别 EA comment 并汇总同备注账户收益...';$("eaCommentResults").innerHTML='<div class="empty-state">EA comment 查询中...</div>';
-      const q=automationDialogQuery(),cacheKey=q.toString();
+    async function loadEaCommentGroups(){
+      let q;try{q=eaCommentDialogQuery();}catch(err){$("eaCommentStatus").textContent=err.message;$("eaCommentResults").innerHTML='<div class="empty-state">请修正时间范围后重新查询</div>';return;}
+      $("eaCommentStatus").textContent='正在识别 EA comment 并汇总同备注账户收益...';$("eaCommentResults").innerHTML='<div class="empty-state">EA comment 查询中...</div>';
+      const cacheKey=q.toString();
       let request=state.dialogCache.ea.get(cacheKey);
       if(!request){request=json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/ea-comment-profit?${q}`);state.dialogCache.ea.set(cacheKey,request);}
       try{renderEaCommentGroups(await request);}catch(err){state.dialogCache.ea.delete(cacheKey);$("eaCommentStatus").textContent=err.message||'EA 查询失败';$("eaCommentResults").innerHTML='<div class="empty-state">查询失败</div>';}
     }
+    async function openEaCommentGroups(){$("eaCommentDialog").showModal();await loadEaCommentGroups();}
     async function downloadAutomationReport(kind){
-      const isCopy=kind==='copy',button=$(isCopy?'exportCopyReportBtn':'exportEaReportBtn'),status=$(isCopy?'copyExportStatus':'eaExportStatus'),q=new URLSearchParams(filters());
-      [...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});button.disabled=true;status.textContent='正在整理报表...';
+      const isCopy=kind==='copy',button=$(isCopy?'exportCopyReportBtn':'exportEaReportBtn'),status=$(isCopy?'copyExportStatus':'eaExportStatus');button.disabled=true;status.textContent='正在整理报表...';
       try{
+        const q=kind==='ea'?eaCommentDialogQuery():copyOriginDialogQuery();
         const endpoint=isCopy?'copy-report.xlsx':'ea-report.xlsx',response=await fetch(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/${endpoint}?${q}`);
         if(!response.ok){let message=`HTTP ${response.status}`;try{const payload=await response.json();message=payload.detail||payload.error||message;}catch(_error){}throw new Error(message);}
         const blob=await response.blob(),disposition=response.headers.get('content-disposition')||'',matched=disposition.match(/filename="([^"]+)"/i),filename=matched?.[1]||`${isCopy?'copy_profit':'ea_profit'}_${LOGIN}.xlsx`,url=URL.createObjectURL(blob),anchor=document.createElement('a');
@@ -11569,7 +11738,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         state.toxic.jobTimer=setTimeout(()=>pollToxic(id),800);
       }catch(err){$("toxicStatus").textContent=err.message;state.toxic.running=false;$("startToxic").disabled=false;$("toxicBtn").disabled=false;}
     }
-    $("accountId").textContent=LOGIN;renderToxicSelector();$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
+    $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
     ["customAction","group","tags","note","owner"].forEach(id=>$(id).addEventListener('input',()=>{state.formDirty=true;}));
     $("orderDetails").addEventListener('toggle',()=>{if($("orderDetails").open&&!state.orders.loaded)loadOrders(1);});$("orderPrev").addEventListener('click',()=>loadOrders(state.orders.page-1));$("orderNext").addEventListener('click',()=>loadOrders(state.orders.page+1));
     loadLedger();load().catch(err=>{$("metricStatus").textContent=err.message;});loadIps();

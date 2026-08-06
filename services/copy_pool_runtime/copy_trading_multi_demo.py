@@ -177,8 +177,8 @@ class MultiSourceLiveService(LiveService):
     # A v7 accepted snapshot may have been built with the former 0.55 score
     # floor. Treat it as a same-day migration candidate so startup recomputes
     # weights from the complete private universe without touching ownership.
-    POOL_PRODUCER = "copy-pool-multisource-v9-carry-risk"
-    POOL_FACTOR_SCHEMA = "cost-profit-recent-coverage-carry-v3"
+    POOL_PRODUCER = "copy-pool-multisource-v10-7d-30d"
+    POOL_FACTOR_SCHEMA = "cost-profit-recent-coverage-carry-v4"
     LEGACY_WEIGHT_POOL_PRODUCERS = frozenset({
         "copy-pool-multisource-v6-weight-fallback",
         "copy-pool-multisource-v7-cost-profit",
@@ -3096,6 +3096,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-dir", type=Path, default=Path("D:/risk/output_data"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--terminal", type=Path, required=True)
+    parser.add_argument("--demo-login", type=int)
     parser.add_argument("--risk-profile", choices=tuple(RISK_PROFILES), default="Capital10k")
     parser.add_argument("--mode", choices=("Shadow", "StagedLive", "Live"), default="StagedLive")
     parser.add_argument("--shadow-minutes", type=float, default=30.0)
@@ -3111,6 +3112,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--shadow-minutes must be nonnegative")
     if args.poll_ms < 250 or args.poll_ms > 10_000:
         parser.error("--poll-ms must be between 250 and 10000")
+    if args.demo_login is not None and args.demo_login <= 0:
+        parser.error("--demo-login must be positive")
     return args
 
 

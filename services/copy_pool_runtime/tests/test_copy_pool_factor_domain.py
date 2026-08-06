@@ -404,7 +404,7 @@ class FactorResultTests(unittest.TestCase):
             ))
 
             self.assertTrue(metrics.hard_failed)
-            self.assertFalse(result.eligible)
+            self.assertTrue(result.eligible)
             self.assertIn(expected_reason, result.gate_reasons)
             self.assertIn("carry_risk_hard_gate_failed", result.gate_reasons)
 
@@ -451,8 +451,33 @@ class FactorResultTests(unittest.TestCase):
             cost_coverage_score=1.0,
             mdd_20d=0.100001,
         ))
-        self.assertFalse(result.eligible)
+        self.assertTrue(result.eligible)
         self.assertIn("mdd_20d_over_10pct", result.gate_reasons)
+
+    def test_quality_metrics_rank_but_do_not_reject_a_core_qualified_sleeve(self) -> None:
+        result = calculate_factor_result(valid_inputs(
+            coverage_20d=False,
+            coverage_60d=False,
+            daily_drawdown_coverage=False,
+            mdd_20d=0.80,
+            mdd_60d=0.90,
+            current_drawdown=0.50,
+            max_daily_loss=0.40,
+            holding_hard_failed=True,
+            carry_hard_failed=True,
+            extra_gate_reasons=("missing_completed_position_lifecycles",),
+        ))
+
+        self.assertTrue(result.eligible)
+        self.assertIn("mdd_20d_over_10pct", result.gate_reasons)
+        self.assertIn("holding_quality_hard_gate_failed", result.gate_reasons)
+        self.assertIn("carry_risk_hard_gate_failed", result.gate_reasons)
+
+    def test_negative_equity_remains_a_noncompensable_rejection(self) -> None:
+        result = calculate_factor_result(valid_inputs(negative_equity=True))
+
+        self.assertFalse(result.eligible)
+        self.assertIn("negative_equity", result.gate_reasons)
 
     def test_fixed_weights_sum_to_one_and_inputs_clamp(self) -> None:
         result = calculate_factor_result(valid_inputs(
@@ -470,12 +495,12 @@ class FactorResultTests(unittest.TestCase):
         self.assertEqual(passing.base_score, 1.0)
 
         rejected = calculate_factor_result(valid_inputs(mdd_20d=0.100001))
-        self.assertFalse(rejected.eligible)
+        self.assertTrue(rejected.eligible)
         self.assertEqual(rejected.base_score, 1.0)
         self.assertIn("mdd_20d_over_10pct", rejected.gate_reasons)
 
         delay_rejected = calculate_factor_result(valid_inputs(delay_gates_passed=False))
-        self.assertFalse(delay_rejected.eligible)
+        self.assertTrue(delay_rejected.eligible)
         self.assertIn("delay_hard_gate_failed", delay_rejected.gate_reasons)
 
     def test_deferred_delay_factor_is_normalized_out_and_not_a_hard_gate(self) -> None:

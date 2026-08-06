@@ -246,7 +246,7 @@ class MultiSourceTests(unittest.TestCase):
             self.assertEqual(migrated_meta["producer"], service.POOL_PRODUCER)
             self.assertEqual(
                 migrated_meta["factor_schema"],
-                "cost-profit-recent-coverage-carry-v3",
+                "cost-profit-recent-coverage-carry-v4",
             )
 
     def test_mt5_trade_feature_close_and_lot_totals_use_all_close_entries(self) -> None:
@@ -269,8 +269,7 @@ class MultiSourceTests(unittest.TestCase):
         database = MultiSourceDatabase.__new__(MultiSourceDatabase)
         end = datetime(2026, 8, 3, tzinfo=timezone.utc)
         rows = database._trade_feature_rows(
-            FakeSource(), end - timedelta(days=60), end - timedelta(days=20),
-            end - timedelta(days=5), end,
+            FakeSource(), end - timedelta(days=30), end - timedelta(days=7), end,
         )
 
         self.assertTrue(rows)
@@ -285,6 +284,74 @@ class MultiSourceTests(unittest.TestCase):
             "SUM(CASE WHEN Entry IN (1,2,3) THEN 1 ELSE 0 END) AS closes",
             sql,
         )
+
+    def test_trade_feature_discovery_requires_a_recent_seven_day_product_trade(self) -> None:
+        calls: list[tuple[datetime, datetime]] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "readonly"
+
+            def query(self, _sql, params):
+                start, end = params
+                calls.append((start, end))
+                if start == as_of_naive - timedelta(days=30):
+                    return [{
+                        "Login": 1, "Symbol": "XAUUSD", "closes": 8,
+                        "net": 80.0, "gross_profit": 100.0, "gross_loss": 20.0,
+                        "lots": 1.0, "source_contract_size": 100.0, "spread_cost": 2.0,
+                    }]
+                if start >= as_of_naive - timedelta(days=7):
+                    return [{
+                        "Login": 2, "Symbol": "EURUSD", "closes": 1,
+                        "net": 10.0, "gross_profit": 10.0, "gross_loss": 0.0,
+                        "lots": 0.1, "source_contract_size": 100_000.0, "spread_cost": 1.0,
+                    }]
+                return []
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        as_of = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        as_of_naive = as_of.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
+
+        rows = database._trade_feature_rows(
+            FakeSource(), as_of_naive - timedelta(days=30),
+            as_of_naive - timedelta(days=7), as_of_naive,
+        )
+
+        self.assertEqual([(row["Login"], row["product"]) for row in rows], [(2, "EURUSD")])
+        self.assertGreater(rows[0]["closes_7d"], 0.0)
+        self.assertGreaterEqual(rows[0]["closes_30d"], rows[0]["closes_7d"])
+        self.assertGreaterEqual(min(start for start, _end in calls), as_of_naive - timedelta(days=30))
+
+    def test_risk_history_uses_a_rolling_thirty_day_window_and_columns(self) -> None:
+        calls: list[tuple[str, tuple[object, ...]]] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "readonly"
+
+            def query(self, sql, params):
+                calls.append((sql, params))
+                return [{
+                    "Login": 1, "min_balance_30d": 50.0, "min_equity_30d": 50.0,
+                    "min_margin_level_30d": 150.0, "negative_balance_days_30d": 0,
+                    "negative_equity_days_30d": 0, "so_compensation_days_30d": 0,
+                }]
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        frame = pd.DataFrame([{
+            "physical_key": "source", "Login": 1, "account_key": "route:1",
+        }])
+        as_of = datetime(2026, 8, 3, tzinfo=timezone.utc)
+
+        history = database._risk_history_serial(frame, as_of)
+
+        self.assertEqual(float(history.iloc[0]["min_equity_30d"]), 50.0)
+        self.assertIn("min_equity_30d", calls[0][0])
+        self.assertNotIn("_60d", calls[0][0])
+        expected_start = int((as_of.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None) - timedelta(days=30)).replace(tzinfo=timezone(timedelta(hours=8))).astimezone(timezone.utc).timestamp())
+        self.assertEqual(calls[0][1][-1], expected_start)
 
     def test_same_day_cost_factor_upgrade_rebuilds_weights_and_rejects_cost_failures(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
@@ -348,9 +415,9 @@ class MultiSourceTests(unittest.TestCase):
         pool, upgraded, upgraded_coverage = service._upgrade_same_day_cost_pool(universe, coverage)
 
         failed = upgraded.set_index("account_key").loc["route:3"]
-        self.assertFalse(bool(failed["factor_ready"]))
-        self.assertIn("cost_adjusted_net_5d_not_positive", failed["factor_gate_reasons"])
-        self.assertNotIn("route:3", set(pool["account_key"]))
+        self.assertTrue(bool(failed["factor_ready"]))
+        self.assertIn("recent_cost_adjusted_net_not_positive", failed["factor_gate_reasons"])
+        self.assertIn("route:3", set(pool["account_key"]))
         low_scored = pool.set_index("account_key").loc["route:4"]
         self.assertTrue(bool(low_scored["activity_eligible"]))
         self.assertGreater(float(low_scored["portfolio_base_weight"]), 0.0)
@@ -362,10 +429,10 @@ class MultiSourceTests(unittest.TestCase):
         self.assertLessEqual(float(pool["portfolio_base_weight"].sum()), 1.0)
         self.assertTrue(bool(upgraded_coverage["same_day_cache_upgraded"]))
         self.assertEqual(upgraded_coverage["factor_model"], "cost_profit_recent_coverage_carry_v2")
-        self.assertEqual(upgraded_coverage["active_accounts"], 3)
+        self.assertEqual(upgraded_coverage["active_accounts"], 4)
         self.assertEqual(
             {row["physical_key"]: row["selected_clients"] for row in upgraded_coverage["sources"]},
-            {"source-a": 2, "source-b": 1},
+            {"source-a": 2, "source-b": 2},
         )
 
     def test_current_product_positions_counts_only_currently_losing_positions(self) -> None:
@@ -767,6 +834,21 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(metadata["monitor_accounts"], 30)
         self.assertEqual(metadata["reserve_accounts"], 70)
         self.assertEqual(selected["account_key"].nunique(), 100)
+
+    def test_hourly_ranking_does_not_apply_a_minimum_equity_filter(self) -> None:
+        frame = pd.DataFrame([{
+            "account_key": "route:1", "product": "XAUUSD", "sleeve_key": "route:1|XAUUSD",
+            "factor_ready": True, "factor_base_score": 0.8, "activity_eligible": True,
+            "net_20d_usd": 50.0, "equity_pre_usd": 25.0, "route_key": "route",
+            "physical_key": "source", "hold_multiplier": 1.0, "is_abook": False,
+            "current_equity_usd": 25.0, "current_margin_to_equity": 0.1,
+            "current_floating_loss_ratio": 0.01,
+        }])
+
+        selected, _metadata = rank_hourly_universe(frame)
+
+        self.assertEqual(selected["account_key"].tolist(), ["route:1"])
+        self.assertTrue(bool(selected.iloc[0]["hourly_hard_eligible"]))
 
     def test_registry_has_eleven_routes_and_nine_physical_sources(self) -> None:
         self.assertEqual(len(ROUTES), 11)

@@ -331,8 +331,22 @@ def update_rank_state(
     if state.tier in (PoolTier.HARD_REJECTED, PoolTier.EXECUTION_SUSPENDED, PoolTier.RECOVERY_SHADOW):
         return replace(state, last_ranked_at=now)
 
-    active_ok = active_zone and candidate.executable
     desired = state.day_start_base_weight if target_weight is None else target_weight
+    desired = max(0.0, float(desired))
+    # ACTIVE is an executable state. A zero target is a monitor/suspended state,
+    # never an active sleeve with an unusable weight.
+    if desired <= 0.0:
+        return replace(
+            _reduce_weight(state, 0.0, now),
+            tier=PoolTier.MONITOR,
+            consecutive_active_qualifications=0,
+            consecutive_qualified_falls=0,
+            shadow_started_at=None,
+            shadow_ends_at=None,
+            last_ranked_at=now,
+        )
+
+    active_ok = active_zone and candidate.executable
     if state.tier == PoolTier.ENTRY_SHADOW:
         if not active_ok:
             return replace(_reduce_weight(state, 0.0, now), tier=PoolTier.MONITOR,

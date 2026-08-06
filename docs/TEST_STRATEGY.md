@@ -26,6 +26,9 @@
 | DBG MT5 Live2 | 5200101 |
 
 Contracts cover routing, MT4/MT5, USD/USC, empty orders, old aliases and shared login `10002`.
+Account `309361` is the CRM-lag fallback regression: it is present only in DBG `mt5_export_new`
+trade users, returns `unique_trade_user_fallback`, derives USC/USD metadata from its users-group,
+and must remain unavailable if the same MT5 Login appears in another independent DBG physical source.
 Expected live values are maintained in an ignored local contract fixture because account data is
 not committed to GitHub. Active-account fields may be declared volatile: they must remain present
 and numeric, while stable routing and accounting fields retain exact/tolerance comparisons.

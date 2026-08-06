@@ -251,8 +251,12 @@ export function resolvePoolTierRows(
     const dynamicState = dynamicBySleeve.get(sleeveKey(row)) || null
     const clientRisk = riskByAlias.get(String(row.clientAlias || '')) || null
     const dynamicTier = dynamicState ? normalizePoolTier(dynamicState.tier) : null
-    const currentTier = clientRiskTier(clientRisk || undefined) || dynamicTier
+    let currentTier = clientRiskTier(clientRisk || undefined) || dynamicTier
       || normalizePoolTier(row.poolTier || row.tier || row.poolStatus)
+    const finalWeight = Number(dynamicState?.effectiveWeight ?? row.effectiveWeight)
+    if (currentTier === 'active' && (!Number.isFinite(finalWeight) || finalWeight <= 0)) {
+      currentTier = 'execution_suspended'
+    }
     return { ...row, currentTier, dynamicState, clientRisk }
   })
 }

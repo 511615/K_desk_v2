@@ -713,6 +713,26 @@ def test_dynamic_monitor_weight_caps_private_source_weight_at_zero(tmp_path: Pat
     assert row["weightState"] == "removed"
 
 
+def test_zero_weight_dynamic_active_sleeve_is_not_projected_as_active(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    status_path = output / "status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["dynamic_sleeves"][0]["tier"] = "active"
+    status["dynamic_sleeves"][0]["effective_weight"] = 0.0
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    payload = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=30,
+        event_limit=10,
+        order_limit=10,
+    )
+
+    row = payload["pool"][0]
+    assert row["poolTier"] == "execution_suspended"
+    assert row["activityEligible"] is False
+    assert row["effectiveWeight"] == 0.0
+
+
 def test_copy_pool_api_and_anonymous_account_redirect(tmp_path: Path) -> None:
     output = make_snapshot(tmp_path)
     settings = replace(make_test_settings(tmp_path), copy_pool_output_dir=output)

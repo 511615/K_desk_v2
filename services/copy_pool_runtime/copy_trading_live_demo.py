@@ -390,9 +390,21 @@ class ReadOnlyDb:
 
 
 class Mt5Executor:
-    def __init__(self, terminal_path: Path, risk_profile: RiskProfile) -> None:
+    IDENTITY_STABLE_SAMPLES = 3
+    IDENTITY_POLL_ATTEMPTS = 100
+    IDENTITY_POLL_SECONDS = 0.1
+
+    def __init__(
+        self,
+        terminal_path: Path,
+        risk_profile: RiskProfile,
+        expected_login: int | None = None,
+    ) -> None:
         self.terminal_path = terminal_path
         self.risk_profile = risk_profile
+        self.expected_login = int(expected_login) if expected_login is not None else None
+        if self.expected_login is not None and self.expected_login <= 0:
+            raise ValueError("Expected Demo Login must be positive.")
         self.approved_login: int | None = None
         self._demo_history_cached_at = 0.0
         self._demo_history_cache: list[dict[str, Any]] = []
@@ -411,9 +423,28 @@ class Mt5Executor:
         terminal = mt5.terminal_info()
         if account is None or terminal is None:
             raise RuntimeError(f"MT5 state unavailable: {mt5.last_error()}")
+        if self.expected_login is not None and (
+            int(getattr(account, "login", 0) or 0) != self.expected_login
+            or str(getattr(account, "server", "")) != ALLOWED_SERVER
+            or int(getattr(account, "trade_mode", -1)) != 0
+        ):
+            if not mt5.login(self.expected_login, server=ALLOWED_SERVER):
+                raise RuntimeError(
+                    f"Selecting approved Demo Login {self.expected_login} failed: {mt5.last_error()}"
+                )
+            account = self._wait_for_expected_account()
+            if account is None:
+                raise RuntimeError(
+                    "MT5 login did not select the approved Demo account: "
+                    f"expected Login {self.expected_login} on {ALLOWED_SERVER}."
+                )
         if account.server != ALLOWED_SERVER or int(account.trade_mode) != 0:
             raise RuntimeError("Refusing to run: the connected account is not the approved Demo server.")
         login = int(account.login)
+        if self.expected_login is not None and login != self.expected_login:
+            raise RuntimeError(
+                f"Refusing to run: expected Demo Login {self.expected_login}, received {login}."
+            )
         if login <= 0:
             raise RuntimeError("Refusing to run: the connected Demo account has no valid Login.")
         self.approved_login = login
@@ -430,6 +461,29 @@ class Mt5Executor:
             raise RuntimeError("Broker minimum volume exceeds the configured lot step.")
         if abs(float(symbol.volume_step) - self.risk_profile.lot_step) > 1e-9:
             raise RuntimeError("Broker volume step does not match the risk profile.")
+
+    def _wait_for_expected_account(self) -> Any | None:
+        assert self.expected_login is not None
+        stable_samples = 0
+        stable_account: Any | None = None
+        for attempt in range(self.IDENTITY_POLL_ATTEMPTS):
+            candidate = mt5.account_info()
+            matches = candidate is not None and (
+                int(getattr(candidate, "login", 0) or 0) == self.expected_login
+                and str(getattr(candidate, "server", "")) == ALLOWED_SERVER
+                and int(getattr(candidate, "trade_mode", -1)) == 0
+            )
+            if matches:
+                stable_samples += 1
+                stable_account = candidate
+                if stable_samples >= self.IDENTITY_STABLE_SAMPLES:
+                    return stable_account
+            else:
+                stable_samples = 0
+                stable_account = None
+            if attempt + 1 < self.IDENTITY_POLL_ATTEMPTS:
+                time.sleep(self.IDENTITY_POLL_SECONDS)
+        return None
 
     def shutdown(self) -> None:
         mt5.shutdown()
@@ -1014,7 +1068,11 @@ class LiveService:
         self.timeline_path = self.output_dir / "status_timeline_public.csv"
         self._ensure_public_csv_schemas()
         self.db = ReadOnlyDb()
-        self.mt = Mt5Executor(args.terminal, self.profile)
+        self.mt = Mt5Executor(
+            args.terminal,
+            self.profile,
+            expected_login=getattr(args, "demo_login", None),
+        )
         self.clients: dict[int, ClientSpec] = {}
         self.pool_frame = pd.DataFrame()
         self.portfolio: SourcePortfolio | None = None
@@ -1734,6 +1792,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--terminal", type=Path, required=True)
+    parser.add_argument("--demo-login", type=int)
     parser.add_argument(
         "--risk-profile",
         choices=tuple(RISK_PROFILES),
@@ -1753,6 +1812,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--shadow-minutes must be nonnegative")
     if args.poll_ms < 250 or args.poll_ms > 10_000:
         parser.error("--poll-ms must be between 250 and 10000")
+    if args.demo_login is not None and args.demo_login <= 0:
+        parser.error("--demo-login must be positive")
     return args
 
 

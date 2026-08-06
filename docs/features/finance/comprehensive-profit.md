@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/app.py"]
 tests: ["legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-SEARCH-001", "FIN-REBATE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-23
+last_verified_date: 2026-08-05
 ---
 
 # Comprehensive profit calculation
@@ -30,6 +30,9 @@ Finance fields in risk panels and lookup-finance remain stable numeric JSON fiel
 ## Data, routing and read-only constraints
 
 MT4/MT5 users, accounts, trades/deals and CRM rebates are queried through the verified account route.
+The fail-closed unique physical trade-user fallback in `DATA_AND_ROUTING.md` is also a verified route
+for its selected source, so a newly exported account does not render a false zero finance panel;
+CRM rebates retain their existing route-scoped CRM read and are never inferred from another route.
 DBG MT5 Live2 uses `crm_vn` code 5 and `crm_vn_mt5_live2`; code 2 remains on `mt5_export_new`.
 For MT4, finance uses the complete closed-order history and shares its normalized rows, costs and
 metrics with account detail and risk panels during the bounded cache window.

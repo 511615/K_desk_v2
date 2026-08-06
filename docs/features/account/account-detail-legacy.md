@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_netwo
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-29
+last_verified_date: 2026-08-05
 ---
 
 # Legacy account detail page
@@ -22,10 +22,17 @@ service. Platform/server query parameters select the account source.
 
 The page contains ledger controls, finance and risk panels, order paging, chart generation, copy
 origin, EA comment, relationship-network and Toxic controls. Copy and EA query dialogs each provide a one-click Excel
-profit report using the current platform/server filters. It is intentionally not replaced by the
+profit report using the current platform/server filters. Copy and EA expose optional opening-time
+start/end controls and an explicit query action; each dialog's visible result and Excel export always
+use the same range.
+It is intentionally not replaced by the
 Vue AccountPage.
+The top-right account search accepts a numeric Login and opens its detail without returning to the
+ledger. It reuses the read-only account lookup route, preferring a matching current platform/server
+when that Login exists there and otherwise using the first returned source. Empty, non-numeric,
+not-found and lookup-in-progress states are visible beside the input.
 Successful Copy and EA dialog payloads are retained in page memory by normalized platform/server/
-symbol filters. Closing a dialog preserves its result; reopening uses no network request. The main
+symbol filters and their selected opening-time ranges. Closing a dialog preserves its result; reopening uses no network request. The main
 refresh button clears both dialog caches before loading fresh account data.
 Each EA result group starts expanded and can be collapsed independently from its header; this is a
 local display state and does not invalidate or repeat the query.
@@ -51,6 +58,8 @@ by detail, risk, finance and automation panels. The order table uses exact datab
 reports the exact total without first loading the complete account history.
 The chart task card displays partial-success totals and structured per-symbol quote failures without
 hiding the successfully generated chart.
+The inline page script is syntax-validated in the legacy detail test suite so a dialog enhancement
+cannot prevent the initial ledger, detail, risk and IP requests from starting.
 The Toxic `平台内多账户对锁` item renders a dedicated query result: physical-source coverage,
 opposite-account routing, subject/peer lots and exact synchronized opening/closing order evidence. It
 does not display the copied account-internal reverse-leg score as the completed result.
@@ -69,10 +78,16 @@ owned by `AUT-POOL-001`; it adds no account-detail write endpoint.
 
 ## Data, routing and read-only constraints
 
-The selected account uses its selected read-only route. Same-name account analytics resolve every
+The selected account uses its selected read-only route. Server query parameters accept both the
+canonical source name and the compatibility aliases emitted by the copy-pool logical routes;
+normalization happens before source selection and does not change the canonical server returned in
+the payload. Same-name account analytics resolve every
 related account through its own CRM server code and trading source; local edits go only to
 authoritative SQLite. DBG MT5 Live2 resolves only through `crm_vn` code 5 and
 `crm_vn_mt5_live2`; the legacy DBG GB MT5 code 2 route remains on `mt5_export_new`.
+For a temporarily missing CRM account mapping, the selected source can read only the documented
+unique physical trade-user fallback; a duplicate Login or a shared-schema secondary logical route
+does not render another server's data.
 
 ## Business rules and units
 
@@ -119,6 +134,11 @@ DBG CN MT5 account 2014201 is the no-comment EA-route sample: the dialog must li
 keeping the EA headline at zero groups.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
+The detail HTML includes the top-right Login search form, its status region and source-aware lookup
+handler. The form accepts Enter or the query button and does not change the current page when input
+is invalid or lookup fails.
+The complete inline script must pass the bundled Node.js syntax check before a detail-page change is
+accepted.
 
 ## Compatibility and deprecation
 
