@@ -381,10 +381,15 @@ interval. If AutoTrading is disabled after live activation, the Producer moves t
 `armed_waiting_autotrading`, stops broker reconciliation calls that could add risk, and continues
 database polling, persistence and status publication until terminal permission is restored.
 
-Demo history rows distinguish an opening Deal's zero realized leg from its final outcome. An opening
-Deal is shown as `已平仓` with the sum of matching closing Deals when the Position is closed, as
-`持仓中` with current floating P/L plus swap when a live Position exists, or as `开仓未实现` when
-neither outcome is evidenced. Closing Deals retain their own realized P/L.
+The Demo ledger is Position-oriented. Current MT5 Positions appear only in the current-position
+table. The history table groups all closing Deals for each completed Position into one row, sums its
+closed lots and final realized P/L, and uses the last close time and price. Opening Deals and
+incomplete/orphan evidence are not repeated in history.
+
+The real-time event stream is colocated with the scheduling cadence panel. Events resolve their
+pool tier through the same account-product sleeve projection as the adjacent customer-tier table.
+Both panels share one tier selection, so activity, monitor, reserve, recovery, suspended and
+hard-rejected views always stay synchronized.
 
 ## Code and dependencies
 
