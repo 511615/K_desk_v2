@@ -2865,6 +2865,14 @@ class MultiSourceLiveService(LiveService):
                 raise
 
     def reconcile_mt5_target(self) -> None:
+        # AutoTrading can be disabled asynchronously after startup. In that
+        # state risk-releasing actions remain observable, but no broker API is
+        # called repeatedly for new or corrective exposure.
+        if not bool(self.mt.terminal().trade_allowed):
+            if self.phase == "live":
+                self.phase = "armed_waiting_autotrading"
+            self.last_error = "MT5 AutoTrading disabled; execution paused, monitoring continues"
+            return
         policy = friday_policy(server_time_from_utc(utc_now()))
         if policy == "flatten":
             if self._live_positions():
@@ -2941,17 +2949,24 @@ class MultiSourceLiveService(LiveService):
     def maybe_transition_live(self) -> None:
         if self.args.mode == "Shadow":
             return
+        terminal_trade_allowed = bool(self.mt.terminal().trade_allowed)
+        if self.phase == "live" and not terminal_trade_allowed:
+            self.phase = "armed_waiting_autotrading"
+            self.last_error = "MT5 AutoTrading disabled; waiting for terminal permission"
+            return
+        if self.phase == "armed_waiting_autotrading" and not terminal_trade_allowed:
+            return
         if self.phase == "armed_waiting_autotrading" and not self.operational_gates_ready():
             self.phase = "shadow"
             self.log("Operational gates regressed; returning to shadow mode.")
             return
         ready = self.phase == "shadow" and self.shadow_ready()
         armed = self.phase == "armed_waiting_autotrading"
-        if ready and not (self.args.enable_live_trading and bool(self.mt.terminal().trade_allowed)):
+        if ready and not (self.args.enable_live_trading and terminal_trade_allowed):
             self.phase = "armed_waiting_autotrading"
             self.log("Shadow gates passed; waiting for explicit launcher authorization and MT5 trade capability.")
             return
-        if (ready or armed) and self.args.enable_live_trading and bool(self.mt.terminal().trade_allowed):
+        if (ready or armed) and self.args.enable_live_trading and terminal_trade_allowed:
             self.phase = "live"
             self.cycle_baseline_pnl = self.mt.marked_pnl(trading_day_start_utc(utc_now()))
             self.cycle_reference_equity = float(self.mt.account().equity)
@@ -3077,6 +3092,16 @@ class MultiSourceLiveService(LiveService):
                                 self.flatten("database_or_runtime_outage")
                         except Exception as flatten_error:
                             self.log(f"Emergency flatten failed: {flatten_error}")
+                    # Preserve the heartbeat and diagnostic state even when a
+                    # broker/database operation failed in this poll cycle.
+                    try:
+                        self.persist_private_state()
+                    except Exception as persist_error:
+                        self.log(f"persist_after_error_failed: {persist_error}")
+                    try:
+                        self.write_status()
+                    except Exception as status_error:
+                        self.log(f"status_after_error_failed: {status_error}")
                     time.sleep(min(2.0, self.args.poll_ms / 1000.0 * 2))
                 elapsed = time.monotonic() - loop_started
                 time.sleep(max(0.0, self.args.poll_ms / 1000.0 - elapsed))

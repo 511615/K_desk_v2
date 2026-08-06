@@ -12,8 +12,17 @@ vi.mock('@tanstack/vue-query', () => ({
         demoAccount: {
           updatedAt: '2026-08-05T10:05:00+08:00',
           account: { login: '33304642', server: 'ACCMGlobal-Demo', balanceUsd: 9818.24, equityUsd: 9821.44, marginUsd: 120, freeMarginUsd: 9701.44, marginLevelPercent: 8184.53 },
-          positions: [{ ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true }],
-          deals: [{ dealTicket: 80001, positionId: 89001, time: '2026-08-05T00:40:00Z', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true }],
+          positions: [
+            { ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true, positionId: 89005 },
+            { ticket: 90002, product: 'EURUSD', side: 'BUY', lots: 0.02, openPrice: 1.1, currentPrice: 1.102, floatingPnlUsd: 3.4, swapUsd: -0.2, openedAt: '2026-08-05T09:20:00+08:00', strategyOwned: true, positionId: 89002 },
+          ],
+          deals: [
+            { dealTicket: 80001, positionId: 89001, time: '2026-08-05T00:40:00Z', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true },
+            { dealTicket: 80000, positionId: 89001, time: '2026-08-05T00:30:00Z', product: 'XAUUSD', entry: 'IN', side: 'BUY', lots: 0.01, price: 4080, netPnlUsd: 0, strategyOwned: true },
+            { dealTicket: 80002, positionId: 89002, time: '2026-08-05T01:00:00Z', product: 'EURUSD', entry: 'IN', side: 'BUY', lots: 0.02, price: 1.1, netPnlUsd: 0, strategyOwned: true },
+            { dealTicket: 80003, positionId: 89003, time: '2026-08-05T01:10:00Z', product: 'GBPUSD', entry: 'IN', side: 'BUY', lots: 0.03, price: 1.3, netPnlUsd: 0, strategyOwned: true },
+            { dealTicket: 80004, positionId: 89004, time: '2026-08-05T01:20:00Z', product: 'USDJPY', entry: 'OUT', side: 'SELL', lots: 0.04, price: 150, netPnlUsd: 4.5, strategyOwned: true },
+          ],
         },
         pool: [
           {
@@ -93,6 +102,24 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).toContain('2026/8/5 08:40:00')
     expect(accountPanel.text()).toContain('本策略')
     expect(wrapper.html().indexOf('data-testid="demo-account-panel"')).toBeLessThan(wrapper.html().indexOf('data-testid="risk-controls"'))
+  })
+
+  it('reports deal realization state and the correct P/L evidence for each entry type', () => {
+    const wrapper = mount(CopyPoolPage)
+    const table = wrapper.get('[data-testid="demo-deals-table"]')
+
+    expect(table.text()).toContain('成交状态')
+    expect(table.text()).toContain('已实现盈亏（USD）')
+
+    const rows = table.findAll('tbody tr')
+    expect(rows.find(row => row.text().includes('80000'))?.text()).toContain('已平仓')
+    expect(rows.find(row => row.text().includes('80000'))?.text()).toContain('2.10')
+    expect(rows.find(row => row.text().includes('80002'))?.text()).toContain('持仓中')
+    expect(rows.find(row => row.text().includes('80002'))?.text()).toContain('3.20')
+    expect(rows.find(row => row.text().includes('80003'))?.text()).toContain('开仓未实现')
+    expect(rows.find(row => row.text().includes('80003'))?.text()).toContain('-')
+    expect(rows.find(row => row.text().includes('80004'))?.text()).toContain('已实现')
+    expect(rows.find(row => row.text().includes('80004'))?.text()).toContain('4.50')
   })
 
   it('switches account lists by current tier without exposing aliases', async () => {

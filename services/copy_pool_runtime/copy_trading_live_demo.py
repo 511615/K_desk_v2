@@ -1100,6 +1100,7 @@ class LiveService:
         self.pending_source_snapshot_count = 0
         self.external_position_conflict = False
         self.pending_order_conflict = False
+        self._last_public_status: dict[str, Any] | None = None
 
     def _ensure_public_csv_schemas(self) -> None:
         ensure_csv_schema(self.event_path, self.event_public_columns)
@@ -1359,16 +1360,45 @@ class LiveService:
         }
 
     def write_status(self) -> None:
-        status = self.public_status()
+        try:
+            status = self.public_status()
+            self._last_public_status = dict(status)
+        except Exception as exc:
+            # A transient terminal identity/IPC failure must not stop the
+            # heartbeat. Keep the last verified account snapshot and publish
+            # a fresh error state instead of silently freezing status.json.
+            self.last_error = f"status_snapshot_failed: {type(exc).__name__}: {exc}"
+            status = dict(self._last_public_status or {})
+            status.update({
+                "updated_at_beijing": beijing_now().isoformat(),
+                "phase": self.phase,
+                "last_error": self.last_error,
+                "status_stale": True,
+            })
         now_monotonic = time.monotonic()
         if (
             now_monotonic - self.last_demo_account_write >= DEMO_ACCOUNT_SNAPSHOT_SECONDS
             or not self.demo_account_path.is_file()
         ):
-            atomic_json(self.demo_account_path, self.mt.demo_account_snapshot())
-            self.last_demo_account_write = now_monotonic
+            try:
+                atomic_json(self.demo_account_path, self.mt.demo_account_snapshot())
+                self.last_demo_account_write = now_monotonic
+            except Exception as exc:
+                ledger_error = f"demo_account_snapshot_failed: {type(exc).__name__}: {exc}"
+                self.log(ledger_error)
+                status["demo_account_snapshot_stale"] = True
+                if not status.get("last_error"):
+                    status["last_error"] = ledger_error
         atomic_json(self.status_path, status)
-        if time.monotonic() - self.last_timeline_write >= 5.0:
+        timeline_keys = {
+            "updated_at_beijing", "phase", "risk_profile", "account_login",
+            "equity_usd", "position_cap_lots", "active_weights", "raw_target_lots",
+            "desired_target_lots", "actual_strategy_lots", "gross_long_lots",
+            "gross_short_lots", "spread_price", "db_latency_p95_seconds",
+            "strategy_marked_pnl_usd", "cycle_pnl_usd", "reconcile_streak",
+            "pending_source_snapshot_count", "duplicate_events",
+        }
+        if time.monotonic() - self.last_timeline_write >= 5.0 and timeline_keys <= status.keys():
             self._append_timeline_csv(
                 {
                     "time_beijing": status["updated_at_beijing"],

@@ -31,6 +31,53 @@ const demoAccount = computed<any>(() => payload.value.demoAccount || {})
 const demoAccountSummary = computed<any>(() => demoAccount.value.account || {})
 const demoAccountPositions = computed<any[]>(() => demoAccount.value.positions || [])
 const demoAccountDeals = computed<any[]>(() => demoAccount.value.deals || [])
+const demoAccountDealRows = computed<any[]>(() => demoAccountDeals.value.map(row => {
+  const entry = String(row.entry || '').toUpperCase()
+  const positionId = String(row.positionId ?? '')
+  const hasPositionId = positionId.length > 0
+  const closingDeals = entry === 'IN' && hasPositionId
+    ? demoAccountDeals.value.filter(candidate => (
+      String(candidate.positionId ?? '') === positionId
+      && ['OUT', 'OUT_BY'].includes(String(candidate.entry || '').toUpperCase())
+    ))
+    : []
+  const currentPosition = entry === 'IN' && hasPositionId
+    ? demoAccountPositions.value.find(candidate => String(candidate.positionId ?? candidate.ticket ?? '') === positionId)
+    : undefined
+
+  if (entry === 'IN' && currentPosition) {
+    return {
+      ...row,
+      realizationState: '持仓中',
+      pnlUsd: Number(currentPosition.floatingPnlUsd || 0) + Number(currentPosition.swapUsd || 0),
+      pnlNote: closingDeals.length
+        ? `当前浮动（已部分平仓） · 浮 ${money(currentPosition.floatingPnlUsd)} · 隔夜 ${money(currentPosition.swapUsd)}`
+        : `当前浮动 · 浮 ${money(currentPosition.floatingPnlUsd)} · 隔夜 ${money(currentPosition.swapUsd)}`,
+    }
+  }
+  if (entry === 'IN' && closingDeals.length) {
+    return {
+      ...row,
+      realizationState: '已平仓',
+      pnlUsd: closingDeals.reduce((total, close) => total + Number(close.netPnlUsd || 0), 0),
+      pnlNote: '最终已实现',
+    }
+  }
+  if (entry === 'IN') {
+    return {
+      ...row,
+      realizationState: '开仓未实现',
+      pnlUsd: null,
+      pnlNote: '暂无平仓或持仓证据',
+    }
+  }
+  return {
+    ...row,
+    realizationState: '已实现',
+    pnlUsd: row.netPnlUsd,
+    pnlNote: '平仓成交',
+  }
+}))
 const demoAccountFloatingPnl = computed(() => demoAccountPositions.value.reduce(
   (total, row) => total + Number(row.floatingPnlUsd || 0) + Number(row.swapUsd || 0),
   0,
@@ -342,7 +389,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="demo-ledger">
             <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 最近 {{ demoAccountDeals.length }} 条</span></div>
-            <div class="table-wrap demo-account-table"><table><thead><tr><th>成交时间（北京时间）</th><th>Deal / Position</th><th>产品 / 动作</th><th>手数 / 价格</th><th>净损益</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDeals" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDeals.length"><td colspan="6" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
+            <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>成交时间（北京时间）</th><th>成交 / 仓位</th><th>产品 / 动作</th><th>手数 / 价格</th><th>已实现盈亏（USD） / 当前浮盈</th><th>成交状态</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDealRows" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="row.pnlUsd == null || Number(row.pnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ row.pnlUsd == null ? '-' : `${Number(row.pnlUsd) >= 0 ? '+' : ''}${money(row.pnlUsd)}` }}</b><small class="cell-note">{{ row.pnlNote }}</small></td><td><b>{{ row.realizationState }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDealRows.length"><td colspan="7" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
           </div>
         </div>
       </section>
