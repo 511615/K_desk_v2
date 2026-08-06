@@ -259,7 +259,7 @@ def make_snapshot(root: Path) -> Path:
         "gross_short_lots": 0.01,
         "db_latency_seconds": 0.4,
         "phase": "live",
-        "reason": "private implementation detail",
+        "reason": "open:active",
     }])
     write_csv(output / "orders_public.csv", [{
         "order_event": "O1",
@@ -479,6 +479,7 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert row["virtualPositionLots"] == 0.2
     assert row["detailPath"] == "/copy-pool/accounts/C001"
     assert payload["events"][0]["accountLogin"] == "5200101"
+    assert payload["events"][0]["decision"] == "active"
     assert payload["clientRisks"][0]["accountLogin"] == "5200101"
     assert payload["copyPositions"][0]["accountLogin"] == "5200101"
     assert payload["ticketMappings"][0]["accountLogin"] == "5200101"

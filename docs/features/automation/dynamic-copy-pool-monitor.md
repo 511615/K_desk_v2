@@ -165,16 +165,17 @@ rolling back to the initial daily pool; a legacy snapshot without hourly evidenc
 values unknown and schedules an immediate bounded discovery refresh.
 
 The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGlobal-Demo` in
-`StagedLive`. It may promote one minimum lot for a product/direction when a client's normal stress
-allocation is smaller, but only while whole-portfolio stress and margin permit it and no copied
-Ticket already occupies that product/direction. It does not bypass quote, spread, database,
-Ticket-ownership, daily-stop, equity-floor or margin hard gates and is never implicit.
+`StagedLive`. It may promote each eligible source Position to the product minimum lot when its
+normal stress allocation is smaller, but only while whole-portfolio stress, the product-direction
+cluster cap and margin permit it. It does not bypass quote, spread, database, Ticket-ownership,
+daily-stop, equity-floor or margin hard gates and is never implicit.
 For an active client under that exact Demo-only switch, the client loss budget is floored at the
 existing 20% per-client share of the 1.5% cycle budget. This keeps the risk allowance consistent
 with the indivisible 0.01-lot test exposure. Clients with zero activity weight receive no floor, and
 all default, non-Demo and non-`StagedLive` execution keeps the weight-proportional budget.
 Once a source Position owns that minimum lot, normal reconciliation preserves the same Ticket while
-the source, weight and gates remain eligible; another same-direction Position cannot displace it.
+the source, weight and gates remain eligible; a same-direction sibling receives its own Ticket only
+when the shared product-direction cluster budget still permits it.
 More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
 strategy flatten before another opening request is sent.
 
@@ -208,6 +209,11 @@ client loss-budget use, source Position to Demo Ticket mappings,
 per-product quotes, gross long/short, net and locked exposure, equity history, database latency,
 strategy P/L, recent source/risk/order events and the current execution gates. Search
 and filters are presentation-only and never affect the copier.
+The scheduling event stream is an entry-signal view: it shows source opening events only. Source-only
+reductions and closes remain in the API/event ledger and the position/history panels, but are omitted
+from this stream so an exit from a position that was never copied cannot look like a missed Demo
+order. Each visible source event includes a sanitized execution outcome such as active, monitor,
+signal_expired or risk_rejected.
 The `当前跟单` table contains only source Positions with actual owned Demo child Tickets. It shows
 the real source Login and detail link, server/platform, product/direction, source Position and lots,
 Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source

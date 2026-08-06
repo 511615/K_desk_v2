@@ -1624,7 +1624,11 @@ class MultiSourceLiveService(LiveService):
             and allow_increase
             and self._demo_minimum_lot_override_enabled(account)
             and total_stress + minimum * stress_per_lot <= cycle_budget + 1e-12
-            and clusters.get((position.product, position.side), 0.0) < 1e-12
+            and (
+                clusters.get((position.product, position.side), 0.0)
+                + minimum * stress_per_lot
+                <= cycle_budget * PORTFOLIO_CLUSTER_RISK_FRACTION + 1e-12
+            )
             and minimum * margin_per_lot <= available_margin + 1e-12
         ):
             target_abs = minimum
@@ -1759,7 +1763,7 @@ class MultiSourceLiveService(LiveService):
                 position.reject_reason = ""
             else:
                 position.status = "risk_rejected"
-                position.reject_reason = "execution_gate_blocked"
+                position.reject_reason = self._open_gate_rejection_reason(position.product)
                 self.copy_book.rejected_events += 1
         elif abs(position.copied_signed_lots) < 1e-12:
             if position.restart_monitor_only and abs(position.source_lots) >= 1e-12:
@@ -1772,6 +1776,27 @@ class MultiSourceLiveService(LiveService):
             position.status = "active"
             position.reject_reason = "" if decision.startswith("risk_allowed") else decision
         self.copy_book.remove_closed(position.source_key)
+
+    def _open_gate_rejection_reason(self, product: str) -> str:
+        """Return a bounded, operator-facing reason for a blocked new position."""
+        if self.refresh_mt5_conflicts():
+            return "execution_gate_blocked:external_position_conflict"
+        bid, ask, age = self.mt.quote_state(product)
+        spread_cost = max(0.0, ask - bid) * float(
+            getattr(self.mt.symbol(product), "trade_contract_size", 1.0)
+        )
+        if not (ask >= bid > 0):
+            return "execution_gate_blocked:invalid_quote"
+        if age > QUOTE_MAX_AGE_SECONDS:
+            return "execution_gate_blocked:stale_quote"
+        if spread_cost > 1.5 * default_roundtrip_spread_usd_per_lot(product):
+            return "execution_gate_blocked:spread"
+        db = getattr(self, "db", None)
+        if db is not None and db.selected_source_staleness() > DB_OPEN_BLOCK_SECONDS:
+            return "execution_gate_blocked:database_stale"
+        if not hasattr(self, "reconcile_streak") or not self.operational_gates_ready():
+            return "execution_gate_blocked:operational_gates"
+        return "execution_gate_blocked:manual_or_terminal"
 
     def _handle_source_position_change(
         self,
