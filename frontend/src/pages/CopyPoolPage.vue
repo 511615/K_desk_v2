@@ -368,31 +368,6 @@ onBeforeUnmount(() => {
     <div v-else-if="!payload.available" class="panel-state">{{ payload.message || '当前没有可显示的跟单数据' }}</div>
 
     <template v-else>
-      <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
-        <div class="copy-panel-head demo-account-head">
-          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span></small></div>
-          <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
-        </div>
-        <div class="demo-account-summary">
-          <div><span>账号</span><b>{{ demoAccountSummary.login || status.accountLogin || '-' }}</b></div>
-          <div><span>余额</span><b>{{ money(demoAccountSummary.balanceUsd ?? status.balanceUsd) }} USD</b></div>
-          <div><span>权益</span><b>{{ money(demoAccountSummary.equityUsd ?? status.equityUsd) }} USD</b></div>
-          <div><span>已用 / 可用保证金</span><b>{{ money(demoAccountSummary.marginUsd) }} / {{ money(demoAccountSummary.freeMarginUsd) }}</b></div>
-          <div><span>保证金率</span><b>{{ number(demoAccountSummary.marginLevelPercent, 2) }}%</b></div>
-          <div><span>当前持仓盈亏</span><b :class="demoAccountFloatingPnl >= 0 ? 'positive' : 'negative'">{{ demoAccountFloatingPnl >= 0 ? '+' : '' }}{{ money(demoAccountFloatingPnl) }} USD</b></div>
-        </div>
-        <div class="demo-account-ledgers">
-          <div class="demo-ledger">
-            <div class="demo-ledger-title"><h3>当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
-            <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间（北京时间）/ 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
-          </div>
-          <div class="demo-ledger">
-            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 已结束 Position {{ demoAccountHistoryRows.length }} 个</span></div>
-            <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>平仓时间（北京时间）</th><th>Position</th><th>产品 / 方向</th><th>开仓 → 平仓</th><th>手数</th><th>最终已实现盈亏（USD）</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountHistoryRows" :key="row.positionId"><td><b>{{ dateTime(row.closedAt) }}</b></td><td><b>{{ row.positionId }}</b></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ number(row.openPrice, 5) }} → {{ number(row.closePrice, 5) }}</b><small class="cell-note">开仓 {{ dateTime(row.openedAt) }}</small></td><td><b>{{ lots(row.lots) }} 手</b></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b><small class="cell-note">Position 最终结果</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountHistoryRows.length"><td colspan="7" class="empty-cell">近 30 日没有已结束 Position</td></tr></tbody></table></div>
-          </div>
-        </div>
-      </section>
-
       <section class="copy-panel risk-control-panel" data-testid="risk-controls">
         <div class="copy-panel-head"><div><h2>人工风控控制</h2><small>仅本机可修改；关闭保护不会自动解除已触发的硬停，需单独请求恢复影子</small></div><span :class="status.dailyHardStop ? 'negative' : 'positive'">{{ status.dailyHardStop ? '当前硬停' : '未硬停' }}</span></div>
         <div class="risk-control-grid">
@@ -421,7 +396,7 @@ onBeforeUnmount(() => {
         <article><span>重复事件</span><b :class="Number(status.duplicateEvents) ? 'warning' : ''">{{ status.duplicateEvents || 0 }} 条</b></article>
       </section>
 
-      <section class="copy-analysis-grid scheduler-grid">
+      <section class="copy-analysis-grid scheduler-grid" data-testid="scheduling-section">
         <article class="copy-panel tier-panel">
           <div class="copy-panel-head"><div><h2>客户池层级与影子准入</h2><small>选择层级查看当前归属账号；监控与候补持续参与动态评估</small></div><span>{{ tierRows.length }} 个 sleeve</span></div>
           <div class="tier-summary tier-tabs" role="tablist" aria-label="客户池层级">
@@ -445,6 +420,37 @@ onBeforeUnmount(() => {
           </div>
           <div class="activity-list compact-activity" data-testid="tier-event-stream"><div v-for="item in selectedTierActivity" :key="`${item.kind}-${item.key}`" class="activity-row"><span>{{ timeOnly(item.time) }}</span><b>{{ item.kind }}</b><strong :class="{ negative: item.warning }">{{ item.subject }}</strong><span>{{ item.reason }}</span><small>{{ item.latency }}</small></div><div v-if="!selectedTierActivity.length" class="empty-inline">当前层级暂无事件</div></div>
         </article>
+      </section>
+
+      <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
+        <div class="copy-panel-head demo-account-head">
+          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span></small></div>
+          <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
+        </div>
+        <div class="demo-account-summary">
+          <div><span>账号</span><b>{{ demoAccountSummary.login || status.accountLogin || '-' }}</b></div>
+          <div><span>余额</span><b>{{ money(demoAccountSummary.balanceUsd ?? status.balanceUsd) }} USD</b></div>
+          <div><span>权益</span><b>{{ money(demoAccountSummary.equityUsd ?? status.equityUsd) }} USD</b></div>
+          <div><span>已用 / 可用保证金</span><b>{{ money(demoAccountSummary.marginUsd) }} / {{ money(demoAccountSummary.freeMarginUsd) }}</b></div>
+          <div><span>保证金率</span><b>{{ number(demoAccountSummary.marginLevelPercent, 2) }}%</b></div>
+          <div><span>当前持仓盈亏</span><b :class="demoAccountFloatingPnl >= 0 ? 'positive' : 'negative'">{{ demoAccountFloatingPnl >= 0 ? '+' : '' }}{{ money(demoAccountFloatingPnl) }} USD</b></div>
+        </div>
+        <div class="demo-account-ledgers">
+          <div class="demo-ledger">
+            <div class="demo-ledger-title"><h3>当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
+            <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间（北京时间）/ 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
+          </div>
+          <div class="demo-ledger">
+            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 已结束 Position {{ demoAccountHistoryRows.length }} 个</span></div>
+            <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>平仓时间（北京时间）</th><th>Position</th><th>产品 / 方向</th><th>开仓 → 平仓</th><th>手数</th><th>最终已实现盈亏（USD）</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountHistoryRows" :key="row.positionId"><td><b>{{ dateTime(row.closedAt) }}</b></td><td><b>{{ row.positionId }}</b></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ number(row.openPrice, 5) }} → {{ number(row.closePrice, 5) }}</b><small class="cell-note">开仓 {{ dateTime(row.openedAt) }}</small></td><td><b>{{ lots(row.lots) }} 手</b></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b><small class="cell-note">Position 最终结果</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountHistoryRows.length"><td colspan="7" class="empty-cell">近 30 日没有已结束 Position</td></tr></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="copy-panel independent-panel" data-testid="current-copy-panel">
+        <div class="copy-panel-head"><div><h2>当前跟单</h2><small>每行对应一个来源 Position 到 Demo Ticket 的独立关系；客户之间不相互对冲或平仓</small></div><span>{{ activeCopyPositions.length }} 个来源仓 · {{ currentCopyRowsForDisplay.filter(row => row.demoTicket != null).length }} 个 Demo Ticket</span></div>
+        <div v-if="dashboard.isLoading.value" class="empty-inline">正在读取当前跟单状态...</div>
+        <div v-else class="table-wrap current-copy-table"><table><thead><tr><th>单主账号</th><th>服务器 / 平台</th><th>产品 / 方向</th><th>来源 Position / 手数</th><th>Demo Ticket / 手数</th><th>来源开仓（北京时间）</th><th>单主浮盈亏</th><th>我们的收益</th><th>入场延迟</th><th>持仓时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in currentCopyRowsForDisplay" :key="row.currentCopyKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ row.accountLogin || '-' }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ row.accountLogin || '-' }}</b></td><td><b>{{ row.accountServer || '-' }}</b><small class="cell-note">{{ row.accountPlatform || '平台未提供' }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.signedLots > 0 ? '买入' : row.signedLots < 0 ? '卖出' : '方向未提供' }}</small></td><td><b>{{ row.sourcePositionId || '-' }}</b><small class="cell-note">{{ lots(row.sourceLots) }} 手</small></td><td><b>{{ row.demoTicket ?? '尚未复制' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.demoTicket == null ? '-' : `${signedLots(row.signedLots)} 手` }}</small></td><td><b>{{ dateTime(row.sourceOpenedAt) }}</b><small class="cell-note">{{ row.sourceOpenPrice == null ? '开仓价未提供' : `价格 ${number(row.sourceOpenPrice, 5)}` }}</small></td><td :class="{ positive: Number(row.sourcePnlUsd) >= 0, negative: Number(row.sourcePnlUsd) < 0 }"><b>{{ row.sourcePnlUsd == null ? '未提供' : money(row.sourcePnlUsd) }}</b><small class="cell-note">{{ row.sourcePnlUsd == null ? '待运行时投影' : '当前来源仓 · USD' }}</small></td><td :class="{ positive: Number(row.demoPnlUsd) >= 0, negative: Number(row.demoPnlUsd) < 0 }"><b>{{ row.demoPnlUsd == null ? '未提供' : money(row.demoPnlUsd) }}</b><small class="cell-note">{{ row.demoPnlUsd == null ? '待运行时投影' : '已实现 + 浮动 · USD' }}</small></td><td><b>{{ row.entryDelaySeconds == null ? '-' : `${number(row.entryDelaySeconds, 2)}秒` }}</b><small class="cell-note">{{ row.entryDelaySeconds == null ? '等待运行时记录' : '来源到Demo开仓' }}</small></td><td><b>{{ currentHoldingDuration(row) }}</b><small class="cell-note">来源仓</small></td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ row.rejectReason ? copyReasonLabel(row.rejectReason) : '正常跟踪' }}</small></td></tr><tr v-if="!currentCopyRowsForDisplay.length"><td colspan="11" class="empty-cell">当前没有正在复制的来源仓和 Demo Ticket</td></tr></tbody></table></div>
       </section>
 
       <section class="copy-panel source-coverage-panel">
@@ -549,12 +555,6 @@ onBeforeUnmount(() => {
           </a>
           <div v-if="!clientRiskRows.length" class="empty-inline">尚无客户复制额度状态</div>
         </div>
-      </section>
-
-      <section class="copy-panel independent-panel">
-        <div class="copy-panel-head"><div><h2>当前跟单</h2><small>每行对应一个来源 Position 到 Demo Ticket 的独立关系；客户之间不相互对冲或平仓</small></div><span>{{ activeCopyPositions.length }} 个来源仓 · {{ currentCopyRowsForDisplay.filter(row => row.demoTicket != null).length }} 个 Demo Ticket</span></div>
-        <div v-if="dashboard.isLoading.value" class="empty-inline">正在读取当前跟单状态...</div>
-        <div v-else class="table-wrap current-copy-table"><table><thead><tr><th>单主账号</th><th>服务器 / 平台</th><th>产品 / 方向</th><th>来源 Position / 手数</th><th>Demo Ticket / 手数</th><th>来源开仓（北京时间）</th><th>单主浮盈亏</th><th>我们的收益</th><th>入场延迟</th><th>持仓时间</th><th>状态</th></tr></thead><tbody><tr v-for="row in currentCopyRowsForDisplay" :key="row.currentCopyKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ row.accountLogin || '-' }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ row.accountLogin || '-' }}</b></td><td><b>{{ row.accountServer || '-' }}</b><small class="cell-note">{{ row.accountPlatform || '平台未提供' }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.signedLots > 0 ? '买入' : row.signedLots < 0 ? '卖出' : '方向未提供' }}</small></td><td><b>{{ row.sourcePositionId || '-' }}</b><small class="cell-note">{{ lots(row.sourceLots) }} 手</small></td><td><b>{{ row.demoTicket ?? '尚未复制' }}</b><small class="cell-note" :class="{ positive: row.signedLots > 0, negative: row.signedLots < 0 }">{{ row.demoTicket == null ? '-' : `${signedLots(row.signedLots)} 手` }}</small></td><td><b>{{ dateTime(row.sourceOpenedAt) }}</b><small class="cell-note">{{ row.sourceOpenPrice == null ? '开仓价未提供' : `价格 ${number(row.sourceOpenPrice, 5)}` }}</small></td><td :class="{ positive: Number(row.sourcePnlUsd) >= 0, negative: Number(row.sourcePnlUsd) < 0 }"><b>{{ row.sourcePnlUsd == null ? '未提供' : money(row.sourcePnlUsd) }}</b><small class="cell-note">{{ row.sourcePnlUsd == null ? '待运行时投影' : '当前来源仓 · USD' }}</small></td><td :class="{ positive: Number(row.demoPnlUsd) >= 0, negative: Number(row.demoPnlUsd) < 0 }"><b>{{ row.demoPnlUsd == null ? '未提供' : money(row.demoPnlUsd) }}</b><small class="cell-note">{{ row.demoPnlUsd == null ? '待运行时投影' : '已实现 + 浮动 · USD' }}</small></td><td><b>{{ row.entryDelaySeconds == null ? '-' : `${number(row.entryDelaySeconds, 2)}秒` }}</b><small class="cell-note">{{ row.entryDelaySeconds == null ? '等待运行时记录' : '来源到Demo开仓' }}</small></td><td><b>{{ currentHoldingDuration(row) }}</b><small class="cell-note">来源仓</small></td><td><b>{{ copyStatusLabel(row.status) }}</b><small class="cell-note">{{ row.rejectReason ? copyReasonLabel(row.rejectReason) : '正常跟踪' }}</small></td></tr><tr v-if="!currentCopyRowsForDisplay.length"><td colspan="11" class="empty-cell">当前没有正在复制的来源仓和 Demo Ticket</td></tr></tbody></table></div>
       </section>
 
       <section class="copy-panel pool-panel">

@@ -96,7 +96,7 @@ describe('CopyPoolPage tier tabs', () => {
     wrapper.unmount()
   })
 
-  it('shows the current Demo account positions and real deal history at the top', () => {
+  it('places Demo positions, history, and current copies directly below scheduling', () => {
     const wrapper = mount(CopyPoolPage)
 
     const accountPanel = wrapper.get('[data-testid="demo-account-panel"]')
@@ -107,7 +107,14 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).toContain('89001')
     expect(accountPanel.text()).toContain('2026/8/5 08:45:00')
     expect(accountPanel.text()).toContain('本策略')
-    expect(wrapper.html().indexOf('data-testid="demo-account-panel"')).toBeLessThan(wrapper.html().indexOf('data-testid="risk-controls"'))
+    const html = wrapper.html()
+    const schedulingIndex = html.indexOf('data-testid="scheduling-section"')
+    const demoIndex = html.indexOf('data-testid="demo-account-panel"')
+    const currentCopiesIndex = html.indexOf('data-testid="current-copy-panel"')
+    expect(schedulingIndex).toBeGreaterThanOrEqual(0)
+    expect(demoIndex).toBeGreaterThan(schedulingIndex)
+    expect(currentCopiesIndex).toBeGreaterThan(demoIndex)
+    expect(html.indexOf('data-testid="risk-controls"')).toBeLessThan(schedulingIndex)
   })
 
   it('shows one history row per closed Position and omits open or incomplete Positions', () => {
