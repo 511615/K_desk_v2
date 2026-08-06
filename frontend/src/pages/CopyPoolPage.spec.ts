@@ -18,6 +18,7 @@ vi.mock('@tanstack/vue-query', () => ({
           ],
           deals: [
             { dealTicket: 80001, positionId: 89001, time: '2026-08-05T00:40:00Z', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true },
+            { dealTicket: 80005, positionId: 89001, time: '2026-08-05T00:45:00Z', product: 'XAUUSD', entry: 'OUT_BY', side: 'SELL', lots: 0.01, price: 4083, netPnlUsd: 1.5, strategyOwned: true },
             { dealTicket: 80000, positionId: 89001, time: '2026-08-05T00:30:00Z', product: 'XAUUSD', entry: 'IN', side: 'BUY', lots: 0.01, price: 4080, netPnlUsd: 0, strategyOwned: true },
             { dealTicket: 80002, positionId: 89002, time: '2026-08-05T01:00:00Z', product: 'EURUSD', entry: 'IN', side: 'BUY', lots: 0.02, price: 1.1, netPnlUsd: 0, strategyOwned: true },
             { dealTicket: 80003, positionId: 89003, time: '2026-08-05T01:10:00Z', product: 'GBPUSD', entry: 'IN', side: 'BUY', lots: 0.03, price: 1.3, netPnlUsd: 0, strategyOwned: true },
@@ -53,6 +54,11 @@ vi.mock('@tanstack/vue-query', () => ({
           { clientAlias: 'C002', product: 'EURUSD', tier: 'active' },
         ],
         clientRisks: [{ clientAlias: 'C002', status: 'risk_rejected', reductionReason: '当前综合收益为负' }],
+        events: [
+          { eventId: 1, time: '2026-08-05T01:30:00Z', accountLogin: '3054777', product: 'XAUUSD', sourceSide: 'BUY', sourceLots: 0.2, sourceEntry: 'IN', decision: '已更新独立来源仓', dbLatencySeconds: 0.4 },
+          { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 'OUT', decision: '仅监控', dbLatencySeconds: 0.5 },
+        ],
+        orders: [],
         copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],
         ticketMappings: [{ clientAlias: 'C001', accountLogin: '3054777', product: 'XAUUSD', sourcePositionId: 135826468, demoTicket: 90001, lots: 0.01, side: 1, openTime: '2026-07-31T15:12:08+08:00' }],
       },
@@ -98,28 +104,25 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).toContain('当前持仓')
     expect(accountPanel.text()).toContain('90001')
     expect(accountPanel.text()).toContain('历史成交')
-    expect(accountPanel.text()).toContain('80001')
-    expect(accountPanel.text()).toContain('2026/8/5 08:40:00')
+    expect(accountPanel.text()).toContain('89001')
+    expect(accountPanel.text()).toContain('2026/8/5 08:45:00')
     expect(accountPanel.text()).toContain('本策略')
     expect(wrapper.html().indexOf('data-testid="demo-account-panel"')).toBeLessThan(wrapper.html().indexOf('data-testid="risk-controls"'))
   })
 
-  it('reports deal realization state and the correct P/L evidence for each entry type', () => {
+  it('shows one history row per closed Position and omits open or incomplete Positions', () => {
     const wrapper = mount(CopyPoolPage)
     const table = wrapper.get('[data-testid="demo-deals-table"]')
 
-    expect(table.text()).toContain('成交状态')
-    expect(table.text()).toContain('已实现盈亏（USD）')
-
     const rows = table.findAll('tbody tr')
-    expect(rows.find(row => row.text().includes('80000'))?.text()).toContain('已平仓')
-    expect(rows.find(row => row.text().includes('80000'))?.text()).toContain('2.10')
-    expect(rows.find(row => row.text().includes('80002'))?.text()).toContain('持仓中')
-    expect(rows.find(row => row.text().includes('80002'))?.text()).toContain('3.20')
-    expect(rows.find(row => row.text().includes('80003'))?.text()).toContain('开仓未实现')
-    expect(rows.find(row => row.text().includes('80003'))?.text()).toContain('-')
-    expect(rows.find(row => row.text().includes('80004'))?.text()).toContain('已实现')
-    expect(rows.find(row => row.text().includes('80004'))?.text()).toContain('4.50')
+    expect(rows).toHaveLength(2)
+    expect(table.text()).toContain('89001')
+    expect(table.text()).toContain('89004')
+    expect(table.text()).toContain('0.02 手')
+    expect(table.text()).toContain('+3.60')
+    expect(table.text()).not.toContain('80000')
+    expect(table.text()).not.toContain('89002')
+    expect(table.text()).not.toContain('89003')
   })
 
   it('switches account lists by current tier without exposing aliases', async () => {
@@ -128,12 +131,29 @@ describe('CopyPoolPage tier tabs', () => {
     expect(wrapper.get('[role="tablist"]').text()).toContain('活动跟单池1')
     expect(wrapper.text()).toContain('3054777')
     expect(wrapper.text()).not.toContain('C001')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('3054777')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('5200101')
 
     await wrapper.findAll('[role="tab"]').find(tab => tab.text().includes('硬门拒绝'))!.trigger('click')
 
     expect(wrapper.text()).toContain('5200101')
     expect(wrapper.text()).toContain('当前综合收益为负')
     expect(wrapper.text()).not.toContain('C002')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('5200101')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('3054777')
+  })
+
+  it('moves the event stream into scheduling and lets event tabs drive the shared pool tier', async () => {
+    const wrapper = mount(CopyPoolPage)
+    const scheduling = wrapper.get('.schedule-events-panel')
+    expect(scheduling.text()).toContain('调度节奏')
+    expect(scheduling.text()).toContain('实时事件流')
+    expect(wrapper.findAll('h2').filter(node => node.text() === '实时事件流')).toHaveLength(0)
+
+    const hardReject = wrapper.get('[data-testid="event-tier-tabs"]').findAll('button').find(button => button.text().includes('硬门拒绝'))!
+    await hardReject.trigger('click')
+    expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('5200101')
+    expect(wrapper.get('[aria-label="客户池层级"]').find('[aria-selected="true"]').text()).toContain('硬门拒绝')
   })
 
   it('shows current-copy ownership, quantities, and unavailable P/L explicitly', () => {

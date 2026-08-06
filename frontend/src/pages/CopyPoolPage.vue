@@ -31,53 +31,41 @@ const demoAccount = computed<any>(() => payload.value.demoAccount || {})
 const demoAccountSummary = computed<any>(() => demoAccount.value.account || {})
 const demoAccountPositions = computed<any[]>(() => demoAccount.value.positions || [])
 const demoAccountDeals = computed<any[]>(() => demoAccount.value.deals || [])
-const demoAccountDealRows = computed<any[]>(() => demoAccountDeals.value.map(row => {
-  const entry = String(row.entry || '').toUpperCase()
-  const positionId = String(row.positionId ?? '')
-  const hasPositionId = positionId.length > 0
-  const closingDeals = entry === 'IN' && hasPositionId
-    ? demoAccountDeals.value.filter(candidate => (
-      String(candidate.positionId ?? '') === positionId
-      && ['OUT', 'OUT_BY'].includes(String(candidate.entry || '').toUpperCase())
-    ))
-    : []
-  const currentPosition = entry === 'IN' && hasPositionId
-    ? demoAccountPositions.value.find(candidate => String(candidate.positionId ?? candidate.ticket ?? '') === positionId)
-    : undefined
-
-  if (entry === 'IN' && currentPosition) {
-    return {
-      ...row,
-      realizationState: '持仓中',
-      pnlUsd: Number(currentPosition.floatingPnlUsd || 0) + Number(currentPosition.swapUsd || 0),
-      pnlNote: closingDeals.length
-        ? `当前浮动（已部分平仓） · 浮 ${money(currentPosition.floatingPnlUsd)} · 隔夜 ${money(currentPosition.swapUsd)}`
-        : `当前浮动 · 浮 ${money(currentPosition.floatingPnlUsd)} · 隔夜 ${money(currentPosition.swapUsd)}`,
-    }
+const demoAccountHistoryRows = computed<any[]>(() => {
+  const activeIds = new Set(demoAccountPositions.value.map(position => String(position.positionId ?? position.ticket ?? '')))
+  const groups = new Map<string, any[]>()
+  for (const deal of demoAccountDeals.value) {
+    const id = String(deal.positionId ?? deal.orderTicket ?? deal.dealTicket ?? '')
+    if (!id || activeIds.has(id)) continue
+    const rows = groups.get(id) || []
+    rows.push(deal)
+    groups.set(id, rows)
   }
-  if (entry === 'IN' && closingDeals.length) {
-    return {
-      ...row,
-      realizationState: '已平仓',
-      pnlUsd: closingDeals.reduce((total, close) => total + Number(close.netPnlUsd || 0), 0),
-      pnlNote: '最终已实现',
-    }
-  }
-  if (entry === 'IN') {
-    return {
-      ...row,
-      realizationState: '开仓未实现',
-      pnlUsd: null,
-      pnlNote: '暂无平仓或持仓证据',
-    }
-  }
-  return {
-    ...row,
-    realizationState: '已实现',
-    pnlUsd: row.netPnlUsd,
-    pnlNote: '平仓成交',
-  }
-}))
+  return [...groups.entries()].flatMap(([positionId, rows]) => {
+    const closing = rows
+      .filter(row => ['OUT', 'OUT_BY', 'INOUT'].includes(String(row.entry || '').toUpperCase()))
+      .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')))
+    if (!closing.length) return []
+    const opening = rows
+      .filter(row => ['IN', 'INOUT'].includes(String(row.entry || '').toUpperCase()))
+      .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')))[0] || rows[0]
+    const finalDeal = closing[0]
+    return [{
+      ...finalDeal,
+      dealTicket: finalDeal.dealTicket,
+      positionId,
+      product: opening.product || finalDeal.product,
+      side: opening.side || finalDeal.side,
+      lots: closing.reduce((total, row) => total + Number(row.lots || 0), 0),
+      openedAt: opening.time,
+      openPrice: opening.price,
+      closedAt: finalDeal.time,
+      closePrice: finalDeal.price,
+      netPnlUsd: closing.reduce((total, row) => total + Number(row.netPnlUsd || 0), 0),
+      strategyOwned: rows.every(row => row.strategyOwned !== false),
+    }]
+  }).sort((a, b) => String(b.closedAt || '').localeCompare(String(a.closedAt || '')))
+})
 const demoAccountFloatingPnl = computed(() => demoAccountPositions.value.reduce(
   (total, row) => total + Number(row.floatingPnlUsd || 0) + Number(row.swapUsd || 0),
   0,
@@ -198,6 +186,10 @@ const tierSummary = computed(() => tierRows.value.reduce((summary, row) => {
 const selectedTierRows = computed(() => tierRows.value
   .filter(row => row.currentTier === selectedPoolTier.value)
   .sort((left, right) => Number(right.effectiveWeight) - Number(left.effectiveWeight)))
+const tierByAccountProduct = computed(() => new Map(tierRows.value.map(row => [
+  `${String(row.accountLogin || '')}|${String(row.product || '').toUpperCase()}`,
+  row.currentTier,
+])))
 const schedulerRows = computed(() => [
   { label: '风险检查', cadence: '10 秒', at: scheduler.value.lastRiskAt || scheduler.value.last_risk_at, state: scheduler.value.riskState || 'completed' },
   { label: '池内重排', cadence: '15 分钟', at: scheduler.value.lastRankAt || scheduler.value.last_rank_at, state: scheduler.value.rankState || 'completed' },
@@ -214,6 +206,7 @@ const activity = computed(() => {
     reason: `${row.product || '-'} · ${sourceEntryLabel(row.sourceEntry)} · ${row.decision || '已更新独立来源仓'}`,
     latency: `${number(row.dbLatencySeconds, 2)}秒`,
     warning: false,
+    tier: tierByAccountProduct.value.get(`${String(row.accountLogin || '')}|${String(row.product || '').toUpperCase()}`) || 'monitor',
   }))
   const orders = (payload.value.orders || []).map((row: any) => ({
     key: row.orderEvent,
@@ -223,11 +216,13 @@ const activity = computed(() => {
     reason: `${row.product || '-'} · 来源仓 ${row.sourcePositionId || '-'} · Demo ${row.demoTickets?.join('、') || '-'} · ${signedLots(row.beforeLots)} → ${signedLots(row.afterLots)} · 回报码 ${row.retcode || '-'}`,
     latency: `${number(row.quoteAgeSeconds, 2)}秒`,
     warning: Number(row.retcode) !== 10009,
+    tier: tierByAccountProduct.value.get(`${String(row.accountLogin || '')}|${String(row.product || '').toUpperCase()}`) || 'monitor',
   }))
   return [...source, ...orders]
     .sort((left, right) => Date.parse(right.time) - Date.parse(left.time))
     .slice(0, 30)
 })
+const selectedTierActivity = computed(() => activity.value.filter(item => item.tier === selectedPoolTier.value))
 
 const gates = computed(() => [
   { label: '全部逻辑路由完成建池扫描', value: `${sourceCoverage.value.logicalScanned || 0} / ${sourceCoverage.value.logicalExpected || 11}`, ok: Number(sourceCoverage.value.logicalScanned) === Number(sourceCoverage.value.logicalExpected) && Number(sourceCoverage.value.logicalExpected) > 0 },
@@ -388,8 +383,8 @@ onBeforeUnmount(() => {
             <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间（北京时间）/ 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
           </div>
           <div class="demo-ledger">
-            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 最近 {{ demoAccountDeals.length }} 条</span></div>
-            <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>成交时间（北京时间）</th><th>成交 / 仓位</th><th>产品 / 动作</th><th>手数 / 价格</th><th>已实现盈亏（USD） / 当前浮盈</th><th>成交状态</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountDealRows" :key="row.dealTicket"><td><b>{{ dateTime(row.time) }}</b></td><td><b>{{ row.dealTicket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ demoEntryLabel(row.entry) }} · {{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }} 手</b><small class="cell-note">{{ number(row.price, 5) }}</small></td><td :class="row.pnlUsd == null || Number(row.pnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ row.pnlUsd == null ? '-' : `${Number(row.pnlUsd) >= 0 ? '+' : ''}${money(row.pnlUsd)}` }}</b><small class="cell-note">{{ row.pnlNote }}</small></td><td><b>{{ row.realizationState }}</b></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountDealRows.length"><td colspan="7" class="empty-cell">近 30 日没有交易成交</td></tr></tbody></table></div>
+            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 已结束 Position {{ demoAccountHistoryRows.length }} 个</span></div>
+            <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>平仓时间（北京时间）</th><th>Position</th><th>产品 / 方向</th><th>开仓 → 平仓</th><th>手数</th><th>最终已实现盈亏（USD）</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountHistoryRows" :key="row.positionId"><td><b>{{ dateTime(row.closedAt) }}</b></td><td><b>{{ row.positionId }}</b></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ number(row.openPrice, 5) }} → {{ number(row.closePrice, 5) }}</b><small class="cell-note">开仓 {{ dateTime(row.openedAt) }}</small></td><td><b>{{ lots(row.lots) }} 手</b></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b><small class="cell-note">Position 最终结果</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountHistoryRows.length"><td colspan="7" class="empty-cell">近 30 日没有已结束 Position</td></tr></tbody></table></div>
           </div>
         </div>
       </section>
@@ -435,9 +430,16 @@ onBeforeUnmount(() => {
           </div>
           <small class="panel-footnote">影子期产生的来源仓永久仅监控，不补追；活动资格、最小风险手数和硬门槛均需同时满足。</small>
         </article>
-        <article class="copy-panel">
+        <article class="copy-panel schedule-events-panel">
           <div class="copy-panel-head"><div><h2>调度节奏</h2><small>实时成交、风险降权、排序发现和每日完整重建分层运行</small></div></div>
           <div class="scheduler-list"><div v-for="row in schedulerRows" :key="row.label"><b>{{ row.label }}</b><span>{{ row.cadence }}</span><small>{{ row.at ? dateTime(row.at) : '尚未运行' }}</small><em>{{ schedulerStateLabel(row.state) }}</em></div></div>
+          <div class="schedule-event-head"><div><h3>实时事件流</h3><small>与左侧客户池层级同步</small></div><span>最近 {{ selectedTierActivity.length }} 条</span></div>
+          <div class="tier-summary tier-tabs event-tier-tabs" data-testid="event-tier-tabs" aria-label="事件客户池层级">
+            <button v-for="tier in POOL_TIER_TABS" :key="tier" type="button" :class="{ active: selectedPoolTier === tier }" @click="selectedPoolTier = tier">
+              <span>{{ poolTierTabLabel(tier) }}</span><b>{{ activity.filter(item => item.tier === tier).length }}</b>
+            </button>
+          </div>
+          <div class="activity-list compact-activity" data-testid="tier-event-stream"><div v-for="item in selectedTierActivity" :key="`${item.kind}-${item.key}`" class="activity-row"><span>{{ timeOnly(item.time) }}</span><b>{{ item.kind }}</b><strong :class="{ negative: item.warning }">{{ item.subject }}</strong><span>{{ item.reason }}</span><small>{{ item.latency }}</small></div><div v-if="!selectedTierActivity.length" class="empty-inline">当前层级暂无事件</div></div>
         </article>
       </section>
 
@@ -559,12 +561,8 @@ onBeforeUnmount(() => {
         <div class="table-wrap pool-table"><table><thead><tr><th>交易账号</th><th>产品 / 当前层级</th><th>历史评分 / 盘中评分</th><th>历史延迟因子</th><th>权益回撤</th><th>典型持仓区间</th><th>计划分配 / 实际执行</th><th>影子准入 / 闸门</th><th>同产品来源仓</th><th>20日综合收益 / 浮盈亏</th><th>执行状态</th></tr></thead><tbody><tr v-for="row in filteredPool" :key="row.clientProductKey"><td class="account-identity"><a v-if="row.detailPath" :href="row.detailPath"><b>{{ accountPrimaryLabel(row) }}</b><span aria-hidden="true">↗</span></a><b v-else>{{ accountPrimaryLabel(row) }}</b><small v-if="row.accountLogin">{{ accountSecondaryLabel(row) }}</small></td><td><b>{{ row.product }}</b><small class="cell-note">{{ poolTierLabel(row.poolTier || row.tier || row.poolStatus) }}</small></td><td><b>历史 {{ number(row.factorBaseScore ?? row.adjustedScore, 3) }} · 盘中 {{ row.hourlyScore == null ? '待刷新' : number(row.hourlyScore, 3) }}</b><small class="cell-note">1小时 {{ money(row.recentNet1hUsd) }} · 4小时 {{ money(row.recentNet4hUsd) }}</small><small class="cell-note">{{ row.isABook ? 'A 类 +0.02' : '标准账户' }} · 风险 × {{ percent(row.openRiskMultiplier, 0) }}</small></td><td class="quality-cell"><template v-if="row.historicalDelayFactorEnabled"><b>入 {{ number(row.delay?.entryP95Ms, 0) }} / 出 {{ number(row.delay?.exitP95Ms, 0) }} ms</b><small class="cell-note">综合分 {{ percent(delayValue(row, 'combined'), 0) }} · 收益保留 {{ percent(row.delay?.profitRetention, 0) }}</small><small class="cell-note">平衡延迟 入 / 出 / 综合 {{ number(row.delay?.entryBreakEvenMs / 1000, 1) }} / {{ number(row.delay?.exitBreakEvenMs / 1000, 1) }} / {{ number(row.delay?.combinedBreakEvenMs / 1000, 1) }}秒</small></template><template v-else><b>后续版本启用</b><small class="cell-note">当前不参与评分或硬过滤</small><small class="cell-note">实时信号过期与执行延迟监控仍生效</small></template></td><td class="quality-cell"><b>近20日 {{ percent(row.drawdown?.mdd20d) }} · 近60日 {{ percent(row.drawdown?.mdd60d) }} · 当前 {{ percent(row.drawdown?.current) }}</b><small class="cell-note">{{ row.drawdown?.equityCoverage20d && row.drawdown?.equityCoverage60d ? '历史数据完整' : '历史数据不足' }}</small><small class="cell-note">{{ row.drawdown?.intradayComplete ? '盘中细分完整' : '缺少盘中细分' }}</small></td><td class="quality-cell"><b>75% 长于 {{ formatDuration(row.holdP25Seconds) }}</b><small class="cell-note">90% 短于 {{ formatDuration(row.holdP90Seconds) }}</small><small class="cell-note">隔夜 {{ percent(row.holdingQuality?.overnightRatio) }} · 周末 {{ percent(row.holdingQuality?.weekendRatio) }}</small></td><td class="weight-cell"><b>计划 {{ percent(row.baseWeight) }} · 实际 {{ percent(row.effectiveWeight) }}</b><i class="inline-weight"><i class="base" :style="{ width: weightWidth(row.baseWeight) }"></i><i class="effective" :class="{ reduced: row.weightState !== 'full' }" :style="{ width: weightWidth(row.effectiveWeight) }"></i></i><small class="cell-note">{{ weightReason(row) }}</small></td><td class="quality-cell"><b>{{ shadowProgress(row.dynamicState || row) }}</b><small class="cell-note">入场过期 {{ row.dynamicState?.entryExpiredCount ?? 0 }} · 出场 {{ row.dynamicState?.exitExpiredCount ?? 0 }}</small><small class="cell-note">{{ row.hourlyHardEligible == null ? '待小时刷新（按日建池资格）' : row.hourlyHardEligible ? '当前综合收益硬门通过' : '当前综合收益硬门失败' }}</small><small class="cell-note">{{ row.factorGateReasons?.join('、') || row.factorGateReasons || '无额外拒绝原因' }}</small></td><td :class="Number(row.virtualPositionLots) >= 0 ? 'positive' : 'negative'">{{ signedLots(row.virtualPositionLots) }}<small class="cell-note">比例 {{ signedLots(row.targetContributionLots, 4) }}</small></td><td :class="Number(row.currentComprehensiveNet20dUsd ?? row.comprehensiveNet20dUsd) >= 0 ? 'positive' : 'negative'">{{ money(row.currentComprehensiveNet20dUsd ?? row.comprehensiveNet20dUsd) }}<small class="cell-note">{{ row.currentComprehensiveNet20dUsd == null ? '待小时刷新 · 日建池综合' : '当前小时口径' }}</small><small class="cell-note" :class="Number(row.productFloatingPnlUsd) >= 0 ? 'positive' : 'negative'">浮 {{ money(row.productFloatingPnlUsd) }}</small></td><td :class="{ warning: row.weightState === 'reduced', negative: row.weightState === 'removed' }"><b>{{ weightStateLabel(row) }}</b><small class="cell-note">{{ row.hourlyActivityEligible == null ? '待小时刷新（按日建池资格）' : row.hourlyActivityEligible ? '可进入活动区' : '仅保留监控' }}</small></td></tr><tr v-if="!filteredPool.length"><td colspan="11" class="empty-cell">当前筛选没有账户 × 产品组合</td></tr></tbody></table></div>
       </section>
 
-      <section class="copy-bottom-grid">
-        <article class="copy-panel">
-          <div class="copy-panel-head"><div><h2>实时事件流</h2><small>客户成交、目标变化与模拟账户回报合并展示</small></div><span>最近 {{ activity.length }} 条</span></div>
-          <div class="activity-list"><div v-for="item in activity" :key="`${item.kind}-${item.key}`" class="activity-row"><span>{{ timeOnly(item.time) }}</span><b>{{ item.kind }}</b><strong :class="{ negative: item.warning }">{{ item.subject }}</strong><span>{{ item.reason }}</span><small>{{ item.latency }}</small></div><div v-if="!activity.length" class="empty-inline">暂无事件</div></div>
-        </article>
-        <article class="copy-panel">
+      <section class="copy-panel">
+        <article>
           <div class="copy-panel-head"><div><h2>执行闸门</h2><small>硬闸失败时禁止增加仓位</small></div></div>
           <div class="gate-list"><div v-for="gate in gates" :key="gate.label" class="gate-row" :class="{ failed: !gate.ok }"><i></i><span>{{ gate.label }}</span><b>{{ gate.value }}</b></div></div>
           <div v-if="status.lastError" class="copy-error">最近错误：{{ status.lastError }}</div>
@@ -581,6 +579,11 @@ onBeforeUnmount(() => {
 .risk-control-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .risk-control-grid label { display: flex; gap: 9px; align-items: flex-start; padding: 10px; border: 1px solid #164c72; border-radius: 6px; background: #061a2e; cursor: pointer; }
 .risk-control-grid input { margin-top: 3px; accent-color: #28c89a; }
+.schedule-event-head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px solid #164c72; }
+.schedule-event-head h3 { margin: 0; font-size: 15px; }
+.schedule-event-head small, .schedule-event-head span { color: #7395ad; }
+.event-tier-tabs { margin-bottom: 8px; }
+.compact-activity { max-height: 280px; overflow: auto; }
 .risk-control-grid span { display: grid; gap: 3px; }
 .risk-control-grid small { color: #7f9db7; line-height: 1.35; }
 .risk-control-actions { display: flex; align-items: center; gap: 9px; margin-top: 10px; flex-wrap: wrap; }
