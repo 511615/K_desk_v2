@@ -74,6 +74,43 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_live_autotrading_regression_pauses_without_broker_reconcile(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.phase = "live"
+        service.last_error = ""
+        service.mt = SimpleNamespace(terminal=lambda: SimpleNamespace(trade_allowed=False))
+        service.reconcile_independent_copies = unittest.mock.Mock()
+        service._live_positions = unittest.mock.Mock(return_value=[])
+        service.reconcile_mt5_target()
+        self.assertEqual(service.phase, "armed_waiting_autotrading")
+        service.reconcile_independent_copies.assert_not_called()
+        self.assertIn("AutoTrading disabled", service.last_error)
+
+        service.reconcile_mt5_target()
+        service.reconcile_independent_copies.assert_not_called()
+
+    def test_status_write_keeps_heartbeat_when_account_snapshot_fails(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+            service.status_path = Path(tmp) / "status.json"
+            service.demo_account_path = Path(tmp) / "demo.json"
+            service.last_demo_account_write = 0.0
+            service.last_timeline_write = 0.0
+            service.phase = "armed_waiting_autotrading"
+            service.last_error = ""
+            service._last_public_status = {"account_login": 33304642, "server": "ACCMGlobal-Demo"}
+            service.public_status = unittest.mock.Mock(side_effect=RuntimeError("identity mismatch"))
+            service.mt = SimpleNamespace(demo_account_snapshot=unittest.mock.Mock(side_effect=RuntimeError("ipc")))
+            service.log = unittest.mock.Mock()
+            service._append_timeline_csv = unittest.mock.Mock()
+            service.write_status()
+            payload = json.loads(service.status_path.read_text(encoding="utf-8"))
+            self.assertTrue(payload["status_stale"])
+            self.assertEqual(payload["account_login"], 33304642)
+            self.assertIn("status_snapshot_failed", payload["last_error"])
+            self.assertTrue(payload["demo_account_snapshot_stale"])
+            service._append_timeline_csv.assert_not_called()
+
     def test_same_day_cache_upgrade_load_and_bootstrap_keep_weights_and_ticket_ownership(self) -> None:
         routed = client(0, 1, "C001")
         source_keys = set(physical_routes())

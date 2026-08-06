@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/beijingTime.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_manual_controls.py", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-05
+last_verified_date: 2026-08-06
 ---
 
 # Dynamic copy-pool monitor
@@ -373,6 +373,18 @@ presented as if one customer's event closed another customer's Ticket.
 The page has explicit loading, unavailable, request-failure and empty-filter states. A status file
 older than five seconds is marked stale. Missing or malformed optional CSV/JSON files degrade to
 empty sections; they never expose raw parse exceptions or synthesize account identities.
+
+Runtime heartbeat recovery is best effort. A terminal identity/IPC failure or a Demo ledger refresh
+failure no longer prevents `status.json` from advancing: the last verified account fields are kept,
+the current phase and error are published, and the failed ledger refresh is retried on its normal
+interval. If AutoTrading is disabled after live activation, the Producer moves to
+`armed_waiting_autotrading`, stops broker reconciliation calls that could add risk, and continues
+database polling, persistence and status publication until terminal permission is restored.
+
+Demo history rows distinguish an opening Deal's zero realized leg from its final outcome. An opening
+Deal is shown as `已平仓` with the sum of matching closing Deals when the Position is closed, as
+`持仓中` with current floating P/L plus swap when a live Position exists, or as `开仓未实现` when
+neither outcome is evidenced. Closing Deals retain their own realized P/L.
 
 ## Code and dependencies
 

@@ -25,6 +25,15 @@ independent processes. A source age above five seconds is displayed as stale. Op
 the producer and file permissions separately; K_desk must not restart the copier or place a repair
 order. Keep `runtime_state_private.json` and `client_routes_private.json` local and out of logs.
 
+If `events_public.csv` continues advancing while `status.json` stops, inspect the Producer log for
+terminal identity changes or `AutoTrading disabled` errors. The Producer must remain the only copy
+process. After the heartbeat fix, a failed terminal/ledger sample preserves the last verified Demo
+account projection and advances `status.json` with an explicit error; do not delete snapshots or
+start a second Producer. When AutoTrading is disabled during live operation, the phase is
+`armed_waiting_autotrading`, no new broker reconciliation requests are sent, and polling continues.
+Restore terminal permission on the already-selected Demo session, then verify status freshness and
+account identity before allowing live execution to resume.
+
 The governed production producer entry is
 `services\copy_pool_runtime\run_copy_demo_live.ps1` in the checked-out production worktree. It loads
 both AC and DBG Workbench read-only credentials into the process environment, starts the sibling
