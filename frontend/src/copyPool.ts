@@ -294,7 +294,8 @@ export function delayGateLabel(value: unknown): string {
 }
 
 export function copyReasonLabel(value: unknown): string {
-  return ({
+  const text = String(value || '')
+  const labels = {
     active: '已进入复制执行',
     closed: '来源仓已平仓',
     monitor: '仅监控，未复制',
@@ -310,8 +311,17 @@ export function copyReasonLabel(value: unknown): string {
     zero_effective_weight: '当前有效权重为零',
     below_minimum_risk_lot: '风险额度不足最小手',
     execution_gate_blocked: '点差、延迟或外部仓位闸门阻止开仓',
+    'execution_gate_blocked:external_position_conflict': '存在外部仓位冲突',
+    'execution_gate_blocked:invalid_quote': '报价无效',
+    'execution_gate_blocked:stale_quote': '报价过期',
+    'execution_gate_blocked:spread': '点差超限',
+    'execution_gate_blocked:database_stale': '数据库数据过期',
+    'execution_gate_blocked:operational_gates': '运行门控尚未通过',
+    'execution_gate_blocked:manual_or_terminal': '终端或手动开关未就绪',
+    signal_expired_no_copy: '信号超过允许延迟',
     client_not_in_current_pool: '客户已不在当前池中',
-  } as Record<string, string>)[String(value || '')] || String(value || '已通过')
+  } as Record<string, string>
+  return labels[text] || text || '已通过'
 }
 
 export function eventExecutionLabel(row: Record<string, unknown>): string {
