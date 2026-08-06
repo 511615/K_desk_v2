@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app
 tests: ["legacy/apps/problem_account_registry/test_app.py", "tests/test_api.py", "tests/test_automation_reports.py"]
 depends_on: ["ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-23
+last_verified_date: 2026-08-05
 ---
 
 # Copy origin query
@@ -20,8 +20,10 @@ The old detail page's copy query lists detected source accounts and their matche
 ## UI and behavior
 
 Each source is shown separately with matching ratio, source order samples and linked follower details.
-Closing and reopening the dialog with unchanged account filters reuses the successful page-local
-result. Filter changes use a different cache key; explicit account refresh or page reload clears it.
+The dialog provides optional opening-time start/end controls shared by CPT and Signal results.
+Blank dates retain complete-history behavior; an end earlier than the start is rejected before any
+request. The selected range is included in the page-local cache key; explicit account refresh or
+page reload clears it.
 The query dialog provides one-click Excel export organized by source owner. The workbook contains
 only one owner summary sheet and one sheet per owner. Each owner sheet starts with follower profit
 totals and account summaries, then lists the complete matched follower orders. It does not add a
@@ -30,10 +32,10 @@ identifiers remain text and positive/negative profit is visually distinguished.
 
 ## API contract
 
-The JSON endpoint accepts account source filters and returns `detected`, `origins`, `primaryOrigin`
-and errors. Each origin additively exposes `followerOrders` for report detail. The `.xlsx` endpoint
-accepts the same filters and downloads a no-store owner-centric workbook; existing JSON fields are
-unchanged.
+The JSON endpoints accept account source filters plus optional `start` and `end` opening-time
+filters and return `detected`, `origins`, `primaryOrigin` and errors. Each origin additively exposes
+`followerOrders` for report detail. The `.xlsx` endpoint accepts exactly the same filters and
+downloads a no-store owner-centric workbook; existing JSON fields are unchanged.
 
 ## Data, routing and read-only constraints
 
@@ -63,7 +65,8 @@ The current service is legacy-backed and called through LegacyBridge.
 Tests cover multiple sources, more than 1,000 identifiers, opening/closing comment separation,
 complete assignment, ratios, matched identifiers, error preservation, page-local caching, download
 headers, owner-oriented workbook sheets, typed account/profit cells, detailed order rows and
-empty-result exports. AC GB MT5 account
+empty-result exports. Time-range tests prove opening-time filtering and range forwarding to CPT
+followers and Signal statistics. AC GB MT5 account
 641903 must resolve all 895 copied positions to 640598 (625) and 632824 (270), with zero unresolved.
 
 ## Compatibility and deprecation

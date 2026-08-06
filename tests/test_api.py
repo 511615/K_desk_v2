@@ -66,6 +66,22 @@ def test_account_validation_rejects_unsafe_path_data(tmp_path: Path) -> None:
         assert response.status_code == 400
 
 
+def test_copy_time_range_validation_returns_bad_request(tmp_path: Path, monkeypatch) -> None:
+    def fake_call(_self, name, *args):
+        assert name == "account_copy_origins_payload"
+        raise ValueError("跟单开始时间不能晚于结束时间")
+
+    monkeypatch.setattr(LegacyBridge, "call", fake_call)
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/accounts/by-login/302360/copy-origins"
+            "?start=2026-08-02%2000:00:00&end=2026-08-01%2000:00:00"
+        )
+    assert response.status_code == 400
+    assert response.json()["error"] == "跟单开始时间不能晚于结束时间"
+
+
 def test_account_detail_always_uses_legacy_page(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(LegacyBridge, "account_page", lambda _self, login: f"<html><body>legacy-account:{login}</body></html>")
     app = create_account_app(make_test_settings(tmp_path))

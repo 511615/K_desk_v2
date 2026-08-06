@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["FIN-COMP-001", "FIN-REBATE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-23
+last_verified_date: 2026-08-05
 ---
 
 # Account search and source routing
@@ -28,14 +28,21 @@ rows. Search does not silently choose a different CRM route.
 `GET /api/account-lookup?account=` returns `database` for legacy callers and `databases` for all
 matches. `GET /api/account-lookup-finance` accepts account/platform/server and preserves `AC MT4`
 and `DBG MT5` aliases while resolving finance from the actual result server.
+Each MySQL lookup may additionally expose `routeValidation`; existing response fields are unchanged.
 
 ## Data, routing and read-only constraints
 
 CRM account mapping is checked before trading rows. Routes follow `DATA_AND_ROUTING.md`; all
 queries are read-only. Related-account discovery follows the CRM user across server codes, then
 routes each related login independently instead of reusing the selected account's trading source.
+If CRM mapping is temporarily absent, an indexed trade-user match may be used only under the
+documented unique physical-source fallback. It is marked `unique_trade_user_fallback`; duplicate,
+shared-schema, unavailable and error cases stay unavailable rather than selecting a guessed route.
 DBG MT5 Live2 is independently routed by `crm_vn` server code 5 to `crm_vn_mt5_live2`; code 2
-continues to use `mt5_export_new`.
+continues to use `mt5_export_new`. Detail links emitted by logical services also accept the
+legacy logical names `DBG CN MT4 Live1`, `DBG CN MT4 Live2`, `DBG VN MT4 Live3` and
+`AC CN MT5 Live3`, resolving them to the canonical source names without changing the returned
+server identity.
 
 ## Business rules and units
 

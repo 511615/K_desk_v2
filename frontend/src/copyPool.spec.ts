@@ -56,6 +56,16 @@ describe('copy pool presentation helpers', () => {
     expect(poolTierReason(rows[1])).toBe('客户亏损额度冷却中')
   })
 
+  it('does not expose a zero-weight dynamic sleeve as active', () => {
+    const rows = resolvePoolTierRows(
+      [{ clientAlias: 'C001', clientProductKey: 'C001|XAUUSD', product: 'XAUUSD', poolTier: 'active' }],
+      [{ clientAlias: 'C001', clientProductKey: 'C001|XAUUSD', product: 'XAUUSD', tier: 'active', effectiveWeight: 0 }],
+      [],
+    )
+
+    expect(rows[0].currentTier).toBe('execution_suspended')
+  })
+
   it('joins independent source positions to Demo tickets without exposing aliases', () => {
     const rows = currentCopyRows(
       [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG CN MT4 Live2', accountPlatform: 'MT4', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedSignedLots: -0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', detailPath: '/copy-pool/accounts/C001', status: 'active' }],

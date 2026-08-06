@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/app.py", "legacy/apps/problem_accou
 tests: ["legacy/apps/problem_account_registry/test_app.py", "tests/test_api.py", "tests/test_automation_reports.py"]
 depends_on: ["AUT-COPY-001", "FIN-REBATE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-23
+last_verified_date: 2026-08-05
 ---
 
 # Follower profit by copy source
@@ -21,9 +21,11 @@ costs and net profit.
 ## UI and behavior
 
 The old account page expands source orders and follower summaries, clearly marking the current
-account. Its Excel export is source-owner-centric: a summary sheet reports each owner's total
-follower P/L, and one sheet per owner begins with follower profit summaries before complete matched
-order detail. Signal groups and unrelated explanation/evidence sheets are intentionally excluded.
+account. CPT and Signal sections accept the same optional opening-time range; displayed trade totals
+and time-scoped rebate totals use that range. Its Excel export is source-owner-centric: a summary
+sheet reports each owner's total follower P/L, and one sheet per owner begins with follower profit
+summaries before complete matched order detail. Signal groups and unrelated explanation/evidence
+sheets are intentionally excluded.
 Successful dialog results remain in page memory and reopen without a second network query until the
 filters change, the account is explicitly refreshed or the page reloads.
 
@@ -31,8 +33,8 @@ filters change, the account is explicitly refreshed or the page reloads.
 
 Follower rows preserve account/platform/server, matched source IDs, order counts, volume and profit
 fields. `origins[].followerOrders` additively preserves one row per matched MT5 Position or MT4
-ticket for export. The report endpoint consumes only the copy-origin read model; the Signal JSON
-endpoint remains unchanged and independent.
+ticket for export. The report endpoint consumes only the copy-origin read model and exact requested
+range; the Signal JSON endpoint applies the same range independently.
 
 ## Data, routing and read-only constraints
 

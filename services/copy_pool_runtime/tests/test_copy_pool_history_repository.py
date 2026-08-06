@@ -219,7 +219,7 @@ class HistoryRepositoryTests(unittest.TestCase):
         )
         self.assertIn("Datetime >= %s", daily_sql)
         self.assertNotIn("Timestamp >= %s", daily_sql)
-        self.assertEqual(daily_params[-2], int((now - timedelta(days=61)).timestamp()))
+        self.assertEqual(daily_params[-2], int((now - timedelta(days=31)).timestamp()))
         self.assertEqual(daily_params[-1], int(now.timestamp()))
         self.assertFalse(any(
             "mt5_daily_view history" in sql for sql, _params in source.calls

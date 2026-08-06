@@ -102,35 +102,29 @@ def _as_bool(series: pd.Series) -> pd.Series:
 
 
 def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
-    """Upgrade a complete same-day factor universe to the V1 primary model.
-
-    This path is used only for a verified full-route cache. It preserves every
-    existing non-compensable hard rejection and adds the new copy-cost gates.
-    """
+    """Re-rank a core-qualified universe without introducing another gate."""
     required = {"product", "factor_ready", "factor_gate_reasons"}
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"Cost factor universe is missing columns: {sorted(missing)}")
     result = frame.copy()
-    cost_columns = ("closes_5d", "closes_20d", "lots_20d", "net_5d_usd", "net_20d_usd")
-    for name in cost_columns:
+    modern = ("closes_7d", "closes_30d", "lots_30d", "net_7d_usd", "net_30d_usd")
+    legacy = ("closes_5d", "closes_20d", "lots_20d", "net_5d_usd", "net_20d_usd")
+    selected = modern if all(name in result.columns for name in modern) else legacy
+    semantic_names = ("closes_recent", "closes_core", "lots_core", "net_recent", "net_core")
+    for name in selected:
         if name not in result.columns:
             result[name] = pd.NA
     parsed = {
-        name: pd.to_numeric(result[name], errors="coerce")
-        for name in cost_columns
+        semantic: pd.to_numeric(result[column], errors="coerce")
+        for semantic, column in zip(semantic_names, selected)
     }
     evidence_available = pd.Series(True, index=result.index, dtype=bool)
     for values in parsed.values():
         evidence_available &= values.notna()
-    numeric = {
-        name: values.fillna(0.0)
-        for name, values in parsed.items()
-    }
-    average_source_lots = numeric["lots_20d"] / numeric["closes_20d"].replace(0, float("nan"))
-    copy_lots = result["product"].map(
-        _minimum_copy_lot
-    )
+    numeric = {name: values.fillna(0.0) for name, values in parsed.items()}
+    average_source_lots = numeric["lots_core"] / numeric["closes_core"].replace(0, float("nan"))
+    copy_lots = result["product"].map(_minimum_copy_lot)
     source_to_copy = copy_lots / average_source_lots.replace(0, float("nan"))
     unit_cost = pd.Series(
         [
@@ -141,10 +135,10 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
         index=result.index,
         dtype=float,
     )
-    result["factor_copy_net_5d_usd"] = (numeric["net_5d_usd"] * source_to_copy).fillna(0.0)
-    result["factor_copy_net_20d_usd"] = (numeric["net_20d_usd"] * source_to_copy).fillna(0.0)
-    result["factor_estimated_copy_cost_5d_usd"] = numeric["closes_5d"] * unit_cost
-    result["factor_estimated_copy_cost_20d_usd"] = numeric["closes_20d"] * unit_cost
+    result["factor_copy_net_5d_usd"] = (numeric["net_recent"] * source_to_copy).fillna(0.0)
+    result["factor_copy_net_20d_usd"] = (numeric["net_core"] * source_to_copy).fillna(0.0)
+    result["factor_estimated_copy_cost_5d_usd"] = numeric["closes_recent"] * unit_cost
+    result["factor_estimated_copy_cost_20d_usd"] = numeric["closes_core"] * unit_cost
     result["factor_cost_adjusted_net_5d_usd"] = (
         result["factor_copy_net_5d_usd"] - result["factor_estimated_copy_cost_5d_usd"]
     )
@@ -153,11 +147,11 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
     )
     result["factor_cost_profit_per_trade"] = (
         result["factor_cost_adjusted_net_20d_usd"]
-        / numeric["closes_20d"].replace(0, float("nan"))
+        / numeric["closes_core"].replace(0, float("nan"))
     ).fillna(0.0)
     result["factor_recent_profit_per_trade"] = (
         result["factor_cost_adjusted_net_5d_usd"]
-        / numeric["closes_5d"].replace(0, float("nan"))
+        / numeric["closes_recent"].replace(0, float("nan"))
     ).fillna(0.0)
     result["factor_cost_coverage"] = (
         result["factor_copy_net_20d_usd"]
@@ -178,13 +172,7 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
     carry_hard_failed = _as_bool(
         result.get("carry_hard_failed", pd.Series(False, index=result.index))
     )
-    cost_pass = (
-        evidence_available
-        & (result["factor_cost_adjusted_net_5d_usd"] > 0)
-        & (result["factor_cost_adjusted_net_20d_usd"] > 0)
-        & (result["factor_cost_coverage"] >= 1.0)
-    )
-    eligible = old_ready & cost_pass & ~carry_hard_failed
+    eligible = old_ready & evidence_available
     result["factor_rank_cost_profit"] = _rank_eligible(
         result["factor_cost_profit_per_trade"], eligible
     )
@@ -207,13 +195,13 @@ def apply_cost_factor_model(frame: pd.DataFrame) -> pd.DataFrame:
         if not bool(evidence_available.at[index]):
             row_reasons.append("missing_copy_cost_evidence")
         if result.at[index, "factor_cost_adjusted_net_5d_usd"] <= 0:
-            row_reasons.append("cost_adjusted_net_5d_not_positive")
+            row_reasons.append("recent_cost_adjusted_net_not_positive")
         if result.at[index, "factor_cost_adjusted_net_20d_usd"] <= 0:
-            row_reasons.append("cost_adjusted_net_20d_not_positive")
+            row_reasons.append("core_cost_adjusted_net_not_positive")
         if result.at[index, "factor_cost_coverage"] < 1.0:
-            row_reasons.append("cost_coverage_below_1")
+            row_reasons.append("cost_coverage_quality_below_1")
         if bool(carry_hard_failed.at[index]):
-            row_reasons.append("carry_risk_hard_gate_failed")
+            row_reasons.append("carry_risk_quality_warning")
         reasons.append("|".join(dict.fromkeys(row_reasons)))
     result["factor_gate_reasons"] = reasons
     result["factor_ready"] = eligible
@@ -424,7 +412,11 @@ class CopyPoolFactorService:
                     # Equity hard gate. Reconstructed intraday paths may be
                     # incomplete and cannot independently prove this state.
                     negative_equity=(
-                        float(getattr(row, "negative_equity_days_60d", 0.0) or 0.0)
+                        float(getattr(
+                            row,
+                            "negative_equity_days_30d",
+                            getattr(row, "negative_equity_days_60d", 0.0),
+                        ) or 0.0)
                         > 0.0
                     ),
                     cashflow_adjusted_capital_exhaustion=bool(
@@ -513,7 +505,7 @@ class CopyPoolFactorService:
         else:
             holding = calculate_holding_quality_metrics(
                 sleeve.holdings, server_utc_offset=SERVER_TIMEZONE,
-                rollover_time=time(0, 0), as_of=as_of, window_days=60,
+                rollover_time=time(0, 0), as_of=as_of, window_days=30,
             )
         current_floating_loss_ratio = max(
             0.0, float(getattr(row, "floating_loss_ratio", 0.0) or 0.0)
@@ -577,7 +569,9 @@ class CopyPoolFactorService:
         # product's default round-trip spread plus a 25% execution reserve.
         # Source P/L is already USD-normalized by the multisource builder,
         # including Cent-account conversion.
-        cost_fields = ("closes_5d", "closes_20d", "lots_20d", "net_5d_usd", "net_20d_usd")
+        modern_fields = ("closes_7d", "closes_30d", "lots_30d", "net_7d_usd", "net_30d_usd")
+        legacy_fields = ("closes_5d", "closes_20d", "lots_20d", "net_5d_usd", "net_20d_usd")
+        cost_fields = modern_fields if all(hasattr(row, name) for name in modern_fields) else legacy_fields
         cost_values: dict[str, float] = {}
         cost_evidence_available = all(hasattr(row, name) for name in cost_fields)
         if cost_evidence_available:
@@ -591,11 +585,11 @@ class CopyPoolFactorService:
         if not cost_evidence_available:
             reasons.append("missing_copy_cost_evidence")
             cost_values = {name: 0.0 for name in cost_fields}
-        closes_5d = max(0.0, cost_values["closes_5d"])
-        closes_20d = max(0.0, cost_values["closes_20d"])
-        source_lots_20d = max(0.0, cost_values["lots_20d"])
-        net_5d_usd = cost_values["net_5d_usd"]
-        net_20d_usd = cost_values["net_20d_usd"]
+        closes_5d = max(0.0, cost_values[cost_fields[0]])
+        closes_20d = max(0.0, cost_values[cost_fields[1]])
+        source_lots_20d = max(0.0, cost_values[cost_fields[2]])
+        net_5d_usd = cost_values[cost_fields[3]]
+        net_20d_usd = cost_values[cost_fields[4]]
         copy_lot = _minimum_copy_lot(row.product)
         # Aggregate rows expose total entry lots and close count. Estimate the
         # average source position size, then scale every source trade to 0.01.
@@ -628,11 +622,11 @@ class CopyPoolFactorService:
         return RawSleeveFactor(
             account=account, sleeve=sleeve, drawdown=drawdown, holding=holding, carry=carry,
             delay=delay, quote_complete=quote_complete, reasons=tuple(reasons),
-            risk_return_5d=float(row.ret_5d) / max(1.0 + mdd, 1e-9),
-            risk_return_20d=float(row.ret_20d) / max(1.0 + mdd, 1e-9),
-            stress_return=float(row.stress_ret_20d),
-            pf_quality=min(max(float(row.pf_20d) / 3.0, 0.0), 1.0),
-            return_to_drawdown=max(float(row.ret_20d), 0.0) / max(mdd, 0.001),
+            risk_return_5d=float(getattr(row, "ret_7d", row.ret_5d)) / max(1.0 + mdd, 1e-9),
+            risk_return_20d=float(getattr(row, "ret_30d", row.ret_20d)) / max(1.0 + mdd, 1e-9),
+            stress_return=float(getattr(row, "stress_ret_30d", row.stress_ret_20d)),
+            pf_quality=min(max(float(getattr(row, "pf_30d", row.pf_20d)) / 3.0, 0.0), 1.0),
+            return_to_drawdown=max(float(getattr(row, "ret_30d", row.ret_20d)), 0.0) / max(mdd, 0.001),
             cost_adjusted_net_5d_usd=cost_adjusted_net_5d_usd,
             cost_adjusted_net_20d_usd=cost_adjusted_net_20d_usd,
             copy_net_5d_usd=copy_net_5d_usd,

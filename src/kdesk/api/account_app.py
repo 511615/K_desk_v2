@@ -351,11 +351,21 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/accounts/by-login/{login}/copy-origins")
     async def copy_origins(login: str, request: Request):
-        return await run_in_threadpool(legacy.call, "account_copy_origins_payload", _safe_login(login), legacy_filters(request.query_params))
+        try:
+            return await run_in_threadpool(
+                legacy.call, "account_copy_origins_payload", _safe_login(login), legacy_filters(request.query_params)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/accounts/by-login/{login}/copy-group-profit")
     async def copy_group_profit(login: str, request: Request):
-        return await run_in_threadpool(legacy.call, "account_copy_group_profit_payload", _safe_login(login), legacy_filters(request.query_params))
+        try:
+            return await run_in_threadpool(
+                legacy.call, "account_copy_group_profit_payload", _safe_login(login), legacy_filters(request.query_params)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/accounts/by-login/{login}/ea-comment-profit")
     async def ea_comment_profit(login: str, request: Request):

@@ -45,7 +45,8 @@
   same-day private snapshot after restart. Any missing source rejects the build; a partial pool is
   never deployed.
 - Pool identity is `CRM route + Login + normalized product`. Shared-source ambiguity is excluded.
-  The first candidate gate is `20-day closed trading net + current same-product floating P/L > 0`.
+  The first candidate gate is a close in the rolling seven-day window. The core gate is
+  `30-day closed trading net + current same-product floating P/L > 0` after normalized copy cost.
   Scoring excludes rebates, converts confirmed Cent/USC money by `0.01` without scaling lots,
   applies 1.5x spread stress, negative-balance/equity, stop-out compensation and margin gates, and
   gives an additive `0.02` A-containing status boost that cannot bypass a hard gate.
@@ -130,11 +131,11 @@
   factor score is 45% cost-adjusted profit per copied trade, 25% recent five-day cost-adjusted
   profit per copied trade, 15% copy-cost coverage and 15% adverse-position carry quality, using
   cross-sectional percentile ranks.
-  Source money is converted to USD first, then source P/L is scaled from the 20-day average closed
+  Source money is converted to USD first, then source P/L is scaled from the 30-day average closed
   execution size to that Demo product's actual minimum lot. Estimated copy cost is the product
   default round-trip spread at the same minimum lot plus a 25% execution reserve, with rebates
   excluded. MT5 close counts and lots both use exit/reversal Deals, so partial closes cannot divide
-  unrelated opening volume. Both five-day and 20-day cost-adjusted P/L must be positive and 20-day
+  unrelated opening volume. The 30-day cost-adjusted comprehensive P/L must be positive; seven-day
   cost coverage must be at least one before percentile ranks are calculated; failed rows cannot
   move qualified-account ranks. Missing or non-finite cost evidence fails closed. Excessive
   cashflow-adjusted equity MDD, incomplete intraday floating-equity coverage, extreme short holding
@@ -144,9 +145,8 @@
   the `negative_equity` hard gate, and only authoritative platform daily/current evidence may set it;
   an incomplete reconstructed snapshot path cannot. Capital reaching zero after later deposits/withdrawals are removed
   is the separate `cashflow_adjusted_capital_exhaustion` hard gate. Daily loss uses only the bounded
-  61-day evidence window and never searches older history for an anchor. The extra day may establish
-  the 60-day rollover baseline; a newly funded account uses its first positive funded observation
-  as its first-day baseline, while other insufficient 20/60-day coverage fails closed. Real-time quote age, source
+  31-day evidence window and never searches older history for an anchor. A newly funded account uses
+  its first positive funded observation as its first-day baseline. Real-time quote age, source
   staleness, signal latency and expiry remain active; new-risk signal age is capped by five seconds
   and holding P25 divided by three.
 - Carry risk is a bounded candidate-stage calculation, never a full-universe Tick replay. It combines
@@ -163,7 +163,7 @@
   authoritative current open risk from selected physical sources. Every 15 minutes it re-ranks the
   current monitor/reserve range. Every hour it reads bounded one/four-hour increments for the
   accepted daily factor-ready universe; this can reorder or remove sleeves but cannot bypass a
-  historical hard gate. The complete 60-day build runs at 05:15 Beijing. An incomplete refresh is
+  historical quality warning. The complete 30-day build runs at 05:15 Beijing. An incomplete refresh is
   rejected rather than treated as zero.
 - Restart and hourly membership changes never authorize missed source increases or reversals.
   Offline reductions and closes may only reduce Demo risk; current positions first seen at restart

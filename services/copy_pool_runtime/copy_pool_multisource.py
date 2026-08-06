@@ -482,13 +482,15 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
     """Re-rank cached hard-qualified sleeves with bounded session evidence."""
     required = {
         "account_key", "product", "sleeve_key", "factor_ready",
-        "factor_base_score", "activity_eligible", "net_20d_usd",
+        "factor_base_score", "activity_eligible",
         "equity_pre_usd", "route_key", "physical_key", "hold_multiplier",
         "is_abook",
     }
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(f"Hourly discovery universe is missing columns: {sorted(missing)}")
+    if "net_30d_usd" not in frame and "net_20d_usd" not in frame:
+        raise ValueError("Hourly discovery universe is missing net_30d_usd.")
     if frame.empty:
         return frame.copy(), {
             "monitor_accounts": 0, "reserve_accounts": 0,
@@ -534,8 +536,9 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
         + 0.20 * ranked["recent_score_4h"]
         + ranked["is_abook"].fillna(False).astype(bool).astype(float) * 0.02
     ).clip(0.0, 1.0)
-    ranked["current_comprehensive_net_20d_usd"] = (
-        pd.to_numeric(ranked["net_20d_usd"], errors="coerce").fillna(0.0)
+    net_30 = ranked["net_30d_usd"] if "net_30d_usd" in ranked else ranked["net_20d_usd"]
+    ranked["current_comprehensive_net_30d_usd"] = (
+        pd.to_numeric(net_30, errors="coerce").fillna(0.0)
         + ranked["closed_delta_since_build_usd"]
         + ranked["current_product_floating_pnl_usd"]
     )
@@ -562,8 +565,7 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
     ranked["current_carry_hard_failed"] = [item.hard_failed for item in carry_metrics]
     ranked["hourly_hard_eligible"] = (
         ranked["factor_ready"].fillna(False).astype(bool)
-        & (ranked["current_comprehensive_net_20d_usd"] > 0)
-        & (equity >= 100.0)
+        & (ranked["current_comprehensive_net_30d_usd"] > 0)
         & (ranked["current_floating_loss_ratio"] < MAX_BUILD_FLOATING_LOSS_RATIO)
         & (ranked["current_margin_to_equity"] < MAX_BUILD_MARGIN_TO_EQUITY)
     )
@@ -1022,7 +1024,7 @@ class MultiSourceDatabase:
         return results, counts
 
     def _trade_feature_rows(
-        self, source: ReadOnlySource, start_60: datetime, start_20: datetime, start_5: datetime, end: datetime
+        self, source: ReadOnlySource, start_30: datetime, start_7: datetime, end: datetime
     ) -> list[dict[str, Any]]:
         if source.platform == "MT5":
             sql = f"""
@@ -1073,19 +1075,24 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
 
         totals: dict[tuple[int, str], dict[str, float]] = defaultdict(
             lambda: {
-                "closes_5d": 0.0, "closes_20d": 0.0, "closes_60d": 0.0,
-                "net_5d": 0.0, "net_20d": 0.0, "net_60d": 0.0,
+                "closes_5d": 0.0, "closes_7d": 0.0, "closes_20d": 0.0, "closes_30d": 0.0,
+                "net_5d": 0.0, "net_7d": 0.0, "net_20d": 0.0, "net_30d": 0.0,
                 "gross_profit_20d": 0.0, "gross_loss_20d": 0.0,
                 "lots_20d": 0.0, "observed_spread_cost_20d": 0.0,
+                "gross_profit_30d": 0.0, "gross_loss_30d": 0.0,
+                "lots_30d": 0.0, "observed_spread_cost_30d": 0.0,
                 "source_contract_size": 0.0,
             }
         )
+        start_20 = end - timedelta(days=20)
+        start_5 = end - timedelta(days=5)
         periods = (
-            (start_60, start_20, False, False),
-            (start_20, start_5, True, False),
-            (start_5, end, True, True),
+            (start_30, start_20, False, False, False),
+            (start_20, start_7, True, False, False),
+            (start_7, start_5, True, False, True),
+            (start_5, end, True, True, True),
         )
-        for period_start, period_end, include_20, include_5 in periods:
+        for period_start, period_end, include_20, include_5, include_7 in periods:
             shard_start = period_start
             while shard_start < period_end:
                 shard_end = min(period_end, shard_start + initial_shard)
@@ -1102,21 +1109,31 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                     )
                     closes = float(row.get("closes") or 0.0)
                     net = float(row.get("net") or 0.0)
-                    target["closes_60d"] += closes
-                    target["net_60d"] += net
+                    target["closes_30d"] += closes
+                    target["net_30d"] += net
+                    gross_profit = float(row.get("gross_profit") or 0.0)
+                    gross_loss = float(row.get("gross_loss") or 0.0)
+                    lots = float(row.get("lots") or 0.0)
+                    spread_cost = float(row.get("spread_cost") or 0.0)
+                    if source.platform == "MT4":
+                        spread_cost = lots * default_roundtrip_spread_usd_per_lot(product)
+                    target["gross_profit_30d"] += gross_profit
+                    target["gross_loss_30d"] += gross_loss
+                    target["lots_30d"] += lots
+                    target["observed_spread_cost_30d"] += spread_cost
                     if include_20:
                         target["closes_20d"] += closes
                         target["net_20d"] += net
-                        target["gross_profit_20d"] += float(row.get("gross_profit") or 0.0)
-                        target["gross_loss_20d"] += float(row.get("gross_loss") or 0.0)
-                        target["lots_20d"] += float(row.get("lots") or 0.0)
-                        spread_cost = float(row.get("spread_cost") or 0.0)
-                        if source.platform == "MT4":
-                            spread_cost = float(row.get("lots") or 0.0) * default_roundtrip_spread_usd_per_lot(product)
+                        target["gross_profit_20d"] += gross_profit
+                        target["gross_loss_20d"] += gross_loss
+                        target["lots_20d"] += lots
                         target["observed_spread_cost_20d"] += spread_cost
                     if include_5:
                         target["closes_5d"] += closes
                         target["net_5d"] += net
+                    if include_7:
+                        target["closes_7d"] += closes
+                        target["net_7d"] += net
                 shard_start = shard_end
         return [
             {
@@ -1126,6 +1143,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 **values,
             }
             for (login, product), values in totals.items()
+            if values["closes_7d"] > 0
         ]
 
     def scan_trade_features(
@@ -1134,12 +1152,13 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         end = as_of.astimezone(BEIJING).replace(tzinfo=None)
         start_5 = end - timedelta(days=5)
         start_20 = end - timedelta(days=20)
-        start_60 = end - timedelta(days=60)
+        start_30 = end - timedelta(days=30)
+        start_7 = end - timedelta(days=7)
         frames: list[dict[str, Any]] = []
         ambiguous_counts: dict[str, int] = {}
 
         def scan(source_key: str, source: ReadOnlySource) -> tuple[str, list[dict[str, Any]]]:
-            return source_key, self._trade_feature_rows(source, start_60, start_20, start_5, end)
+            return source_key, self._trade_feature_rows(source, start_30, start_7, end)
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {executor.submit(scan, key, source): key for key, source in self.sources.items()}
@@ -1566,7 +1585,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
 
     def _risk_history_serial(self, frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
         rows: list[dict[str, Any]] = []
-        start = as_of.astimezone(BEIJING).replace(tzinfo=None) - timedelta(days=60)
+        start = as_of.astimezone(BEIJING).replace(tzinfo=None) - timedelta(days=30)
         start_unix = int(start.replace(tzinfo=BEIJING).astimezone(timezone.utc).timestamp())
         for source_key, group in frame.groupby("physical_key"):
             source = self.sources[str(source_key)]
@@ -1578,20 +1597,20 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 try:
                     if source.platform == "MT5":
                         return source.query(
-                            f"SELECT Login, MIN(Balance) AS min_balance_60d, "
-                            f"MIN(Balance + Credit + Profit) AS min_equity_60d, "
-                            f"MIN(CASE WHEN Margin > 0 THEN MarginLevel ELSE NULL END) AS min_margin_level_60d, "
-                            f"SUM(CASE WHEN Balance < 0 THEN 1 ELSE 0 END) AS negative_balance_days_60d, "
-                            f"SUM(CASE WHEN Balance + Credit + Profit < 0 THEN 1 ELSE 0 END) AS negative_equity_days_60d, "
-                            f"SUM(CASE WHEN ABS(DailySOCompensation) + ABS(DailySOCompensationCredit) > 0 THEN 1 ELSE 0 END) AS so_compensation_days_60d "
+                            f"SELECT Login, MIN(Balance) AS min_balance_30d, "
+                            f"MIN(Balance + Credit + Profit) AS min_equity_30d, "
+                            f"MIN(CASE WHEN Margin > 0 THEN MarginLevel ELSE NULL END) AS min_margin_level_30d, "
+                            f"SUM(CASE WHEN Balance < 0 THEN 1 ELSE 0 END) AS negative_balance_days_30d, "
+                            f"SUM(CASE WHEN Balance + Credit + Profit < 0 THEN 1 ELSE 0 END) AS negative_equity_days_30d, "
+                            f"SUM(CASE WHEN ABS(DailySOCompensation) + ABS(DailySOCompensationCredit) > 0 THEN 1 ELSE 0 END) AS so_compensation_days_30d "
                             f"FROM {source.schema}.mt5_daily_view WHERE Login IN ({placeholders}) AND Datetime >= %s GROUP BY Login",
                             (*batch, start_unix),
                         )
                     return source.query(
-                        f"SELECT LOGIN AS Login, MIN(BALANCE) AS min_balance_60d, MIN(EQUITY) AS min_equity_60d, "
-                        f"MIN(CASE WHEN MARGIN > 0 THEN EQUITY / MARGIN * 100 ELSE NULL END) AS min_margin_level_60d, "
-                        f"SUM(CASE WHEN BALANCE < 0 THEN 1 ELSE 0 END) AS negative_balance_days_60d, "
-                        f"SUM(CASE WHEN EQUITY < 0 THEN 1 ELSE 0 END) AS negative_equity_days_60d, 0 AS so_compensation_days_60d "
+                        f"SELECT LOGIN AS Login, MIN(BALANCE) AS min_balance_30d, MIN(EQUITY) AS min_equity_30d, "
+                        f"MIN(CASE WHEN MARGIN > 0 THEN EQUITY / MARGIN * 100 ELSE NULL END) AS min_margin_level_30d, "
+                        f"SUM(CASE WHEN BALANCE < 0 THEN 1 ELSE 0 END) AS negative_balance_days_30d, "
+                        f"SUM(CASE WHEN EQUITY < 0 THEN 1 ELSE 0 END) AS negative_equity_days_30d, 0 AS so_compensation_days_30d "
                         f"FROM {source.schema}.mt4_daily WHERE LOGIN IN ({placeholders}) AND TIME >= %s GROUP BY LOGIN",
                         (*batch, start),
                     )
@@ -1804,8 +1823,10 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         )
         build_stage_seconds["current_state"] = time.perf_counter() - stage_started
         numeric = [
-            "closes_5d", "closes_20d", "closes_60d", "net_5d", "net_20d", "net_60d",
+            "closes_5d", "closes_7d", "closes_20d", "closes_30d",
+            "net_5d", "net_7d", "net_20d", "net_30d",
             "gross_profit_20d", "gross_loss_20d", "lots_20d", "observed_spread_cost_20d",
+            "gross_profit_30d", "gross_loss_30d", "lots_30d", "observed_spread_cost_30d",
             "source_contract_size",
             "Balance", "Credit", "Equity", "Profit", "Margin", "MarginLevel",
             "open_position_count", "open_gross_lots", "xau_gross_lots", "xau_net_lots",
@@ -1832,8 +1853,10 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             for row in frame.itertuples()
         ]
         for column in (
-            "net_5d", "net_20d", "net_60d", "gross_profit_20d", "gross_loss_20d",
-            "observed_spread_cost_20d", "Balance", "Credit", "Equity", "Profit",
+            "net_5d", "net_7d", "net_20d", "net_30d",
+            "gross_profit_20d", "gross_loss_20d", "observed_spread_cost_20d",
+            "gross_profit_30d", "gross_loss_30d", "observed_spread_cost_30d",
+            "Balance", "Credit", "Equity", "Profit",
             "Margin", "position_floating",
         ):
             frame[f"{column}_usd"] = frame[column] * frame["money_scale"]
@@ -1854,8 +1877,10 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         # Product-level comprehensive P/L is the first candidate gate.
         frame["comprehensive_net_5d_usd"] = frame["net_5d_usd"] + frame["product_floating_pnl_usd"]
         frame["comprehensive_net_20d_usd"] = frame["net_20d_usd"] + frame["product_floating_pnl_usd"]
+        frame["comprehensive_net_30d_usd"] = frame["net_30d_usd"] + frame["product_floating_pnl_usd"]
         frame["quality_net_5d_usd"] = frame["comprehensive_net_5d_usd"]
         frame["quality_net_20d_usd"] = frame["comprehensive_net_20d_usd"]
+        frame["quality_net_30d_usd"] = frame["comprehensive_net_30d_usd"]
         frame["pf_20d"] = (
             frame["gross_profit_20d_usd"]
             / frame["gross_loss_20d_usd"].replace(0, float("nan"))
@@ -1864,32 +1889,55 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         frame["quality_stress_net_15x_20d_usd"] = (
             frame["stress_net_15x_20d_usd"] + frame["product_floating_pnl_usd"]
         )
+        frame["pf_30d"] = (
+            frame["gross_profit_30d_usd"]
+            / frame["gross_loss_30d_usd"].replace(0, float("nan"))
+        ).fillna(3.0).clip(upper=3.0)
+        frame["stress_net_15x_30d_usd"] = frame["net_30d_usd"] - 0.5 * frame["observed_spread_cost_30d_usd"]
+        frame["quality_stress_net_15x_30d_usd"] = (
+            frame["stress_net_15x_30d_usd"] + frame["product_floating_pnl_usd"]
+        )
+        frame["copy_unit_cost_30d_usd"] = frame["product"].map(
+            lambda product: default_roundtrip_spread_usd_per_lot(str(product))
+            * float(product_spec(str(product)).volume_min)
+            * 1.25
+        )
+        frame["average_source_lots_30d"] = (
+            frame["lots_30d"] / frame["closes_30d"].replace(0, float("nan"))
+        )
+        frame["copy_scale_30d"] = (
+            frame["product"].map(lambda product: float(product_spec(str(product)).volume_min))
+            / frame["average_source_lots_30d"].replace(0, float("nan"))
+        )
+        frame["copy_cost_adjusted_net_30d_usd"] = (
+            frame["net_30d_usd"] * frame["copy_scale_30d"]
+            - frame["closes_30d"] * frame["copy_unit_cost_30d_usd"]
+        ).fillna(float("-inf"))
         frame["ret_5d"] = frame["quality_net_5d_usd"] / frame["equity_pre_usd"].replace(0, float("nan"))
         frame["ret_20d"] = frame["quality_net_20d_usd"] / frame["equity_pre_usd"].replace(0, float("nan"))
+        frame["ret_30d"] = frame["quality_net_30d_usd"] / frame["equity_pre_usd"].replace(0, float("nan"))
         frame["stress_ret_20d"] = frame["quality_stress_net_15x_20d_usd"] / frame["equity_pre_usd"].replace(0, float("nan"))
+        frame["stress_ret_30d"] = frame["quality_stress_net_15x_30d_usd"] / frame["equity_pre_usd"].replace(0, float("nan"))
         frame["stress_survival"] = (
             frame["quality_stress_net_15x_20d_usd"]
             / frame["quality_net_20d_usd"].replace(0, float("nan"))
         ).clip(-1.0, 1.0)
 
         positive_comprehensive = frame.loc[
-            frame["comprehensive_net_20d_usd"] > 0
+            frame["comprehensive_net_30d_usd"] > 0
         ].copy()
         preliminary = positive_comprehensive.loc[
-            (positive_comprehensive["equity_pre_usd"] >= 100)
-            & (positive_comprehensive["closes_5d"] >= 5)
-            & (positive_comprehensive["closes_20d"] >= 20)
-            & (positive_comprehensive["quality_net_5d_usd"] > 0)
-            & (positive_comprehensive["quality_net_20d_usd"] > 0)
-            & (positive_comprehensive["quality_stress_net_15x_20d_usd"] > 0)
-            & (positive_comprehensive["pf_20d"] >= 1.05)
+            (positive_comprehensive["closes_7d"] > 0)
+            & (positive_comprehensive["quality_net_30d_usd"] > 0)
+            & (positive_comprehensive["quality_stress_net_15x_30d_usd"] > 0)
+            & (positive_comprehensive["copy_cost_adjusted_net_30d_usd"] > 0)
         ].copy()
         if preliminary.empty:
             raise RuntimeError("No account-product sleeves passed the comprehensive-profit and quality gates.")
         preliminary["pre_rank"] = (
             0.40 * _percentile_rank(_winsorize(preliminary["ret_5d"]))
-            + 0.35 * _percentile_rank(_winsorize(preliminary["ret_20d"]))
-            + 0.25 * _percentile_rank(_winsorize(preliminary["stress_ret_20d"]))
+            + 0.35 * _percentile_rank(_winsorize(preliminary["ret_30d"]))
+            + 0.25 * _percentile_rank(_winsorize(preliminary["stress_ret_30d"]))
         )
 
         stage_started = time.perf_counter()
@@ -1897,19 +1945,16 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         build_stage_seconds["risk_history"] = time.perf_counter() - stage_started
         checked = preliminary.merge(risk, on="account_key", how="left", validate="many_to_one")
         for column in (
-            "min_balance_60d", "min_equity_60d", "min_margin_level_60d",
-            "negative_balance_days_60d", "negative_equity_days_60d", "so_compensation_days_60d",
+            "min_balance_30d", "min_equity_30d", "min_margin_level_30d",
+            "negative_balance_days_30d", "negative_equity_days_30d", "so_compensation_days_30d",
         ):
             checked[column] = pd.to_numeric(checked[column], errors="coerce")
-        checked["risk_history_complete"] = checked[["min_balance_60d", "min_equity_60d"]].notna().all(axis=1)
+        checked["risk_history_complete"] = checked[["min_balance_30d", "min_equity_30d"]].notna().all(axis=1)
         checked["hard_gate"] = (
             checked["risk_history_complete"]
-            & (checked["negative_balance_days_60d"].fillna(1) == 0)
-            & (checked["negative_equity_days_60d"].fillna(1) == 0)
-            & (checked["so_compensation_days_60d"].fillna(1) == 0)
-            & (checked["min_margin_level_60d"].isna() | (checked["min_margin_level_60d"] >= 80))
-            & (checked["floating_loss_ratio"].fillna(float("inf")) < MAX_BUILD_FLOATING_LOSS_RATIO)
-            & (checked["margin_to_equity"].fillna(float("inf")) < MAX_BUILD_MARGIN_TO_EQUITY)
+            & (checked["negative_balance_days_30d"].fillna(1) == 0)
+            & (checked["negative_equity_days_30d"].fillna(1) == 0)
+            & (checked["so_compensation_days_30d"].fillna(1) == 0)
         )
         eligible = checked.loc[checked["hard_gate"]].copy()
         if eligible["account_key"].nunique() < 10:
@@ -1917,19 +1962,19 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 f"Only {eligible['account_key'].nunique()} accounts passed complete hard risk gates; need at least 10."
             )
         eligible["score_recent"] = _percentile_rank(_winsorize(eligible["ret_5d"]))
-        eligible["score_medium"] = _percentile_rank(_winsorize(eligible["ret_20d"]))
-        eligible["score_stress"] = _percentile_rank(_winsorize(eligible["stress_ret_20d"]))
-        eligible["score_pf"] = _percentile_rank(eligible["pf_20d"].clip(0, 3))
+        eligible["score_medium"] = _percentile_rank(_winsorize(eligible["ret_30d"]))
+        eligible["score_stress"] = _percentile_rank(_winsorize(eligible["stress_ret_30d"]))
+        eligible["score_pf"] = _percentile_rank(eligible["pf_30d"].clip(0, 3))
         eligible["score_survival"] = _percentile_rank(eligible["stress_survival"])
         eligible["raw_score"] = (
             0.35 * eligible["score_recent"] + 0.25 * eligible["score_medium"]
             + 0.20 * eligible["score_stress"] + 0.10 * eligible["score_pf"]
             + 0.10 * eligible["score_survival"]
         )
-        eligible["confidence"] = (eligible["closes_20d"] / 100.0).pow(0.5).clip(upper=1.0)
+        eligible["confidence"] = (eligible["closes_30d"] / 100.0).pow(0.5).clip(upper=1.0)
         eligible["is_abook"] = eligible["status"].fillna("").astype(str).str.upper().str.contains("A", regex=False)
         eligible["dynamic_score"] = 0.5 + eligible["confidence"] * (eligible["raw_score"] - 0.5) + eligible["is_abook"].astype(float) * 0.02
-        eligible = eligible.sort_values(["dynamic_score", "stress_ret_20d"], ascending=False)
+        eligible = eligible.sort_values(["dynamic_score", "stress_ret_30d"], ascending=False)
 
         stage_started = time.perf_counter()
         holding_stats = self.holding_statistics(eligible, as_of)
@@ -2000,7 +2045,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             & (eligible["median_hold_seconds"] <= 8 * 60 * 60)
             & (eligible["hold_p90_seconds"] <= 24 * 60 * 60)
             & (eligible["short_trade_ratio"] < 0.20)
-            & (eligible["quality_stress_net_15x_20d_usd"] > 0)
+            & (eligible["quality_stress_net_15x_30d_usd"] > 0)
         )
         monitor_candidates = eligible.loc[
             eligible["factor_ready"]

@@ -570,6 +570,25 @@ class EaCommentGroupService:
             })
         return annotated
 
+    def _seed_scope_bounds(self, seeds: list[dict]) -> tuple[datetime | None, datetime | None, bool]:
+        """Return the optional user-selected opening-time scope carried by EA seeds."""
+
+        r = self.runtime
+        start_values = [
+            value for value in (r.parse_trade_time(item.get("scopeStart")) for item in seeds if item.get("scopeStart"))
+            if value
+        ]
+        end_values = [
+            value for value in (r.parse_trade_time(item.get("scopeEnd")) for item in seeds if item.get("scopeEnd"))
+            if value
+        ]
+        selected = bool(start_values or end_values)
+        return (
+            min(start_values, default=None),
+            max(end_values, default=None),
+            selected,
+        )
+
     def _routed_accounts(self, cur: Any, source: dict, accounts: set[str]) -> set[str]:
         route = source.get("account_route")
         if not isinstance(route, dict):
@@ -736,23 +755,32 @@ class EaCommentGroupService:
         if not comments:
             return [], False, []
         query_comments = ea_comment_query_values(comments)
-        start = min((r.parse_trade_time(item.get("firstTime")) for item in seeds), default=None)
-        end = max((r.parse_trade_time(item.get("lastTime")) for item in seeds), default=None)
-        if not start or not end:
+        scope_start, scope_end, selected_scope = self._seed_scope_bounds(seeds)
+        start = scope_start if selected_scope else min((r.parse_trade_time(item.get("firstTime")) for item in seeds), default=None)
+        end = scope_end if selected_scope else max((r.parse_trade_time(item.get("lastTime")) for item in seeds), default=None)
+        if not selected_scope and (not start or not end):
             return [], False, ["MT4 同备注查询缺少有效交易时间范围"]
         placeholders = ",".join(["%s"] * len(query_comments))
+        time_clauses: list[str] = []
+        parameters: list[object] = []
+        if start:
+            time_clauses.append("OPEN_TIME >= %s")
+            parameters.append(start)
+        if end:
+            time_clauses.append("OPEN_TIME <= %s")
+            parameters.append(end)
         sql = f"""
             select TICKET, LOGIN, SYMBOL, VOLUME, OPEN_TIME, CLOSE_TIME,
                    PROFIT, COMMISSION, SWAPS, TAXES, COMMENT, MAGIC
             from `{source['schema']}`.`{source['table']}`
-            where OPEN_TIME >= %s and OPEN_TIME <= %s
+            where {' and '.join(time_clauses)}
               and CMD in (0,1) and COMMENT in ({placeholders})
             order by OPEN_TIME, TICKET
             limit %s
         """
         with r.mysql_trade_connect(source) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, [start, end, *query_comments, row_limit + 1])
+                cur.execute(sql, [*parameters, *query_comments, row_limit + 1])
                 raw_rows = cur.fetchall()
                 truncated = len(raw_rows) > row_limit
                 raw_rows = raw_rows[:row_limit]
@@ -805,9 +833,14 @@ class EaCommentGroupService:
                         "currency": r.normalize_text(meta.get("displayCurrency") or meta.get("currency")),
                         "isCentAccount": bool(meta.get("isCentAccount")),
                     })
-        limitations = [
-            f"MT4 备注列无独立索引，结果按当前账号使用区间 {start:%Y-%m-%d %H:%M:%S} 至 {end:%Y-%m-%d %H:%M:%S} 查询"
-        ]
+        if selected_scope:
+            scope_text = f"{start:%Y-%m-%d %H:%M:%S}" if start else "最早"
+            scope_text += f" 至 {end:%Y-%m-%d %H:%M:%S}" if end else " 至 最新"
+            limitations = [f"MT4 备注列无独立索引，结果按选择的开仓时间范围 {scope_text} 查询"]
+        else:
+            limitations = [
+                f"MT4 备注列无独立索引，结果按当前账号使用区间 {start:%Y-%m-%d %H:%M:%S} 至 {end:%Y-%m-%d %H:%M:%S} 查询"
+            ]
         return records, truncated, limitations
 
     def _query_mt4_dynamic(self, source: dict, seeds: list[dict], row_limit: int) -> tuple[list[dict], bool, list[str]]:
@@ -816,15 +849,24 @@ class EaCommentGroupService:
         truncated = False
         source_identity = self._source_identity(source)
         for seed in seeds:
-            start = r.parse_trade_time(seed.get("firstTime"))
-            end = r.parse_trade_time(seed.get("lastTime"))
+            scope_start, scope_end, selected_scope = self._seed_scope_bounds([seed])
+            start = scope_start if selected_scope else r.parse_trade_time(seed.get("firstTime"))
+            end = scope_end if selected_scope else r.parse_trade_time(seed.get("lastTime"))
             prefix = r.normalize_text(seed.get("stablePrefix"))
-            if not start or not end or not prefix:
+            if (not selected_scope and (not start or not end)) or not prefix:
                 continue
             route = seed.get("classification") == "possible_copy_route"
             expert_id = _integer(seed.get("expertId"))
             magic_clause = "" if route or expert_id <= 0 else " and MAGIC = %s"
-            parameters: list[object] = [start, end, f"{_sql_like_prefix(prefix)}%"]
+            time_clauses: list[str] = []
+            parameters: list[object] = []
+            if start:
+                time_clauses.append("OPEN_TIME >= %s")
+                parameters.append(start)
+            if end:
+                time_clauses.append("OPEN_TIME <= %s")
+                parameters.append(end)
+            parameters.append(f"{_sql_like_prefix(prefix)}%")
             if magic_clause:
                 parameters.append(expert_id)
             parameters.append(row_limit + 1)
@@ -835,7 +877,7 @@ class EaCommentGroupService:
                         select TICKET, LOGIN, SYMBOL, VOLUME, OPEN_TIME, CLOSE_TIME,
                                PROFIT, COMMISSION, SWAPS, TAXES, COMMENT, MAGIC
                         from `{source['schema']}`.`{source['table']}`
-                        where OPEN_TIME >= %s and OPEN_TIME <= %s
+                        where {' and '.join(time_clauses)}
                           and CMD in (0,1) and COMMENT like %s escape '!'{magic_clause}
                         order by OPEN_TIME, TICKET
                         limit %s
@@ -905,6 +947,7 @@ class EaCommentGroupService:
         return (
             _text(source.get("host")), _text(source.get("schema")),
             _text(seed.get("normalizedTemplate")).casefold(), expert,
+            _text(seed.get("scopeStart")), _text(seed.get("scopeEnd")),
         )
 
     def _dynamic_discovery_patterns(self, source: dict, stable_prefix: str) -> list[str]:
@@ -928,6 +971,7 @@ class EaCommentGroupService:
         last_error: Exception | None = None
         route = seed.get("classification") == "possible_copy_route"
         expert_id = _integer(seed.get("expertId"))
+        scope_start, scope_end, _selected_scope = self._seed_scope_bounds([seed])
         for _attempt in range(2):
             try:
                 rows: list[dict] = []
@@ -939,12 +983,19 @@ class EaCommentGroupService:
                             parameters: list[object] = [pattern]
                             if expert_clause:
                                 parameters.append(expert_id)
+                            time_clause = ""
+                            if scope_start:
+                                time_clause += " and Time >= %s"
+                                parameters.append(scope_start)
+                            if scope_end:
+                                time_clause += " and Time <= %s"
+                                parameters.append(scope_end)
                             parameters.append(shard_limit + 1)
                             cur.execute(
                                 f"""
                                     select Login, PositionID, Comment, ExpertID
                                     from `{source['schema']}`.`{source['table']}`
-                                    where Comment like %s escape '!'{expert_clause}
+                                    where Comment like %s escape '!'{expert_clause}{time_clause}
                                       and Action in (0,1) and Entry = 0 and PositionID <> 0
                                     limit %s
                                 """,
@@ -1309,11 +1360,21 @@ class EaCommentGroupService:
 
         query_comments = ea_comment_query_values([item["comment"] for item in exact_seeds])
         if query_comments:
+            scope_start, scope_end, _selected_scope = self._seed_scope_bounds(exact_seeds)
+            time_clause = ""
+            parameters: list[object] = [*query_comments]
+            if scope_start:
+                time_clause += " and Time >= %s"
+                parameters.append(scope_start)
+            if scope_end:
+                time_clause += " and Time <= %s"
+                parameters.append(scope_end)
+            parameters.append(row_limit + 1)
             seed_sql = f"""
                 select Deal, Login, PositionID, Comment, ExpertID
                 from `{source['schema']}`.`{source['table']}`
                 where Comment in ({','.join(['%s'] * len(query_comments))})
-                  and Action in (0,1) and Entry = 0 and PositionID <> 0
+                  and Action in (0,1) and Entry = 0 and PositionID <> 0{time_clause}
                 order by Deal
                 limit %s
             """
@@ -1322,7 +1383,7 @@ class EaCommentGroupService:
                 exact_by_key[item["comment"].casefold()].append(item)
             with r.mysql_trade_connect(source) as conn:
                 with conn.cursor() as cur:
-                    cur.execute(seed_sql, [*query_comments, row_limit + 1])
+                    cur.execute(seed_sql, parameters)
                     seed_rows = cur.fetchall()
                     routed_accounts = self._routed_accounts(
                         cur, source, {r.normalize_text(row.get("Login")) for row in seed_rows}
@@ -1511,12 +1572,16 @@ class EaCommentGroupService:
             raise ValueError("账号格式无效")
         platform = r.normalize_text(filters.get("platform")).upper()
         server = r.normalize_text(filters.get("server"))
-        rows = r.query_db_trades(login, platform=platform, server=server, limit=50000)
+        start = r.normalize_text(filters.get("start"))
+        end = r.normalize_text(filters.get("end"))
+        rows = r.query_db_trades(
+            login, platform=platform, server=server, start=start, end=end, limit=50000,
+        )
         sources = [source for source in r.MYSQL_SOURCES if r.source_allowed(source, platform=platform, server=server)]
-        all_source_seeds = [
-            (source, self._annotate_seeds(source, self._seed_comments(self._source_rows(rows, source))))
-            for source in sources
-        ]
+        all_source_seeds = []
+        for source in sources:
+            seeds = self._annotate_seeds(source, self._seed_comments(self._source_rows(rows, source)))
+            all_source_seeds.append((source, [{**seed, "scopeStart": start, "scopeEnd": end} for seed in seeds]))
         commentless_sources = [
             (source, self._source_rows(rows, source))
             for source, seeds in all_source_seeds

@@ -645,8 +645,16 @@ def calculate_factor_result(inputs: FactorInputs) -> FactorResult:
         reasons.append("holding_quality_hard_gate_failed")
     if inputs.carry_hard_failed:
         reasons.append("carry_risk_hard_gate_failed")
+    noncompensable = {
+        "missing_account_history",
+        "missing_copy_cost_evidence",
+        "negative_equity",
+        "cashflow_adjusted_capital_exhaustion",
+        "nonpositive_balance_baseline",
+        "stop_out_compensation",
+    }
     return FactorResult(
-        eligible=not reasons,
+        eligible=not any(reason in noncompensable for reason in reasons),
         base_score=base_score,
         factor_scores=factor_scores,
         gate_reasons=tuple(dict.fromkeys(reasons)),

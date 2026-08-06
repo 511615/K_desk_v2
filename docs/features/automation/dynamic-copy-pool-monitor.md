@@ -30,7 +30,8 @@ projection. MT5 comments, Magic values, private source keys and credentials are 
 ## Independent execution model
 
 Selection and monitoring use `account + normalized product` sleeves across every supported Demo
-product. The first candidate gate is strictly positive 20-day closed trading net plus current
+product. The first candidate gate is a close within the rolling seven-day activity window, followed
+by strictly positive rolling 30-day closed trading net plus current
 same-product floating P/L. The cross-product population targets up to 30 unique monitored clients
 and up to 70 unique reserve clients, not 30 clients per product; all hard-qualified sleeves belonging
 to a selected client remain visible. A non-empty qualified monitor population may proceed below the
@@ -51,10 +52,15 @@ increasing, reducing, closing and reversing events affect only those mapped Tick
 customers remain independently open; net exposure is display and combination-risk evidence only.
 Existing source positions at startup and positions first observed during shadow are not chased.
 Restart requires persisted and actual Ticket ownership to match exactly.
-The MT5 adapter also pins the Demo Login observed during initialization. Every later account sample
-must retain that Login, `ACCMGlobal-Demo` and Demo trade mode; an IPC sample from another account or
-server is rejected before sizing, risk evaluation, status publication or order execution. The last
-valid dashboard snapshot remains authoritative while the account channel is inconsistent.
+The governed launcher supplies the explicitly approved Demo Login. During initialization the MT5
+adapter selects that saved portable-terminal account on `ACCMGlobal-Demo` when another account is
+active, requires consecutive matching identity samples through the asynchronous terminal transition,
+verifies Demo trade mode and hedging, then pins the exact Login. It never supplies or stores a
+trading password. A failed or unstable selection and any different Login/server after selection are
+fail-closed.
+Every later account sample must retain that identity; an inconsistent IPC sample is rejected before
+sizing, risk evaluation, status publication or order execution. The last valid dashboard snapshot
+remains authoritative while the account channel is inconsistent.
 Closed source mappings remain in the current trading-day ledger so realized Demo P/L continues to
 consume the correct client's loss budget; empty closed mappings are pruned on the next trading day.
 Independent order comments are deterministic 16-character identifiers that survive the Demo
@@ -68,8 +74,10 @@ live reconciliation and is removed when the source closes; restart never turns i
 Demo order. A uniquely recovered or already mapped Ticket remains eligible for reduction, close and
 risk management.
 
-After cost, drawdown and copyability hard gates, every executable sleeve with a positive adjusted
-score receives proportional base-weight input. The adjusted score is not subject to a separate
+After rolling-30-day cost-adjusted comprehensive-profit and non-compensable account-data gates,
+every executable sleeve receives proportional base-weight input. Drawdown, holding, carry and
+recent-performance evidence are ranking warnings and score inputs, not a second eligibility filter.
+The adjusted score is not subject to a separate
 `0.55` activity floor or threshold subtraction: factor ranks determine relative allocation, while
 zero current risk multipliers still receive no new-risk allocation. Product weights use a 40%
 diversification cap when at least three qualified products make that cap feasible; with fewer
@@ -87,17 +95,17 @@ Twelve-hour positions cannot add risk and 24-hour positions close and pause that
 
 Historical Tick delay replay is deferred from V0.1 because its cross-product validation cost is not
 yet accepted. It does not participate in score or hard eligibility, and missing Tick partitions do
-not reject a sleeve. The primary cost_profit_recent_coverage_carry_v2 score is 45% cost-adjusted
-profit per copied trade, 25% recent five-day cost-adjusted profit per copied trade, 15% copy-cost
-coverage and 15% carry quality. Source P/L is first normalized to USD, then scaled from the 20-day average closed
+not reject a sleeve. The primary cost_profit_recent_coverage_carry_v4 score is 45% 30-day cost-adjusted
+profit per copied trade, 25% recent seven-day cost-adjusted profit per copied trade, 15% copy-cost
+coverage and 15% carry quality. Source P/L is first normalized to USD, then scaled from the 30-day average closed
 execution size to the selected Demo product's actual minimum lot. Estimated cost is the product
 default round-trip spread at that minimum lot plus a 25% execution reserve; rebates never enter
-either P/L or cost. MT5 close counts and lots share the same exit/reversal Deal population. Five-day
-and 20-day cost-adjusted P/L must both be positive and 20-day cost coverage must be at least one;
-only rows passing those and all prior hard gates participate in percentile ranking. Missing or
-non-finite cost evidence is a hard rejection. Drawdown,
-holding, negative-equity, stop-out and evidence-quality checks remain non-compensable hard gates,
-not secondary score weights. Carry risk combines floating-loss depth, underwater duration and
+either P/L or cost. MT5 close counts and lots share the same exit/reversal Deal population. The
+30-day cost-adjusted comprehensive P/L is the core profitability gate; seven-day performance and
+cost coverage rank sleeves but do not reject them. Missing or non-finite required cost evidence,
+negative equity, cashflow exhaustion and stop-out compensation remain non-compensable hard gates.
+Drawdown, holding, carry and evidence-quality checks are visible ranking warnings rather than
+secondary rejection gates. Carry risk combines floating-loss depth, underwater duration and
 simultaneous losing-position count after the cheap profitability gates. Score 70, 10% observed
 maximum floating loss, 48 hours underwater or eight losing positions is a build-time hard rejection.
 Carry evidence does not remove an already selected sleeve from intraday activity or alter an open
@@ -109,11 +117,11 @@ capital without subtracting its own funding movement. Actual platform equity bel
 `negative_equity`; that code comes only from authoritative platform daily/current equity evidence,
 not from an incomplete reconstructed snapshot path. Later cashflow-adjusted capital at or below zero is the separate hard gate
 `cashflow_adjusted_capital_exhaustion`, so replenishment after losses is rejected without being
-misreported as platform negative equity. Daily drawdown uses only the bounded 61-day daily read: the
-extra day supplies a possible rollover baseline for the 60-day scoring window, and the repository
+misreported as platform negative equity. Daily drawdown uses only the bounded 31-day daily read: the
+extra day supplies a possible rollover baseline for the 30-day scoring window, and the repository
 never searches farther into old account history. If no earlier funded observation exists inside
 that bounded read, a newly funded account's first positive observation supplies its first baseline;
-otherwise 20/60-day coverage remains incomplete and fails closed. Missing
+otherwise 30-day coverage remains incomplete and fails closed. Missing
 position-path or intraday-equity evidence remains monitor-only rather than clean. A/TA status adds
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
 entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
@@ -144,8 +152,11 @@ Hourly current-position evidence uses collision-free `current` column names, pre
 build-time floating/hedge columns when a product currently has no open position.
 Hourly monitor-only sleeves receive no provisional execution base weight. Producer status and the
 dashboard define active weight as the final executable minimum of source quality, dynamic sleeve
-state and client risk reduction; `activeCopyClients` counts only clients with an active dynamic
-sleeve, while risk-ledger membership is reported separately.
+state and client risk reduction. The dynamic product sleeve is the sole execution-state authority:
+an `active` sleeve must have `effective_weight > 0`; a zero-weight sleeve is projected as
+execution-suspended and cannot appear in the active copy tier. `activeCopyClients` counts only
+clients with an active, positive-weight dynamic sleeve, while risk-ledger membership is reported
+separately.
 Restoring a versioned, fully covered accepted cache records its build day in scheduler state, so a
 post-05:15 restart does not immediately repeat the same full build. The producer publishes a fresh
 status snapshot before entering its first polling cycle. Each successful hourly rotation also
@@ -282,20 +293,20 @@ private file is returned wholesale or logged.
 
 The accepted same-day pool cache is valid only when its metadata and coverage file contain the
 exact configured eleven-route and nine-source sets and every source completed successfully.
-Every MT4 and MT5 factor-history load is limited to one bounded 61-day daily-equity range. It never
+Every MT4 and MT5 factor-history load is limited to one bounded 31-day daily-equity range. It never
 performs a second pre-window query or progressively searches older history. Risk history, holding
 statistics and factor history each run across at most four physical sources concurrently, while
 each physical source remains one serial task per stage. Results merge in stable physical-source
 order; any source failure rejects the complete build.
 Coverage records bounded stage timings for route discovery, feature scan, current state, risk,
 holding, factor history/scoring and total build time without exposing SQL or account identity.
-The v9 producer may migrate a same-trading-day v6, v7 or v8 cache without repeating the 60-day
+The v10 producer may migrate a same-trading-day v6, v7, v8 or v9 cache without repeating the 30-day
 database build only when the private universe is present and metadata plus coverage prove the exact
 complete eleven-route/nine-source set and complete carry-risk evidence. A legacy universe without
 carry-risk evidence forces a full rebuild. Migration preserves all existing hard-gate failures,
-applies the current five-day/20-day after-cost and coverage gates across the full cached universe,
-regenerates selection and positive-score weights, and stamps v9/v3 metadata. The next 05:15 schedule
-still performs a complete read-only database rebuild under the v9 model. A migration rebases sleeve
+applies the current seven-day/30-day after-cost evidence across the full cached universe,
+regenerates selection and positive-score weights, and stamps v10/v4 metadata. The next 05:15 schedule
+still performs a complete read-only database rebuild under the v10 model. A migration rebases sleeve
 weights but remains a same-day restart: persisted source-position to Demo-Ticket ownership is
 restored and validated rather than cleared.
 MT5 polling intentionally reads non-trading ledger actions so each physical cursor can advance past

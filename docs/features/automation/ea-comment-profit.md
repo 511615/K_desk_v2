@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/ea_comment_group.py", "legacy/apps/
 tests: ["legacy/apps/problem_account_registry/test_app.py", "tests/test_api.py", "tests/test_automation_reports.py"]
 depends_on: ["ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-24
+last_verified_date: 2026-08-04
 ---
 
 # EA comment group profit
@@ -34,12 +34,17 @@ whether the row matched by same-server Comment plus identifier or by cross-serve
 Every EA group is an independent native disclosure section. Groups start expanded; selecting the
 group header collapses or expands only that group without issuing another request or changing the
 page-local payload cache.
-The successful result is cached in the current page by normalized filters, so closing and reopening
-the dialog performs no new request. Explicit refresh, filter changes and page reload invalidate it;
-failed requests are removed from cache and may be retried.
+The dialog has optional start and end controls plus an explicit `查询` action. Both values apply to
+opening time; either can be blank, and both blank means full history. A start later than the end is
+rejected in the dialog before a request is sent. The successful result is cached in the current page
+by normalized platform/server/symbol and opening-time range, so closing and reopening the dialog
+performs no new request. Explicit refresh, filter changes and page reload invalidate it; failed
+requests are removed from cache and may be retried.
 The query dialog provides one-click Excel export with an EA group summary, database/server-aware
 account detail and definitions/errors. Current-account rows are highlighted and every detail row
 contains an auditable net-profit reconciliation formula.
+The Excel export reuses the currently selected EA opening-time range, so its group totals and member
+profits are the same population displayed in the dialog.
 The dialog headline and workbook EA KPIs aggregate only groups with `countedAsEa=true`. Route-like
 groups remain expandable with their own member profit, order and cost detail and are visibly marked
 as excluded from the EA summary.
@@ -57,11 +62,13 @@ Classification fields are additive: `classification`, `classificationLabel`, `co
 No-comment sequence groups additively expose `signatureType=expert-sequence`, `sharedExpertIds` and
 an `expertSequence` object containing the enforced minimum shared count, overlap threshold, time
 tolerance and full-group shared count.
-The additive `.xlsx` endpoint accepts the same account source filters and returns a no-store workbook.
+The additive `.xlsx` endpoint accepts the same account source filters plus optional `start` and `end`
+opening-time filters and returns a no-store workbook.
 
 ## Data, routing and read-only constraints
 
-The selected source identifies opening-Comment seeds. Every seed first performs an exact full-Comment
+The selected source identifies opening-Comment seeds. Optional `start` and `end` constrain both
+seed selection and peer aggregation by opening time. Every seed first performs an exact full-Comment
 read across configured physical sources on the same platform. MT5 uses only opening deals (`Entry=0`)
 and the Comment index; MT4 uses a bounded observed interval because COMMENT and MAGIC are not
 independently indexed. Same-server exact candidates match Comment and ExpertID/MAGIC; cross-server
@@ -118,7 +125,8 @@ EA grouping is isolated in `ea_comment_group.py` and exposed through the compati
 Tests cover all listed route and dynamic-EA templates, unknown-format learning, system/contact
 exclusions, exact-before-dynamic ordering, provider-error suppression, same-server identifier
 enforcement, cross-server evidence, MT4 MAGIC, AC index shards, member totals, UI labels and workbook
-EA-only KPIs. DBG CN MT5 account `2013674` remains the route-format regression: its `@8@...@7`
+EA-only KPIs. They also verify that a selected opening-time range is passed to subject-order reads,
+carried into peer seeds and rendered in the indexed MT5 opening-deal query. DBG CN MT5 account `2013674` remains the route-format regression: its `@8@...@7`
 structure must be displayed as `可能是跟单路由`, must not contribute to `eaSummary`, and must retain
 database/server-aware members and profit detail when structural fallback finds peers.
 The 2026-07-24 live read-only result contained 12 routed accounts and 14,286 reconstructed Positions,

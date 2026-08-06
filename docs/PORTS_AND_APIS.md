@@ -44,13 +44,16 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   graph for same-CRM-user accounts, current-account IP observations, EA/route features, Copy and
   rebate facts; supports existing platform/server/symbol/time filters and returns partial coverage
   without risk scores or relationship-strength classifications
-- `GET /api/accounts/by-login/{login}/copy-origins`
-- `GET /api/accounts/by-login/{login}/copy-group-profit`
+- `GET /api/accounts/by-login/{login}/copy-origins` - accepts optional `platform`, `server`,
+  `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
+- `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the
+  opening-time range for Signal trade and time-scoped rebate totals
 - `GET /api/accounts/by-login/{login}/ea-comment-profit` - member rows additively expose
   `expertIds`, `matchClue` and `matchClues`; groups expose `expertId` and `matchRule`. Conservative
   no-comment MT5 route groups additively expose `signatureType=expert-sequence`, `sharedExpertIds`
   and `expertSequence`; they remain excluded from `eaSummary`
-- `GET /api/accounts/by-login/{login}/copy-report.xlsx` - CPT/Signal group and follower profit workbook
+- `GET /api/accounts/by-login/{login}/copy-report.xlsx` - CPT/Signal group and follower profit
+  workbook; consumes exactly the same optional filters as the JSON endpoints
 - `GET /api/accounts/by-login/{login}/ea-report.xlsx` - EA comment group and account profit workbook
 - `GET /api/accounts/by-login/{login}/login-ips`
 - `GET /api/accounts/by-login/{login}/orders`

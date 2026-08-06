@@ -166,6 +166,18 @@ class DynamicStateTests(unittest.TestCase):
         self.assertEqual(late, first)
         self.assertEqual(first.consecutive_active_qualifications, 1)
 
+    def test_zero_target_weight_cannot_promote_to_active(self) -> None:
+        blocked = update_rank_state(
+            self.state,
+            self.row,
+            NOW,
+            active_zone=True,
+            qualified_zone=True,
+            target_weight=0.0,
+        )
+        self.assertNotEqual(blocked.tier, PoolTier.ACTIVE)
+        self.assertEqual(blocked.effective_weight, 0.0)
+
     def test_legacy_shadow_still_handles_health_before_its_next_rank(self) -> None:
         shadow = SleeveDynamicState(
             day_start_base_weight=0.10,

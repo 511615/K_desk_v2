@@ -363,6 +363,20 @@ class CopyPoolFileSnapshotRepository:
                     max(0.0, _float(dynamic_state.get("effectiveWeight"))),
                 )
             effective_weight = source_weight * client_weight_multiplier
+            # The dynamic product sleeve is the sole execution authority. Do
+            # not present a daily active row as executable when its final
+            # dynamic weight is zero.
+            projected_tier = (
+                self._pool_tier(dynamic_state.get("tier"), "")
+                if dynamic_state else self._pool_tier(row.get("pool_tier"), row.get("pool_status"))
+            )
+            if projected_tier == "active" and effective_weight <= 1e-12:
+                projected_tier = "execution_suspended"
+            projected_activity = (
+                _bool(row.get("activity_eligible"))
+                and projected_tier == "active"
+                and effective_weight > 1e-12
+            )
             intraday = _float(
                 intraday_by_login.get(route["account_key"], intraday_by_login.get(route["login"]))
             ) if route else 0.0
@@ -395,9 +409,9 @@ class CopyPoolFileSnapshotRepository:
                 "holdP25Seconds": _float(row.get("hold_p25_seconds")),
                 "holdP90Seconds": _float(row.get("hold_p90_seconds")),
                 "shortTradeRatio": _float(row.get("short_trade_ratio")),
-                "activityEligible": _bool(row.get("activity_eligible")),
-                "poolStatus": str(row.get("pool_status") or "monitor_only"),
-                "poolTier": self._pool_tier(row.get("pool_tier"), row.get("pool_status")),
+                "activityEligible": projected_activity,
+                "poolStatus": "active_candidate" if projected_activity else "monitor_only",
+                "poolTier": projected_tier,
                 "factorReady": _bool(row.get("factor_ready")),
                 "factorBaseScore": _float(row.get("factor_base_score")),
                 "factorModel": str(row.get("factor_model") or "legacy"),

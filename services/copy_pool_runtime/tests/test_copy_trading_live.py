@@ -79,6 +79,117 @@ class PartialFillMt5Executor(FakeMt5Executor):
 
 
 class Mt5AccountIdentityTests(unittest.TestCase):
+    @staticmethod
+    def _demo_account(login: int = 33_304_642, server: str = "ACCMGlobal-Demo") -> SimpleNamespace:
+        return SimpleNamespace(
+            login=login,
+            server=server,
+            trade_mode=0,
+            margin_mode=2,
+        )
+
+    @staticmethod
+    def _tradable_symbol() -> SimpleNamespace:
+        return SimpleNamespace(
+            trade_mode=4,
+            visible=True,
+            volume_min=0.01,
+            volume_step=0.01,
+        )
+
+    def test_initialize_switches_to_explicitly_approved_demo_login(self) -> None:
+        executor = Mt5Executor(
+            Path("terminal64.exe"),
+            RISK_PROFILES["Capital10k"],
+            expected_login=33_304_642,
+        )
+        live = self._demo_account(login=11_007, server="ACCMGlobal-Live")
+        demo = self._demo_account()
+
+        with (
+            patch("copy_trading_live_demo.mt5.initialize", return_value=True),
+            patch("copy_trading_live_demo.mt5.login", return_value=True) as login,
+            patch(
+                "copy_trading_live_demo.mt5.account_info",
+                side_effect=(live, demo, live, demo, demo, demo),
+            ),
+            patch(
+                "copy_trading_live_demo.mt5.terminal_info",
+                return_value=SimpleNamespace(connected=True),
+            ),
+            patch("copy_trading_live_demo.mt5.symbol_info", return_value=self._tradable_symbol()),
+            patch("copy_trading_live_demo.time.sleep") as sleep,
+        ):
+            executor.initialize()
+
+        login.assert_called_once_with(33_304_642, server="ACCMGlobal-Demo")
+        self.assertEqual(executor.approved_login, 33_304_642)
+        self.assertGreaterEqual(sleep.call_count, 4)
+
+    def test_initialize_without_expected_login_remains_fail_closed_on_live(self) -> None:
+        executor = Mt5Executor(Path("terminal64.exe"), RISK_PROFILES["Capital10k"])
+
+        with (
+            patch("copy_trading_live_demo.mt5.initialize", return_value=True),
+            patch("copy_trading_live_demo.mt5.login") as login,
+            patch(
+                "copy_trading_live_demo.mt5.account_info",
+                return_value=self._demo_account(login=11_007, server="ACCMGlobal-Live"),
+            ),
+            patch(
+                "copy_trading_live_demo.mt5.terminal_info",
+                return_value=SimpleNamespace(connected=True),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not the approved Demo server"):
+                executor.initialize()
+
+        login.assert_not_called()
+
+    def test_initialize_rejects_failed_expected_demo_login(self) -> None:
+        executor = Mt5Executor(
+            Path("terminal64.exe"),
+            RISK_PROFILES["Capital10k"],
+            expected_login=33_304_642,
+        )
+
+        with (
+            patch("copy_trading_live_demo.mt5.initialize", return_value=True),
+            patch("copy_trading_live_demo.mt5.login", return_value=False),
+            patch(
+                "copy_trading_live_demo.mt5.account_info",
+                return_value=self._demo_account(login=11_007, server="ACCMGlobal-Live"),
+            ),
+            patch(
+                "copy_trading_live_demo.mt5.terminal_info",
+                return_value=SimpleNamespace(connected=True),
+            ),
+            patch("copy_trading_live_demo.mt5.last_error", return_value=(-6, "authorization failed")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "approved Demo Login 33304642 failed"):
+                executor.initialize()
+
+    def test_initialize_rejects_identity_mismatch_after_demo_login(self) -> None:
+        executor = Mt5Executor(
+            Path("terminal64.exe"),
+            RISK_PROFILES["Capital10k"],
+            expected_login=33_304_642,
+        )
+        live = self._demo_account(login=11_007, server="ACCMGlobal-Live")
+
+        with (
+            patch("copy_trading_live_demo.mt5.initialize", return_value=True),
+            patch("copy_trading_live_demo.mt5.login", return_value=True),
+            patch("copy_trading_live_demo.mt5.account_info", return_value=live),
+            patch(
+                "copy_trading_live_demo.mt5.terminal_info",
+                return_value=SimpleNamespace(connected=True),
+            ),
+            patch("copy_trading_live_demo.time.sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "did not select the approved Demo account"):
+                executor.initialize()
+
     def test_runtime_account_sample_must_match_initialized_demo_login(self) -> None:
         executor = Mt5Executor(Path("terminal64.exe"), RISK_PROFILES["Capital10k"])
         executor.approved_login = 33_304_642

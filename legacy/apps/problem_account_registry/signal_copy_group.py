@@ -173,7 +173,9 @@ class SignalCopyGroupService:
         members.sort(key=lambda row: int(row["account"]))
         return members, truncated
 
-    def query_rebates(self, source: dict, logins: list[int]) -> tuple[dict[str, float], str]:
+    def query_rebates(
+        self, source: dict, logins: list[int], *, start: str = "", end: str = ""
+    ) -> tuple[dict[str, float], str]:
         r = self.runtime
         routes = r.source_crm_routes(source)
         if not routes or not logins:
@@ -185,14 +187,24 @@ class SignalCopyGroupService:
                     for route in routes:
                         for batch in _batches(logins):
                             placeholders = ",".join(["%s"] * len(batch))
+                            time_clauses: list[str] = []
+                            parameters: list[object] = [route["mt_server_code"], *batch]
+                            if start:
+                                time_clauses.append("create_time >= %s")
+                                parameters.append(start)
+                            if end:
+                                time_clauses.append("create_time <= %s")
+                                parameters.append(end)
+                            time_where = f" and {' and '.join(time_clauses)}" if time_clauses else ""
                             cur.execute(
                                 f"""
                                     select trade_mt_login as Login, sum(rebate_amount) as Rebate
                                     from `{route['schema']}`.`rebate_task_detail`
                                     where mt_server_code = %s and trade_mt_login in ({placeholders})
+                                      {time_where}
                                     group by trade_mt_login
                                 """,
-                                [route["mt_server_code"], *batch],
+                                parameters,
                             )
                             for row in cur.fetchall():
                                 rebates[r.normalize_text(row.get("Login"))] += r.numeric_value(row.get("Rebate"))
@@ -200,7 +212,9 @@ class SignalCopyGroupService:
             return {}, f"返佣查询失败：{exc}"
         return dict(rebates), ""
 
-    def query_mt4_stats(self, source: dict, members: list[dict]) -> tuple[list[dict], list[str]]:
+    def query_mt4_stats(
+        self, source: dict, members: list[dict], *, start: str = "", end: str = ""
+    ) -> tuple[list[dict], list[str]]:
         r = self.runtime
         member_map = {row["account"]: row for row in members}
         logins = [int(account) for account in member_map]
@@ -209,6 +223,14 @@ class SignalCopyGroupService:
             with conn.cursor() as cur:
                 for batch in _batches(logins):
                     placeholders = ",".join(["%s"] * len(batch))
+                    where = [f"LOGIN in ({placeholders})", "CMD in (0,1)"]
+                    parameters: list[object] = list(batch)
+                    if start:
+                        where.append("OPEN_TIME >= %s")
+                        parameters.append(start)
+                    if end:
+                        where.append("OPEN_TIME <= %s")
+                        parameters.append(end)
                     cur.execute(
                         f"""
                             select LOGIN,
@@ -224,14 +246,14 @@ class SignalCopyGroupService:
                                    min(case when CMD in (0,1) and CLOSE_TIME > '1971-01-02' then CLOSE_TIME end) as FirstClose,
                                    max(case when CMD in (0,1) and CLOSE_TIME > '1971-01-02' then CLOSE_TIME end) as LastClose
                             from `{source['schema']}`.`{source['table']}`
-                            where LOGIN in ({placeholders}) and CMD in (0,1)
+                            where {' and '.join(where)}
                             group by LOGIN
                         """,
-                        batch,
+                        parameters,
                     )
                     for row in cur.fetchall():
                         raw_stats[r.normalize_text(row.get("LOGIN"))] = row
-        rebates, rebate_error = self.query_rebates(source, logins)
+        rebates, rebate_error = self.query_rebates(source, logins, start=start, end=end)
         limitations = [rebate_error] if rebate_error else []
         results = []
         for login, member in member_map.items():
@@ -257,7 +279,9 @@ class SignalCopyGroupService:
             })
         return results, limitations
 
-    def query_mt5_stats(self, source: dict, members: list[dict]) -> tuple[list[dict], list[str]]:
+    def query_mt5_stats(
+        self, source: dict, members: list[dict], *, start: str = "", end: str = ""
+    ) -> tuple[list[dict], list[str]]:
         r = self.runtime
         member_map = {row["account"]: row for row in members}
         logins = [int(account) for account in member_map]
@@ -268,20 +292,58 @@ class SignalCopyGroupService:
             with conn.cursor() as cur:
                 for batch in _batches(logins, 100):
                     placeholders = ",".join(["%s"] * len(batch))
-                    cur.execute(
-                        f"""
-                            select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
-                                   Symbol, Price, Volume, VolumeExt, VolumeClosed, VolumeClosedExt,
-                                   Profit, Commission, Storage, Fee, Comment, ExpertID, PriceSL, PriceTP,
-                                   ContractSize, TickValue, TickSize, MarketBid, MarketAsk, PriceGateway
-                            from `{source['schema']}`.`{source['table']}`
-                            where Login in ({placeholders}) and Action in (0,1) and Entry in (0,1)
-                            order by Login, PositionID, Time, Deal
-                        """,
-                        batch,
-                    )
-                    for row in cur.fetchall():
-                        deals_by_login[r.normalize_text(row.get("Login"))].append(row)
+                    if start or end:
+                        opening_where = [f"Login in ({placeholders})", "Action in (0,1)", "Entry = 0", "PositionID <> 0"]
+                        opening_parameters: list[object] = list(batch)
+                        if start:
+                            opening_where.append("Time >= %s")
+                            opening_parameters.append(start)
+                        if end:
+                            opening_where.append("Time <= %s")
+                            opening_parameters.append(end)
+                        cur.execute(
+                            f"select Login, PositionID from `{source['schema']}`.`{source['table']}` "
+                            f"where {' and '.join(opening_where)} group by Login, PositionID",
+                            opening_parameters,
+                        )
+                        position_ids = sorted({
+                            int(r.normalize_text(row.get("PositionID")))
+                            for row in cur.fetchall() if r.normalize_text(row.get("PositionID")).isdigit()
+                        })
+                        for position_batch in _batches(position_ids, 5000):
+                            position_login_placeholders = ",".join(["%s"] * len(batch))
+                            position_placeholders = ",".join(["%s"] * len(position_batch))
+                            cur.execute(
+                                f"""
+                                    select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
+                                           Symbol, Price, Volume, VolumeExt, VolumeClosed, VolumeClosedExt,
+                                           Profit, Commission, Storage, Fee, Comment, ExpertID, PriceSL, PriceTP,
+                                           ContractSize, TickValue, TickSize, MarketBid, MarketAsk, PriceGateway
+                                    from `{source['schema']}`.`{source['table']}`
+                                    where Login in ({position_login_placeholders})
+                                      and PositionID in ({position_placeholders})
+                                      and Action in (0,1) and Entry in (0,1)
+                                    order by Login, PositionID, Time, Deal
+                                """,
+                                [*batch, *position_batch],
+                            )
+                            for row in cur.fetchall():
+                                deals_by_login[r.normalize_text(row.get("Login"))].append(row)
+                    else:
+                        cur.execute(
+                            f"""
+                                select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
+                                       Symbol, Price, Volume, VolumeExt, VolumeClosed, VolumeClosedExt,
+                                       Profit, Commission, Storage, Fee, Comment, ExpertID, PriceSL, PriceTP,
+                                       ContractSize, TickValue, TickSize, MarketBid, MarketAsk, PriceGateway
+                                from `{source['schema']}`.`{source['table']}`
+                                where Login in ({placeholders}) and Action in (0,1) and Entry in (0,1)
+                                order by Login, PositionID, Time, Deal
+                            """,
+                            batch,
+                        )
+                        for row in cur.fetchall():
+                            deals_by_login[r.normalize_text(row.get("Login"))].append(row)
                 try:
                     for batch in _batches(logins):
                         placeholders = ",".join(["%s"] * len(batch))
@@ -299,7 +361,7 @@ class SignalCopyGroupService:
                             positions[r.normalize_text(row.get("Login"))] = row
                 except Exception as exc:
                     limitations.append(f"MT5 当前持仓盈亏未取到：{exc}")
-        rebates, rebate_error = self.query_rebates(source, logins)
+        rebates, rebate_error = self.query_rebates(source, logins, start=start, end=end)
         if rebate_error:
             limitations.append(rebate_error)
         results = []
@@ -329,7 +391,9 @@ class SignalCopyGroupService:
             })
         return results, limitations
 
-    def query_group_for_source(self, source: dict, login: str) -> dict | None:
+    def query_group_for_source(
+        self, source: dict, login: str, *, start: str = "", end: str = ""
+    ) -> dict | None:
         r = self.runtime
         seed = self.query_seed(source, login)
         if not seed:
@@ -341,9 +405,9 @@ class SignalCopyGroupService:
                 "truncated": truncated, "limitations": ["识别到 Signal 标识，但未找到同组账户"],
             }
         if source.get("kind") == "mt5_deals":
-            rows, limitations = self.query_mt5_stats(source, members)
+            rows, limitations = self.query_mt5_stats(source, members, start=start, end=end)
         else:
-            rows, limitations = self.query_mt4_stats(source, members)
+            rows, limitations = self.query_mt4_stats(source, members, start=start, end=end)
         rows.sort(key=lambda row: (-r.numeric_value(row.get("combinedNetProfit")), int(row.get("account") or 0)))
         return {
             **seed,
@@ -361,11 +425,16 @@ class SignalCopyGroupService:
             raise ValueError("账号格式无效")
         platform = r.normalize_text(filters.get("platform")).upper()
         server = r.normalize_text(filters.get("server"))
+        start = r.normalize_text(filters.get("start"))
+        end = r.normalize_text(filters.get("end"))
         sources = [source for source in r.MYSQL_SOURCES if r.source_allowed(source, platform=platform, server=server)]
         groups: list[dict] = []
         errors: list[str] = []
         with ThreadPoolExecutor(max_workers=min(4, len(sources) or 1), thread_name_prefix="copy-group") as executor:
-            futures = {executor.submit(self.query_group_for_source, source, login): source for source in sources}
+            futures = {
+                executor.submit(self.query_group_for_source, source, login, start=start, end=end): source
+                for source in sources
+            }
             for future in as_completed(futures):
                 source = futures[future]
                 try:

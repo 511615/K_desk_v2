@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "60a0d3ed5830",
+  "registryVersion": "c52917291535",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -36,7 +36,7 @@
         "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-29",
+      "last_verified_date": "2026-08-05",
       "document": "docs/features/account/account-detail-legacy.md"
     },
     {
@@ -90,7 +90,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-05",
       "document": "docs/features/account/account-search.md"
     },
     {
@@ -116,7 +116,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-05",
       "document": "docs/features/automation/copy-origin-query.md"
     },
     {
@@ -143,7 +143,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-24",
+      "last_verified_date": "2026-08-04",
       "document": "docs/features/automation/ea-comment-profit.md"
     },
     {
@@ -172,7 +172,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-05",
       "document": "docs/features/automation/follower-profit.md"
     },
     {
@@ -263,7 +263,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-05",
       "document": "docs/features/finance/comprehensive-profit.md"
     },
     {
