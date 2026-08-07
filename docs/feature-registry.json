@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "1414dbeb30fa",
+  "registryVersion": "7c0718b61c03",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -534,6 +534,7 @@
         ".env.example",
         "config/kline_quote_sources.example.json",
         "frontend/src/kdesk-theme.css",
+        "frontend/src/pages/AccountPage.vue",
         "src/kdesk/domain/kline.py",
         "src/kdesk/application/kline_generation.py",
         "src/kdesk/application/kline_timeline_cache.py",
@@ -557,7 +558,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-03",
+      "last_verified_date": "2026-08-07",
       "document": "docs/features/kline/database-generation.md"
     },
     {

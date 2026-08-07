@@ -4,11 +4,11 @@ title: Database K-line generation
 module: kline
 status: active
 apis: ["POST /api/kline/generate-from-db", "POST /api/uploads", "POST /api/jobs/{job_id}/generate", "GET /output/{name}"]
-code: [".env.example", "config/kline_quote_sources.example.json", "frontend/src/kdesk-theme.css", "src/kdesk/domain/kline.py", "src/kdesk/application/kline_generation.py", "src/kdesk/application/kline_timeline_cache.py", "src/kdesk/infrastructure/quote_sources.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/API.md", "legacy/tools/trade_kline_tool/README.md"]
+code: [".env.example", "config/kline_quote_sources.example.json", "frontend/src/kdesk-theme.css", "frontend/src/pages/AccountPage.vue", "src/kdesk/domain/kline.py", "src/kdesk/application/kline_generation.py", "src/kdesk/application/kline_timeline_cache.py", "src/kdesk/infrastructure/quote_sources.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/API.md", "legacy/tools/trade_kline_tool/README.md"]
 tests: ["tests/test_api.py", "tests/test_kline.py", "tests/test_kline_timeline_cache.py", "tests/test_worker.py"]
 depends_on: ["JOB-RECOVERY-001", "ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-03
+last_verified_date: 2026-08-07
 ---
 
 # Database K-line generation
@@ -24,6 +24,8 @@ Statement upload first performs a durable inspection, then the K-line task cente
 submits generation for every parsed symbol and keeps polling the generation job. Users see durable
 progress/events and receive a direct link when the generated HTML chart is ready; a completed
 inspection alone is not presented as a completed chart.
+The production account page opens the task center on the production K-line port `8766`; port `8866`
+remains development-only.
 New HTML preserves the established white high-contrast chart workspace and remains standalone for
 iframe, direct and offline use. It defaults to a compressed quote-index axis with visible market-break labels; the
 `隐藏停盘 / 显示停盘` segmented control expands actual elapsed time without manufacturing bars.
