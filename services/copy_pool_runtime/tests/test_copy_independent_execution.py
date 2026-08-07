@@ -15,12 +15,46 @@ from copy_independent_execution import (
     slow_weight_increase,
 )
 from copy_trading_live_demo import RISK_PROFILES, trading_day_key, utc_now
-from copy_trading_multi_demo import OPEN_REQUEST_LIMIT, MultiSourceLiveService, parse_args
+from copy_trading_multi_demo import (
+    OPEN_REQUEST_LIMIT,
+    MultiSourceLiveService,
+    event_reason_code,
+    parse_args,
+)
 from copy_pool_multisource import TOTAL_CLIENT_BUDGET, sleeve_key
 from copy_dynamic_pool_domain import PoolTier, SchedulerState, SleeveDynamicState, mark_scheduler_run
 
 
 NOW = datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc)
+
+
+class EventReasonCodeTests(unittest.TestCase):
+    def test_monitor_event_preserves_exact_bounded_rejection(self) -> None:
+        position = SimpleNamespace(
+            status="monitor", reject_reason="below_minimum_risk_lot"
+        )
+        self.assertEqual(
+            event_reason_code("open", position, signal_expired=False),
+            "below_minimum_risk_lot",
+        )
+
+    def test_unknown_internal_reason_is_not_published(self) -> None:
+        position = SimpleNamespace(status="monitor", reject_reason="secret free text")
+        self.assertEqual(
+            event_reason_code("open", position, signal_expired=False),
+            "event_detail_unavailable",
+        )
+
+    def test_expired_and_successful_events_have_stable_codes(self) -> None:
+        self.assertEqual(
+            event_reason_code("open", None, signal_expired=True),
+            "signal_expired_no_copy",
+        )
+        active = SimpleNamespace(status="active", reject_reason="")
+        self.assertEqual(
+            event_reason_code("open", active, signal_expired=False),
+            "risk_allowed",
+        )
 
 
 class IndependentCopyBookTests(unittest.TestCase):

@@ -1208,6 +1208,43 @@ class CopyPoolFileSnapshotRepository:
         return ""
 
     @staticmethod
+    def _event_reason_code(value: object) -> str:
+        """Project only stable public codes; never expose producer free text."""
+        code = str(value or "").strip().lower()
+        allowed = {
+            "risk_allowed", "risk_allowed_demo_minimum", "source_closed",
+            "client_not_in_current_pool", "old_or_shadow_position",
+            "signal_expired_no_copy", "client_loss_pause",
+            "client_recovery_shadow", "source_position_over_24h",
+            "zero_effective_weight", "below_minimum_risk_lot",
+            "restart_without_demo_ticket", "legacy_monitor_only",
+            "event_detail_unavailable",
+            "execution_gate_blocked:external_position_conflict",
+            "execution_gate_blocked:invalid_quote",
+            "execution_gate_blocked:stale_quote",
+            "execution_gate_blocked:spread",
+            "execution_gate_blocked:database_stale",
+            "execution_gate_blocked:operational_gates",
+            "execution_gate_blocked:manual_or_terminal",
+        }
+        return code if code in allowed else ""
+
+    @staticmethod
+    def _event_decision_from_row(row: dict[str, str]) -> str:
+        code = CopyPoolFileSnapshotRepository._event_reason_code(
+            row.get("reason_code")
+        )
+        if code in {"risk_allowed", "risk_allowed_demo_minimum"}:
+            return "active"
+        if code == "source_closed":
+            return "closed"
+        if code.startswith("execution_gate_blocked:"):
+            return "risk_rejected"
+        if code:
+            return "signal_expired" if code == "signal_expired_no_copy" else "monitor"
+        return CopyPoolFileSnapshotRepository._event_decision(row.get("reason"))
+
+    @staticmethod
     def _event_row(
         row: dict[str, str], routes: dict[str, dict[str, str]]
     ) -> dict[str, Any]:
@@ -1235,7 +1272,10 @@ class CopyPoolFileSnapshotRepository:
             "grossLongLots": _float(row.get("gross_long_lots")),
             "grossShortLots": _float(row.get("gross_short_lots")),
             "dbLatencySeconds": _float(row.get("db_latency_seconds")),
-            "decision": CopyPoolFileSnapshotRepository._event_decision(row.get("reason")),
+            "decision": CopyPoolFileSnapshotRepository._event_decision_from_row(row),
+            "reasonCode": CopyPoolFileSnapshotRepository._event_reason_code(
+                row.get("reason_code")
+            ),
             "phase": row.get("phase", ""),
         }
 

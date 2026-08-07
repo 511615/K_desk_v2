@@ -66,6 +66,10 @@ counter/latency restoration and before every append, `events_public.csv`, `order
 must have that width. The multi-source runtime declares fixed event/order supersets before its
 base-service initialization, so MT5 and MT4 events plus independent and product-level orders append
 to one normalized layout; absent allowed columns are empty and unknown fields fail the Producer.
+A current event row ends with the bounded `reason_code` column. Only the published allowlist is
+accepted by the dashboard projection; unknown values become empty and the legacy composite `reason`
+is never returned. Older headers without `reason_code` rotate through the same schema-mismatch path,
+while already archived events remain honest legacy evidence without a reconstructed sub-reason.
 A mismatch is renamed atomically in the same snapshot directory as a timestamped
 `schema-mismatch` archive, then the current file is written with a new header. The archive is
 historical evidence only; it is not merged into the dashboard's live reader, so old rows cannot
