@@ -12,6 +12,8 @@ describe('copy pool presentation helpers', () => {
     expect(schedulerStateLabel('running')).toBe('执行中')
     expect(delayGateLabel('incomplete')).toBe('报价覆盖不完整')
     expect(copyReasonLabel('below_minimum_risk_lot')).toBe('客户独立风险手数低于产品最小手')
+    expect(copyReasonLabel('execution_gate_blocked:terminal_autotrading')).toBe('MT5 终端 AutoTrading 已关闭')
+    expect(copyReasonLabel('execution_gate_blocked:open_rate_limit')).toContain('保留等待重试')
     expect(eventExecutionLabel({ decision: 'active', desiredTargetLots: 0.01 })).toBe('跟单成功')
     expect(eventExecutionLabel({ decision: 'risk_rejected', rawTargetLots: 0.0045, desiredTargetLots: 0 })).toBe('未跟单：目标手数低于最小手')
     expect(eventExecutionLabel({ decision: 'signal_expired', desiredTargetLots: 0 })).toBe('未跟单：信号已过期，未复制')

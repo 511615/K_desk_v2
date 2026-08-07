@@ -1250,6 +1250,10 @@ class CopyPoolFileSnapshotRepository:
     ) -> dict[str, Any]:
         alias = str(row.get("client_alias") or "").strip().upper()
         route = routes.get(alias, {})
+        db_latency_seconds = _float(row.get("db_latency_seconds"))
+        signal_age_seconds = _nullable_float(row.get("signal_age_seconds"))
+        if signal_age_seconds is None:
+            signal_age_seconds = db_latency_seconds
         return {
             "eventId": row.get("event_id", ""),
             "time": row.get("time_beijing", ""),
@@ -1271,7 +1275,11 @@ class CopyPoolFileSnapshotRepository:
             "actualStrategyLots": _float(row.get("actual_strategy_lots")),
             "grossLongLots": _float(row.get("gross_long_lots")),
             "grossShortLots": _float(row.get("gross_short_lots")),
-            "dbLatencySeconds": _float(row.get("db_latency_seconds")),
+            "dbLatencySeconds": db_latency_seconds,
+            "signalAgeSeconds": signal_age_seconds,
+            "queryLatencySeconds": _nullable_float(
+                row.get("query_latency_seconds")
+            ),
             "decision": CopyPoolFileSnapshotRepository._event_decision_from_row(row),
             "reasonCode": CopyPoolFileSnapshotRepository._event_reason_code(
                 row.get("reason_code")

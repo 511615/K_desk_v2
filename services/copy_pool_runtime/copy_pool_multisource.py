@@ -130,6 +130,20 @@ def mt4_source_time_to_utc(source_key: str, value: datetime) -> datetime:
     return value.replace(tzinfo=offset).astimezone(timezone.utc)
 
 
+def mt4_parent_ticket(comment: Any) -> int | None:
+    """Return the original Ticket referenced by an MT4 partial-close residual."""
+    text = str(comment or "").strip().lower()
+    marker = "from #"
+    if marker not in text:
+        return None
+    token = text.split(marker, 1)[1].split(None, 1)[0].strip()
+    try:
+        value = int(token)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def account_key(route_key: str, login: int) -> str:
     return f"{route_key}:{int(login)}"
 
@@ -2329,7 +2343,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                     })
             else:
                 raw = source.query(
-                    f"SELECT TICKET, LOGIN, SYMBOL, CMD, VOLUME / 100.0 AS lots, OPEN_TIME, "
+                    f"SELECT TICKET, LOGIN, SYMBOL, CMD, VOLUME / 100.0 AS lots, OPEN_TIME, COMMENT, "
                     f"OPEN_PRICE, CLOSE_PRICE, PROFIT + COMMISSION + SWAPS + TAXES AS floating_pnl "
                     f"FROM {source.schema}.mt4_trades WHERE LOGIN IN ({placeholders}) AND CMD IN (0,1) "
                     f"AND CLOSE_TIME = '1970-01-01 00:00:00'",
@@ -2353,6 +2367,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                             mt4_source_time_to_utc(source_key, item["OPEN_TIME"]).isoformat()
                             if isinstance(item.get("OPEN_TIME"), datetime)
                             else ""
+                        ),
+                        "source_parent_position_id": mt4_parent_ticket(
+                            item.get("COMMENT")
                         ),
                     })
         return rows
@@ -2507,11 +2524,44 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
     def health_public(self) -> list[dict[str, Any]]:
         return [self.sources[key].health.public() for key in sorted(self.sources)]
 
+    def physical_source_health(self, physical_key: str) -> dict[str, Any]:
+        """Return health for exactly one physical source, including idle sources."""
+        try:
+            source = self.sources[physical_key]
+        except KeyError as exc:
+            raise KeyError(f"Unknown physical source {physical_key!r}.") from exc
+        return source.health.public()
+
+    def physical_source_staleness(self, physical_key: str) -> float:
+        """Return the age of one physical source without inheriting another source's age."""
+        try:
+            last_success = self.sources[physical_key].health.last_success_monotonic
+        except KeyError as exc:
+            raise KeyError(f"Unknown physical source {physical_key!r}.") from exc
+        if last_success <= 0:
+            return float("inf")
+        return max(0.0, time.monotonic() - last_success)
+
+    def account_source_health(self, account_key: str) -> dict[str, Any]:
+        """Return health for the physical source which owns one selected account."""
+        try:
+            physical_key = self.clients[account_key].physical_key
+        except KeyError as exc:
+            raise KeyError(f"Unknown selected account {account_key!r}.") from exc
+        return self.physical_source_health(physical_key)
+
+    def account_source_staleness(self, account_key: str) -> float:
+        """Return staleness for one selected account's physical source only."""
+        try:
+            physical_key = self.clients[account_key].physical_key
+        except KeyError as exc:
+            raise KeyError(f"Unknown selected account {account_key!r}.") from exc
+        return self.physical_source_staleness(physical_key)
+
     def selected_source_staleness(self) -> float:
         ages: list[float] = []
         for key, mapping in self.clients_by_source_login.items():
             if not mapping:
                 continue
-            last = self.sources[key].health.last_success_monotonic
-            ages.append(float("inf") if last <= 0 else time.monotonic() - last)
+            ages.append(self.physical_source_staleness(key))
         return max(ages, default=float("inf"))

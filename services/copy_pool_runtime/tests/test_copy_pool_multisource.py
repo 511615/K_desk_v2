@@ -1222,6 +1222,7 @@ class MultiSourceTests(unittest.TestCase):
         service = self._batch_event_service(routed)
         persisted: list[bool] = []
         handled: list[int] = []
+        event_rows: list[dict[str, object]] = []
         service.persist_private_state = lambda: persisted.append(True)
 
         def handle(**kwargs):
@@ -1232,7 +1233,7 @@ class MultiSourceTests(unittest.TestCase):
             return "open", SimpleNamespace(status="active")
 
         service._handle_source_position_change = handle
-        service._append_event_csv = lambda _row: None
+        service._append_event_csv = event_rows.append
         opened_at = datetime(2026, 7, 31, 1, 0, tzinfo=timezone.utc)
         events = [
             RoutedEvent(
@@ -1258,6 +1259,10 @@ class MultiSourceTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(persisted), 3)
         self.assertEqual(handled, [904, 905])
+        self.assertIn(
+            "execution_gate_blocked:broker_error",
+            {str(row["reason_code"]) for row in event_rows},
+        )
         self.assertEqual(len(service.pending_coalesced_transitions), 1)
         self.assertEqual(
             service.pending_coalesced_transitions[0]["last_event"].position_id,
@@ -1624,6 +1629,7 @@ class MultiSourceTests(unittest.TestCase):
                     "CMD": 0,
                     "lots": 0.05,
                     "OPEN_TIME": datetime(2026, 7, 31, 11, 2, 9),
+                    "COMMENT": "from #28450000",
                 }]
 
         database.sources = {routed.physical_key: FakeSource()}
@@ -1631,6 +1637,7 @@ class MultiSourceTests(unittest.TestCase):
         rows = database.positions_for_source(routed.physical_key)
 
         self.assertEqual(rows[0]["source_opened_at"], "2026-07-31T08:02:09+00:00")
+        self.assertEqual(rows[0]["source_parent_position_id"], 28450000)
 
     def test_mt4_entry_seen_three_seconds_after_open_is_not_expired(self) -> None:
         routed = client(3, 6002426, "C001")
@@ -1686,6 +1693,69 @@ class MultiSourceTests(unittest.TestCase):
         self.assertFalse(event_rows[0]["signal_expired"])
         self.assertTrue(event_rows[0]["latency_known"])
         self.assertEqual(event_rows[0]["allowed_delay_seconds"], 5.0)
+        self.assertEqual(event_rows[0]["db_latency_seconds"], 3.0)
+
+    def test_mt4_same_ticket_add_and_reverse_use_snapshot_observation_time(self) -> None:
+        routed = client(3, 6002426, "C001")
+        observed_at = datetime(2026, 7, 30, 15, 0, 0, tzinfo=timezone.utc)
+
+        for after_lots in (0.02, -0.01):
+            with self.subTest(after_lots=after_lots):
+                service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+                service.routed_clients = {routed.account_key: routed}
+                service.portfolio = MultiSourcePortfolio(service.routed_clients)
+                service.portfolio.replace_positions([{
+                    "account_key": routed.account_key,
+                    "position_id": 15658692,
+                    "symbol": "XAUUSD",
+                    "lots": 0.01,
+                }])
+                service.db = SimpleNamespace(sources={
+                    routed.physical_key: SimpleNamespace(
+                        health=SimpleNamespace(latency_ms=78.0)
+                    )
+                })
+                service.current_targets = {"XAUUSD": 0.0}
+                service.phase = "live"
+                service.event_counter = 0
+                service.mt = SimpleNamespace(signed_position=lambda _product: 0.0)
+                service.sleeve_rows = {
+                    sleeve_key(routed.account_key, "XAUUSD"): {
+                        "historical_delay_enabled": False,
+                        "hold_p25_seconds": 3_600.0,
+                    }
+                }
+                service.sleeve_states = {}
+                service._refresh_targets = lambda: (
+                    {"XAUUSD": 0.0}, {"XAUUSD": 0.01}, {"XAUUSD": 0.0}, 0.0
+                )
+                service._approved_source_after = (
+                    lambda _account, _position, _product, _before, after, *, entry_timely: (
+                        after if entry_timely else 0.0
+                    )
+                )
+                observed: list[dict[str, object]] = []
+                service._handle_source_position_change = lambda **kwargs: (
+                    observed.append(kwargs) or ("increase", None)
+                )
+                event_rows: list[dict[str, object]] = []
+                service._append_event_csv = event_rows.append
+
+                with patch("copy_trading_multi_demo.utc_now", return_value=observed_at):
+                    service.apply_mt4_snapshot(routed.physical_key, [{
+                        "account_key": routed.account_key,
+                        "position_id": 15658692,
+                        "symbol": "XAUUSD",
+                        "lots": after_lots,
+                        "source_opened_at": "2026-07-30T14:00:00+00:00",
+                    }])
+
+                self.assertEqual(observed[0]["signal_time"], observed_at)
+                self.assertEqual(observed[0]["after_lots"], after_lots)
+                self.assertTrue(event_rows[0]["latency_known"])
+                self.assertFalse(event_rows[0]["signal_expired"])
+                self.assertEqual(event_rows[0]["source_entry"], 0)
+                self.assertEqual(event_rows[0]["db_latency_seconds"], 0.0)
 
     def test_dbg_mt4_entry_seen_two_seconds_after_normalized_open_is_not_expired(self) -> None:
         routed = client(8, 7798014, "C001")
@@ -1790,6 +1860,75 @@ class MultiSourceTests(unittest.TestCase):
             service.portfolio.client_product_position(second.account_key, "XAUUSD"),
             -0.5,
         )
+
+    def test_mt4_partial_close_residual_ticket_is_one_reduction_not_stale_entry(self) -> None:
+        routed = client(8, 7789514, "C091")
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.routed_clients = {routed.account_key: routed}
+        service.portfolio = MultiSourcePortfolio(service.routed_clients)
+        service.portfolio.replace_positions([{
+            "account_key": routed.account_key,
+            "position_id": 100,
+            "symbol": "XAGUSD",
+            "lots": 0.05,
+        }])
+        service.copy_book = IndependentCopyBook()
+        _action, owned = service.copy_book.observe_source_position(
+            routed.account_key, "C091", "XAGUSD", 100, 0.0, 0.05,
+            datetime(2026, 8, 7, 6, 9, 7, tzinfo=timezone.utc),
+        )
+        assert owned is not None
+        owned.copy_eligible = True
+        owned.children.append(
+            DemoChildTicket(7001, 0.01, 1, "2026-08-07T06:09:07+00:00", 38.0)
+        )
+        service.db = SimpleNamespace(sources={
+            routed.physical_key: SimpleNamespace(
+                health=SimpleNamespace(latency_ms=78.0)
+            )
+        })
+        service.current_targets = {"XAGUSD": 0.0}
+        service.phase = "live"
+        service.event_counter = 0
+        service.mt = SimpleNamespace(signed_position=lambda _product: 0.01)
+        service.sleeve_rows = {
+            sleeve_key(routed.account_key, "XAGUSD"): {
+                "historical_delay_enabled": False,
+                "hold_p25_seconds": 3_600.0,
+            }
+        }
+        service.sleeve_states = {}
+        service._effective_copy_weight = lambda _account, _product: 0.01
+        service._refresh_targets = lambda: (
+            {"XAGUSD": 0.0}, {"XAGUSD": 0.01}, {"XAGUSD": 0.0}, 0.0
+        )
+        observed: list[dict[str, object]] = []
+        service._handle_source_position_change = lambda **kwargs: (
+            observed.append(kwargs) or ("reduce", owned)
+        )
+        event_rows: list[dict[str, object]] = []
+        service._append_event_csv = event_rows.append
+
+        with patch(
+            "copy_trading_multi_demo.utc_now",
+            return_value=datetime(2026, 8, 7, 6, 42, 9, tzinfo=timezone.utc),
+        ):
+            service.apply_mt4_snapshot(routed.physical_key, [{
+                "account_key": routed.account_key,
+                "position_id": 200,
+                "source_parent_position_id": 100,
+                "symbol": "XAGUSD",
+                "lots": 0.03,
+                "source_opened_at": "2026-08-07T06:09:07+00:00",
+            }])
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0]["position_id"], 200)
+        self.assertEqual(observed[0]["before_lots"], 0.05)
+        self.assertEqual(observed[0]["after_lots"], 0.03)
+        self.assertFalse(event_rows[0]["signal_expired"])
+        self.assertEqual(event_rows[0]["source_entry"], 1)
+        self.assertIn(f"{routed.account_key}|200|XAGUSD", service.copy_book.positions)
 
     def test_one_selected_source_outage_is_explicit_and_stale(self) -> None:
         first = client(0, 1, "C001")

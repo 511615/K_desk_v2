@@ -231,6 +231,40 @@ class IndependentCopyBook:
             marked += 1
         return marked
 
+    def migrate_source_position(
+        self,
+        account_key: str,
+        client_alias: str,
+        product: str,
+        previous_position_id: int,
+        replacement_position_id: int,
+    ) -> IndependentCopyPosition | None:
+        """Move MT4 ownership across a partial-close replacement Ticket."""
+        previous_key = source_position_key(
+            account_key, previous_position_id, product
+        )
+        replacement_key = source_position_key(
+            account_key, replacement_position_id, product
+        )
+        if previous_key == replacement_key:
+            return self.positions.get(previous_key)
+        if replacement_key in self.positions or replacement_key in self.legacy_source_positions:
+            raise RuntimeError(
+                f"Replacement source position already exists: {replacement_key}"
+            )
+        if previous_key in self.legacy_source_positions:
+            self.legacy_source_positions.remove(previous_key)
+            self.legacy_source_positions.add(replacement_key)
+            return None
+        position = self.positions.pop(previous_key, None)
+        if position is None:
+            return None
+        position.source_key = replacement_key
+        position.source_position_id = int(replacement_position_id)
+        position.client_alias = client_alias
+        self.positions[replacement_key] = position
+        return position
+
     def observe_source_position(
         self,
         account_key: str,

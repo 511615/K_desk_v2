@@ -293,7 +293,9 @@ Runtime-polling regressions require all five selected MT5 physical sources to st
 source finishes, require the accepted historical build timeout to switch to a two-second live
 connect/read/write profile, and prove that ready MT5 events are applied while an MT4 snapshot wave
 is still blocked. A timed-out source must retain its cursor and expose failure without discarding
-successful sibling-source results.
+successful sibling-source results. Initial live qualification still requires the reconciliation and
+latency thresholds, while one ordinary later drift may retain live readiness only if all current
+coverage, duplicate-event and selected-source freshness gates remain healthy.
 Read-only preflight acceptance requires 11/11 route
 and 9/9 physical coverage, at least ten deployable clients, no ambiguous shared-source Login in the
 pool and no MT initialization or order. Dashboard contracts cover the source funnel, runtime health
@@ -319,7 +321,12 @@ preserve AC raw UTC and convert DBG CN Live1/Live2 raw UTC+3 to UTC; Live3 remai
 physical-route set under its provisional UTC+3 convention. A normalized snapshot observed two or
 three seconds later remains within the five-second budget. A risk-rejected source Position without
 a Demo child cannot open on a 40-second retry, while an expired Position with an owned child can
-still reduce or close.
+still reduce or close. A COMMENT-proven MT4 partial-close residual Ticket must rekey the existing
+same-direction source mapping, retain its owned Demo Ticket and original signal time, and emit only
+a reduction rather than a new/expired entry. Missing sleeve delay evidence must use the same
+conservative five-second runtime budget. Quote-gate regressions must use a non-USD quote example
+and prove one-lot spread cost is converted through the selected Demo account calculation rather than
+raw quote difference times contract size.
 Risk-deadline regressions additionally require an expired same-direction addition to keep the
 existing Ticket unchanged, an expired reversal to close the old Ticket without opening its opposite
 leg, and a final deadline check immediately before the broker call. Persistence tests require only
@@ -352,6 +359,10 @@ floating and dynamic values separately and keeps zero-net hedged accounts in the
 Execution-quality scheduling regressions require the hourly schedule to be consumed exactly once,
 the cached factor-ready universe to rank 30 unique monitor plus 70 unique reserve clients, current
 comprehensive loss to remain a hard rejection, and one/four-hour strength to affect only ordering.
+Detached-discovery regressions require an independent connection set, non-blocking live polls,
+generation-checked commit, empty/failure pool retention, no duplicate follow-up collection and
+clean worker shutdown. Status regressions pin one-second normal-write throttling and forced error
+snapshots.
 Execution-weight regressions require non-activity sleeves and monitor dynamic sleeves to project zero
 current weight even when cached source quality is positive; active-client counts must use active
 dynamic sleeves rather than risk-ledger status.

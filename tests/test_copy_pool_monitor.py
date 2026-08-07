@@ -482,6 +482,9 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert payload["events"][0]["accountLogin"] == "5200101"
     assert payload["events"][0]["decision"] == "active"
     assert payload["events"][0]["reasonCode"] == "risk_allowed"
+    assert payload["events"][0]["dbLatencySeconds"] == pytest.approx(0.4)
+    assert payload["events"][0]["signalAgeSeconds"] == pytest.approx(0.4)
+    assert payload["events"][0]["queryLatencySeconds"] is None
     assert "reason" not in payload["events"][0]
     assert payload["clientRisks"][0]["accountLogin"] == "5200101"
     assert payload["copyPositions"][0]["accountLogin"] == "5200101"
@@ -545,6 +548,35 @@ def test_event_reason_code_is_bounded_and_legacy_rows_remain_honest(tmp_path: Pa
     assert payload["events"][0]["decision"] == "monitor"
     assert payload["events"][0]["reasonCode"] == ""
     assert "private database password" not in json.dumps(payload)
+
+
+def test_event_projects_separate_signal_age_and_query_latency_when_available(
+    tmp_path: Path,
+) -> None:
+    output = make_snapshot(tmp_path)
+    event_path = output / "events_public.csv"
+    write_csv(event_path, [{
+        "event_id": "E3",
+        "time_beijing": "2026-08-07T13:09:35+08:00",
+        "client_alias": "C001",
+        "source_entry": 0,
+        "product": "XAUUSD",
+        "db_latency_seconds": 0.4,
+        "signal_age_seconds": 2.8,
+        "query_latency_seconds": 0.08,
+        "phase": "live",
+        "reason": "MT4:open:active",
+        "reason_code": "risk_allowed",
+    }])
+
+    payload = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=1, event_limit=1, order_limit=1
+    )
+
+    event = payload["events"][0]
+    assert event["dbLatencySeconds"] == pytest.approx(0.4)
+    assert event["signalAgeSeconds"] == pytest.approx(2.8)
+    assert event["queryLatencySeconds"] == pytest.approx(0.08)
 
 
 def test_copy_pool_projects_only_current_child_tickets_with_exact_pnl_evidence(tmp_path: Path) -> None:

@@ -52,6 +52,12 @@ or reject a new order at runtime.
 Execution ownership is `account + source Position -> one or more Demo Tickets`. Customer opening,
 increasing, reducing, closing and reversing events affect only those mapped Tickets. Opposing
 customers remain independently open; net exposure is display and combination-risk evidence only.
+MT4 may replace the source Ticket after a partial close. When the authoritative open residual has
+the direction-consistent smaller lot and its Comment proves the prior Ticket (`from #<Ticket>`),
+the Producer rekeys that one source-position mapping to the replacement Ticket. It preserves the
+existing owned Demo Ticket and original signal time, so the residual is one reduction rather than a
+new, stale entry. Unproven, direction-changing or larger replacements remain ordinary snapshot
+changes and receive no inferred ownership migration.
 Existing source positions at startup and positions first observed during shadow are not chased.
 Restart requires persisted and actual Ticket ownership to match exactly.
 The governed launcher supplies the explicitly approved Demo Login. During initialization the MT5
@@ -126,8 +132,9 @@ that bounded read, a newly funded account's first positive observation supplies 
 otherwise 30-day coverage remains incomplete and fails closed. Missing
 position-path or intraday-equity evidence remains monitor-only rather than clean. A/TA status adds
 0.02 only after hard gates. Real-time quote age, database staleness, measured signal latency and
-entry/exit expiry remain execution gates; without historical break-even evidence, a new-risk signal
-budget is capped at five seconds and `holdP25 / 3`, whichever is lower.
+entry/exit expiry remain execution gates; without historical break-even evidence, including a
+missing sleeve delay record, a new-risk signal budget defaults to five seconds and is capped by
+`holdP25 / 3`, whichever is lower.
 Each source Position persists the latest opening, increase or reversal timestamp as its risk-signal
 clock. Initial entries, additions and reversal open legs all recheck this clock in the central
 risk-increase path and immediately before the broker request. Reductions and closes do not refresh
@@ -155,6 +162,10 @@ operational gate is retained only for compatibility with an already persisted le
 `ENTRY_SHADOW`; the next qualified ranking promotes it directly. Loss of factor qualification,
 current comprehensive product profit or activity eligibility returns the sleeve to monitor
 immediately, and no new-risk order is allowed while the sleeve is not `ACTIVE`.
+Initial live activation still requires the complete reconciliation/latency qualification. Once it
+has passed, one ordinary later reconciliation drift does not by itself de-arm a healthy live loop;
+complete route/source coverage, zero duplicate events and selected-source freshness remain required
+on every cycle and still block new risk immediately when they fail.
 Hourly current-position evidence uses collision-free `current` column names, preserving daily
 build-time floating/hedge columns when a product currently has no open position.
 Hourly monitor-only sleeves receive no provisional execution base weight. Producer status and the
@@ -179,6 +190,8 @@ customers may hold the same product and direction until the separate whole-portf
 is exhausted. Build-time feasibility and execution use the same rule. It does not bypass quote,
 spread, database, Ticket-ownership,
 daily-stop, equity-floor or margin hard gates and is never implicit.
+This is the only all-supported-product waiver of the ordinary same-direction limit: no minimum-lot
+or same-direction exception is enabled by product name, a normal profile or an omitted switch.
 For an active client under that exact Demo-only switch, the client loss budget is floored at the
 existing 20% per-client share of the 1.5% cycle budget. This keeps the risk allowance consistent
 with the indivisible 0.01-lot test exposure. Clients with zero activity weight receive no floor, and
@@ -396,8 +409,11 @@ no order, balance, permission or MT Manager write action.
 K_desk does not recompute customer selection, base weights, open-risk penalties, client loss-budget
 reductions or copied lots. It displays the latest values produced by the governed copier. Money is
 USD, positions are standard lots, product spread is ask minus bid and database latency is seconds.
-The pool excludes rebates and uses money-only Cent normalization. Opposing customers are never
-presented as if one customer's event closed another customer's Ticket.
+For an executable cross-currency Demo product, the Producer converts one-lot bid/ask spread cost
+through the selected Demo terminal/account currency calculation; it must not treat
+`(ask - bid) * contract_size` as USD when the quote currency differs. The pool excludes rebates and
+uses money-only Cent normalization. Opposing customers are never presented as if one customer's
+event closed another customer's Ticket.
 
 ## Loading, empty and failure behavior
 
@@ -461,6 +477,11 @@ legacy entry-shadow promotion, retained recovery-shadow safety and effective sta
 Producer CSV tests also cover schema-mismatch rotation, byte-preserved archival, multi-source
 MT5/MT4 event and independent/flatten order superset alignment, and a clean current header/data
 file, preventing DictReader field shifts after a producer schema upgrade.
+Open-path regressions cover MT4 partial-close residual Ticket rekeying without a second Demo open or
+signal-expiry false positive; an already-live service retaining readiness through one routine
+reconciliation drift while current coverage, duplicate-event and source-freshness gates continue to
+fail closed; a missing delay row using the five-second runtime budget; and cross-currency spread
+conversion through the selected Demo account rather than a raw contract-size multiplication.
 MT5 batch tests cover a complete open/close round trip with no execution, a multi-Deal residual open
 with one execution, and a close-plus-opposite-open reversal whose latency starts at the opposite
 entry rather than the earlier close. They also require risk reductions before additions, durable

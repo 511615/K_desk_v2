@@ -56,8 +56,71 @@ class EventReasonCodeTests(unittest.TestCase):
             "risk_allowed",
         )
 
+    def test_structural_monitor_reason_wins_over_latency_annotation(self) -> None:
+        for reason in ("old_or_shadow_position", "zero_effective_weight"):
+            with self.subTest(reason=reason):
+                position = SimpleNamespace(status="monitor", reject_reason=reason)
+                self.assertEqual(
+                    event_reason_code("open", position, signal_expired=True),
+                    reason,
+                )
+
+    def test_delayed_exit_is_not_reported_as_an_unfollowed_entry(self) -> None:
+        reduced = SimpleNamespace(status="active", reject_reason="")
+        closed = SimpleNamespace(status="closed", reject_reason="")
+
+        self.assertEqual(
+            event_reason_code("reduce", reduced, signal_expired=True),
+            "risk_allowed",
+        )
+        self.assertEqual(
+            event_reason_code("close", closed, signal_expired=True),
+            "source_closed",
+        )
+
 
 class IndependentCopyBookTests(unittest.TestCase):
+    def test_mt4_partial_close_rekeys_owned_position_without_losing_ticket(self) -> None:
+        book = IndependentCopyBook()
+        _action, position = book.observe_source_position(
+            "route:1", "C001", "XAGUSD", 100, 0.0, 0.05, NOW
+        )
+        assert position is not None
+        original_comment = position.comment
+        position.copy_eligible = True
+        position.children.append(
+            DemoChildTicket(7001, 0.01, 1, NOW.isoformat(), 30.0)
+        )
+
+        migrated = book.migrate_source_position(
+            "route:1", "C001", "XAGUSD", 100, 200
+        )
+
+        self.assertIs(migrated, position)
+        self.assertNotIn("route:1|100|XAGUSD", book.positions)
+        self.assertIs(book.positions["route:1|200|XAGUSD"], position)
+        self.assertEqual(position.source_position_id, 200)
+        self.assertEqual(position.source_key, "route:1|200|XAGUSD")
+        self.assertEqual(position.comment, original_comment)
+        self.assertEqual([child.ticket for child in position.children], [7001])
+
+    def test_mt4_partial_close_rekeys_legacy_monitor_position(self) -> None:
+        book = IndependentCopyBook()
+        book.mark_bootstrap_positions([{
+            "account_key": "route:1",
+            "position_id": 100,
+            "product": "XAGUSD",
+            "lots": 0.05,
+        }])
+
+        migrated = book.migrate_source_position(
+            "route:1", "C001", "XAGUSD", 100, 200
+        )
+
+        self.assertIsNone(migrated)
+        self.assertNotIn("route:1|100|XAGUSD", book.legacy_source_positions)
+        self.assertIn("route:1|200|XAGUSD", book.legacy_source_positions)
+
     def test_bootstrap_position_is_monitor_only_until_it_closes(self) -> None:
         book = IndependentCopyBook()
         row = {
@@ -357,6 +420,77 @@ class FakeHedgingMt:
 
 
 class IndependentExecutionServiceTests(unittest.TestCase):
+    def test_live_operational_gate_stays_ready_during_one_normal_snapshot_drift(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.operational_ready_once = False
+        service.reconcile_streak = 3
+        service.pending_source_snapshot_count = 0
+        service.portfolio = SimpleNamespace(duplicate_events=0)
+        service.coverage = {
+            "logical_routes_scanned": 11,
+            "physical_sources_scanned": 9,
+        }
+        service.db = SimpleNamespace(
+            sources={str(index): object() for index in range(9)},
+            selected_source_staleness=lambda: 0.1,
+        )
+        service.poll_latencies = [0.1] * 20
+
+        self.assertTrue(service.operational_gates_ready())
+        self.assertTrue(service.operational_ready_once)
+
+        service.reconcile_streak = 0
+        service.pending_source_snapshot_count = 1
+        service.poll_latencies.extend([4.0] * 120)
+
+        self.assertTrue(service.operational_gates_ready())
+
+    def test_missing_delay_evidence_uses_five_second_runtime_budget(self) -> None:
+        self.assertEqual(MultiSourceLiveService._signal_delay_budget({}), 5.0)
+
+    def test_non_usd_quote_spread_uses_account_currency_conversion(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.mt = SimpleNamespace(
+            quote_state=lambda _product: (150.000, 150.036, 0.1),
+            symbol=lambda _product: SimpleNamespace(trade_contract_size=100_000.0),
+            spread_cost_usd_per_lot=lambda _product, _bid, _ask: 24.0,
+        )
+        service.db = SimpleNamespace(selected_source_staleness=lambda: 0.1)
+        service.operational_gates_ready = lambda _account_key=None: True
+
+        self.assertTrue(service.quote_allows_open("USDJPY"))
+
+    def test_external_conflict_only_blocks_its_own_product(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.mt = SimpleNamespace(
+            all_foreign_positions=lambda products: (
+                (SimpleNamespace(symbol="XAUUSD"),)
+                if "XAUUSD" in products else ()
+            ),
+            all_pending_orders=lambda _products: (),
+        )
+
+        self.assertEqual(
+            service._product_conflict_reason("XAUUSD"),
+            "execution_gate_blocked:external_position_conflict",
+        )
+        self.assertEqual(service._product_conflict_reason("USDJPY"), "")
+
+    def test_pending_order_conflict_is_reported_separately(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.mt = SimpleNamespace(
+            all_foreign_positions=lambda _products: (),
+            all_pending_orders=lambda products: (
+                (SimpleNamespace(symbol="USDJPY"),)
+                if "USDJPY" in products else ()
+            ),
+        )
+
+        self.assertEqual(
+            service._product_conflict_reason("USDJPY"),
+            "execution_gate_blocked:pending_order_conflict",
+        )
+
     def test_deferred_historical_delay_uses_five_second_runtime_cap(self) -> None:
         deferred = {
             "historical_delay_enabled": False,
@@ -531,20 +665,15 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         self.assertEqual(pending.tier, PoolTier.ENTRY_SHADOW)
         self.assertEqual(pending.consecutive_active_qualifications, 2)
         self.assertEqual(pending.shadow_started_at, pending_at)
-        self.assertEqual(pending.shadow_ends_at, pending_at + timedelta(minutes=2))
+        self.assertEqual(
+            pending.shadow_ends_at, pending_at + timedelta(milliseconds=1)
+        )
         self.assertEqual(pending.effective_weight, 0)
 
         service.pending_source_snapshot_count = 0
         with patch(
             "copy_trading_multi_demo.utc_now",
             return_value=pending_at + timedelta(minutes=1),
-        ):
-            service.refresh_dynamic_sleeves()
-        self.assertEqual(service.sleeve_states[key].tier, PoolTier.ENTRY_SHADOW)
-
-        with patch(
-            "copy_trading_multi_demo.utc_now",
-            return_value=pending_at + timedelta(minutes=2),
         ):
             service.refresh_dynamic_sleeves()
         self.assertEqual(service.sleeve_states[key].tier, PoolTier.ACTIVE)
@@ -657,7 +786,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         service.copy_book = IndependentCopyBook()
         service._log_independent_order = lambda *_args, **_kwargs: None
         service.refresh_mt5_conflicts = lambda: False
-        service.quote_allows_open = lambda _product: True
+        service.quote_allows_open = lambda _product, _account_key=None: True
         service.order_counter = 0
         service.log = lambda *_args, **_kwargs: None
         service.last_client_risk_refresh = 0.0
@@ -1276,7 +1405,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         )
         assert position is not None
         position.copy_eligible = True
-        service.quote_allows_open = lambda _product: False
+        service.quote_allows_open = lambda _product, _account_key=None: False
 
         with patch("copy_trading_multi_demo.utc_now", return_value=NOW):
             service._sync_independent_position(position, "gate_reason", allow_increase=True)
@@ -1314,7 +1443,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         self.assertEqual(first.copied_signed_lots, 0.01)
         self.assertEqual(second.copied_signed_lots, 0.01)
 
-    def test_open_request_storm_guard_hard_stops_before_another_order(self) -> None:
+    def test_open_request_rate_limit_rejects_without_flattening_or_hard_stop(self) -> None:
         service = self.service(FakeHedgingMt())
         service.open_request_times = [100.0] * OPEN_REQUEST_LIMIT
         hard_stops: list[tuple[str, str]] = []
@@ -1323,11 +1452,59 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         )
 
         with patch("copy_trading_multi_demo.time.monotonic", return_value=120.0):
-            with self.assertRaisesRegex(RuntimeError, "Order storm guard"):
-                service._reserve_open_request()
+            allowed = service._reserve_open_request()
 
+        self.assertFalse(allowed)
         self.assertEqual(len(service.open_request_times), OPEN_REQUEST_LIMIT)
-        self.assertEqual(hard_stops[0][0], "order_storm_guard")
+        self.assertEqual(hard_stops, [])
+
+    def test_blocked_increase_keeps_the_exact_operational_reason(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 881, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+
+        for reason in (
+            "execution_gate_blocked:manual_control",
+            "execution_gate_blocked:friday_reduce_only",
+            "execution_gate_blocked:terminal_autotrading",
+        ):
+            with self.subTest(reason=reason), patch(
+                "copy_trading_multi_demo.utc_now", return_value=NOW
+            ), patch.object(service, "_position_hold_seconds", return_value=0.0):
+                target, decision = service._desired_copy_lots(
+                    position,
+                    allow_increase=False,
+                    increase_block_reason=reason,
+                )
+            self.assertEqual(target, 0.0)
+            self.assertEqual(decision, reason)
+
+    def test_rate_limited_position_is_retryable_without_global_hard_stop(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 882, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        service._desired_copy_lots = lambda *_args, **_kwargs: (0.01, "risk_allowed")
+        service._reserve_open_request = lambda: False
+
+        with patch.object(service, "_risk_signal_expired", return_value=False):
+            service._sync_independent_position(
+                position, "rate_limit", allow_increase=True
+            )
+
+        self.assertEqual(mt.actions, [])
+        self.assertTrue(position.copy_eligible)
+        self.assertEqual(position.status, "risk_rejected")
+        self.assertEqual(
+            position.reject_reason, "execution_gate_blocked:open_rate_limit"
+        )
 
     def test_twenty_four_hour_position_closes_only_timed_out_client(self) -> None:
         mt = FakeHedgingMt()

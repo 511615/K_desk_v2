@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import unittest
-import time
+import csv
 import json
+import time
+import unittest
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -202,6 +203,20 @@ class Mt5AccountIdentityTests(unittest.TestCase):
         with patch("copy_trading_live_demo.mt5.account_info", return_value=switched):
             with self.assertRaisesRegex(RuntimeError, "account identity changed"):
                 executor.account()
+
+    def test_spread_cost_uses_account_currency_tick_value_without_profit_calls(self) -> None:
+        executor = Mt5Executor(Path("terminal64.exe"), RISK_PROFILES["Capital10k"])
+        executor.symbol = lambda _symbol: SimpleNamespace(
+            trade_tick_size=0.001,
+            trade_tick_value_loss=0.67,
+            trade_tick_value_profit=0.66,
+        )
+
+        with patch("copy_trading_live_demo.mt5.order_calc_profit") as calculate:
+            cost = executor.spread_cost_usd_per_lot("USDJPY", 150.000, 150.036)
+
+        self.assertAlmostEqual(cost, 24.12, places=6)
+        calculate.assert_not_called()
 
     def test_timeline_contract_records_demo_account_login(self) -> None:
         self.assertIn("account_login", TIMELINE_PUBLIC_COLUMNS)
@@ -480,6 +495,31 @@ class CoreTests(unittest.TestCase):
                 ["event_id,time_beijing,current_value", "E0000002,new,2"],
             )
             self.assertEqual(csv_data_rows(path), 1)
+
+    def test_csv_additive_schema_upgrade_preserves_current_rows(self) -> None:
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "events_public.csv"
+            path.write_text(
+                "event_id,db_latency_seconds\nE0000001,0.8\n",
+                encoding="utf-8-sig",
+            )
+
+            archive = ensure_csv_schema(
+                path,
+                (
+                    "event_id",
+                    "db_latency_seconds",
+                    "signal_age_seconds",
+                    "query_latency_seconds",
+                ),
+            )
+
+            self.assertIsNotNone(archive)
+            with path.open("r", newline="", encoding="utf-8-sig") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["event_id"], "E0000001")
+            self.assertEqual(rows[0]["db_latency_seconds"], "0.8")
+            self.assertEqual(rows[0]["signal_age_seconds"], "")
 
     def test_recent_latency_window_restores_only_valid_samples(self) -> None:
         with TemporaryDirectory() as temporary:

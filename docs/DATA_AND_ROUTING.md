@@ -70,6 +70,10 @@ A current event row ends with the bounded `reason_code` column. Only the publish
 accepted by the dashboard projection; unknown values become empty and the legacy composite `reason`
 is never returned. Older headers without `reason_code` rotate through the same schema-mismatch path,
 while already archived events remain honest legacy evidence without a reconstructed sub-reason.
+`signal_age_seconds` is the source trade/open observation age used by the expiry decision;
+`query_latency_seconds` is only the physical database query duration. The legacy
+`db_latency_seconds` remains an alias of signal age for compatibility and must never be populated
+with MT4 query duration.
 A mismatch is renamed atomically in the same snapshot directory as a timestamped
 `schema-mismatch` archive, then the current file is written with a new header. The archive is
 historical evidence only; it is not merged into the dashboard's live reader, so old rows cannot
@@ -137,6 +141,11 @@ realized and floating P/L are persisted by the deterministic source-Position com
 feed the sanitized `currentCopies` projection; account-level P/L is not divided among Positions.
 MT5 execution increments and MT4 authoritative snapshots use the same position-difference contract,
 so one account cannot modify another account's children.
+An MT4 partial close can replace the residual open Ticket. The read-only snapshot retains COMMENT
+only to recognize the proven `from #<prior Ticket>` relationship. When the replacement is a smaller
+same-direction residual for the same composite account/product, the private ownership mapping is
+rekeyed atomically and keeps its Demo-child ownership and original risk-signal time. COMMENT and the
+parent Ticket remain private; an absent or invalid relationship never triggers guessed migration.
 MT5 polling applies every returned Deal to cursor, position and P&L state before invoking execution.
 The resulting changes are grouped by composite account, Position and normalized product. A batch
 whose pre-batch and post-batch quantities are both zero is terminally flat and must not create a Demo

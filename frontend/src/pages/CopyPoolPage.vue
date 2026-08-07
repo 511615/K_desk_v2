@@ -208,7 +208,9 @@ const activity = computed(() => {
     kind: '客户成交',
     subject: `${row.accountLogin || '来源账号'} ${sourceSideLabel(row.sourceSide)} ${lots(row.sourceLots)} 手`,
     reason: `${row.product || '-'} · ${sourceEntryLabel(row.sourceEntry)} · ${eventExecutionLabel(row)}`,
-    latency: `${number(row.dbLatencySeconds, 2)}秒`,
+    latency: row.queryLatencySeconds == null
+      ? `信号 ${number(row.signalAgeSeconds ?? row.dbLatencySeconds, 2)}秒`
+      : `信号 ${number(row.signalAgeSeconds ?? row.dbLatencySeconds, 2)}秒 · 查询 ${number(row.queryLatencySeconds, 2)}秒`,
     warning: false,
     tier: eventPoolTier(
       row,

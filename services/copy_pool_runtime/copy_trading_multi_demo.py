@@ -5,8 +5,8 @@ import json
 import math
 import signal
 import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, replace
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -113,6 +113,7 @@ CLIENT_RECOVERY_SHADOW_SECONDS = 15 * 60
 REALTIME_DB_CONNECT_TIMEOUT_SECONDS = 2
 REALTIME_DB_READ_TIMEOUT_SECONDS = 2
 REALTIME_DB_WRITE_TIMEOUT_SECONDS = 2
+STATUS_WRITE_INTERVAL_SECONDS = 1.0
 
 
 def atomic_csv(path: Path, frame: pd.DataFrame, *, encoding: str) -> None:
@@ -146,13 +147,26 @@ UNKNOWN_HOURLY_PUBLIC_COLUMNS = HOURLY_EVIDENCE_COLUMNS | {
 DEFAULT_ENTRY_QUALIFICATIONS = 1
 DEFAULT_ENTRY_SHADOW_DURATION = timedelta(minutes=10)
 DEMO_FAST_ENTRY_QUALIFICATIONS = 1
-DEMO_FAST_ENTRY_SHADOW_DURATION = timedelta(minutes=2)
+# Keep the state transition explicit without imposing an observation period.
+DEMO_FAST_ENTRY_SHADOW_DURATION = timedelta(milliseconds=1)
+
+
+@dataclass(frozen=True)
+class HourlyDiscoveryResult:
+    """A detached hourly DB read that is safe to commit on the main thread."""
+
+    generation: int
+    as_of: datetime
+    discovered: pd.DataFrame
+    metadata: dict[str, Any]
+
 
 MULTISOURCE_EVENT_PUBLIC_COLUMNS = (
     "event_id", "time_beijing", "client_alias", "source_route", "source_server",
     "source_platform", "source_side", "source_entry", "source_lots", "product",
     "effective_weight", "raw_target_lots", "desired_target_lots", "actual_strategy_lots",
-    "gross_long_lots", "gross_short_lots", "db_latency_seconds", "allowed_delay_seconds",
+    "gross_long_lots", "gross_short_lots", "db_latency_seconds",
+    "signal_age_seconds", "query_latency_seconds", "allowed_delay_seconds",
     "signal_expired", "latency_known", "phase", "reason", "reason_code",
 )
 MULTISOURCE_ORDER_PUBLIC_COLUMNS = (
@@ -177,12 +191,23 @@ PUBLIC_EVENT_REASON_CODES = frozenset({
     "legacy_monitor_only",
     "event_detail_unavailable",
     "execution_gate_blocked:external_position_conflict",
+    "execution_gate_blocked:pending_order_conflict",
     "execution_gate_blocked:invalid_quote",
     "execution_gate_blocked:stale_quote",
     "execution_gate_blocked:spread",
     "execution_gate_blocked:database_stale",
     "execution_gate_blocked:operational_gates",
+    "execution_gate_blocked:source_coverage",
+    "execution_gate_blocked:duplicate_events",
+    "execution_gate_blocked:source_reconcile",
+    "execution_gate_blocked:latency_warmup",
     "execution_gate_blocked:manual_or_terminal",
+    "execution_gate_blocked:manual_control",
+    "execution_gate_blocked:friday_reduce_only",
+    "execution_gate_blocked:terminal_autotrading",
+    "execution_gate_blocked:not_live",
+    "execution_gate_blocked:open_rate_limit",
+    "execution_gate_blocked:broker_error",
 })
 
 
@@ -193,15 +218,21 @@ def event_reason_code(
     signal_expired: bool,
 ) -> str:
     """Return a bounded event-time reason without leaking internal free text."""
-    if signal_expired or copy_action == "signal_expired_no_copy":
-        return "signal_expired_no_copy"
     if copy_action == "legacy_monitor_only":
         return "legacy_monitor_only"
-    if copy_position is None:
-        if copy_action in {"close", "batch_terminal_flat"}:
-            return "source_closed"
-        return "event_detail_unavailable"
+    if copy_action in {"close", "batch_terminal_flat"}:
+        return "source_closed"
+    if copy_action == "reduce":
+        return "risk_allowed"
+    if copy_action == "broker_error":
+        return "execution_gate_blocked:broker_error"
     detail = str(getattr(copy_position, "reject_reason", "") or "").strip()
+    if detail in PUBLIC_EVENT_REASON_CODES and detail != "signal_expired_no_copy":
+        return detail
+    if signal_expired or copy_action == "signal_expired_no_copy":
+        return "signal_expired_no_copy"
+    if copy_position is None:
+        return "event_detail_unavailable"
     if detail in PUBLIC_EVENT_REASON_CODES:
         return detail
     status = str(getattr(copy_position, "status", "") or "").strip().lower()
@@ -277,9 +308,15 @@ class MultiSourceLiveService(LiveService):
         self.last_intraday_refresh = 0.0
         self.last_rebuild_attempt = 0.0
         self.last_discovery_attempt = 0.0
+        self.last_status_write = 0.0
+        self._hourly_discovery_generation = 0
+        self._hourly_discovery_executor: ThreadPoolExecutor | None = None
+        self._hourly_discovery_future: Future[HourlyDiscoveryResult] | None = None
+        self._hourly_background_enabled = True
         self.poll_latencies: list[float] = []
         self.signal_latencies: list[float] = []
         self.pending_source_snapshot: dict[tuple[str, int, str], float] | None = None
+        self.operational_ready_once = False
         self.current_targets: dict[str, float] = {}
         self.product_execution: dict[str, dict[str, Any]] = {}
         self.product_order_counter: dict[str, int] = {}
@@ -617,6 +654,9 @@ class MultiSourceLiveService(LiveService):
         self.clients = {key: client.spec for key, client in routed.items()}  # type: ignore[assignment]
         self.pool_frame = pool
         self.universe_frame = universe
+        self._hourly_discovery_generation = int(
+            getattr(self, "_hourly_discovery_generation", 0)
+        ) + 1
         self.pool_hourly_evidence_ready = has_complete_hourly_evidence(pool)
         build_as_of_text = str(
             (meta if cache_valid else {}).get("build_as_of")
@@ -771,7 +811,110 @@ class MultiSourceLiveService(LiveService):
             },
         )
 
-    def run_hourly_discovery(self) -> None:
+    @staticmethod
+    def _collect_hourly_discovery(
+        universe: pd.DataFrame,
+        *,
+        generation: int,
+        build_as_of: datetime,
+        as_of: datetime,
+    ) -> HourlyDiscoveryResult:
+        """Collect hourly evidence through a reader that shares no live source locks."""
+        reader = MultiSourceDatabase()
+        try:
+            reader.connect()
+            discovered, metadata = reader.refresh_hourly_universe(
+                universe,
+                build_as_of=build_as_of,
+                as_of=as_of,
+            )
+            return HourlyDiscoveryResult(
+                generation=generation,
+                as_of=as_of,
+                discovered=discovered,
+                metadata=dict(metadata),
+            )
+        finally:
+            reader.close()
+
+    def _hourly_generation(self) -> int:
+        return int(getattr(self, "_hourly_discovery_generation", 0))
+
+    def _start_hourly_discovery(self) -> bool:
+        if self.universe_frame.empty:
+            raise RuntimeError("Hourly discovery requires the accepted daily universe cache.")
+        if getattr(self, "_hourly_discovery_future", None) is not None:
+            return False
+        executor = getattr(self, "_hourly_discovery_executor", None)
+        if executor is None:
+            executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="copy-hourly-discovery",
+            )
+            self._hourly_discovery_executor = executor
+        as_of = utc_now()
+        generation = self._hourly_generation()
+        self._hourly_discovery_future = executor.submit(
+            self._collect_hourly_discovery,
+            self.universe_frame.copy(deep=True),
+            generation=generation,
+            build_as_of=self.pool_build_as_of,
+            as_of=as_of,
+        )
+        self.last_discovery_attempt = time.monotonic()
+        self.log(
+            f"Hourly discovery collection started in the background; generation={generation}."
+        )
+        return True
+
+    def _record_hourly_discovery_failure(self, exc: Exception) -> None:
+        now = utc_now()
+        metadata = {
+            "status": "failed",
+            "pool_retained": True,
+            "generation": self._hourly_generation(),
+            "as_of": now.astimezone(BEIJING).isoformat(),
+            "build_as_of": self.pool_build_as_of.astimezone(BEIJING).isoformat(),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        self.coverage["hourly_discovery"] = metadata
+        atomic_json(self.coverage_path, self.coverage)
+        self.log(
+            "Hourly discovery collection failed; retained the accepted pool "
+            f"and will retry after {REBUILD_RETRY_SECONDS:.0f}s: {metadata['error']}"
+        )
+
+    def _consume_completed_hourly_discovery(self) -> bool:
+        future = getattr(self, "_hourly_discovery_future", None)
+        if future is None or not future.done():
+            return False
+        self._hourly_discovery_future = None
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._record_hourly_discovery_failure(exc)
+            return True
+        if result.generation != self._hourly_generation():
+            self.log(
+                "Discarded stale hourly discovery result "
+                f"generation={result.generation}; current={self._hourly_generation()}."
+            )
+            return True
+        self._commit_hourly_discovery(result)
+        return True
+
+    def shutdown_hourly_discovery_worker(self) -> None:
+        """Join the detached reader so its independent connections are closed before exit."""
+        future = getattr(self, "_hourly_discovery_future", None)
+        if future is not None:
+            future.cancel()
+        executor = getattr(self, "_hourly_discovery_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        self._hourly_discovery_future = None
+        self._hourly_discovery_executor = None
+
+    def _run_hourly_discovery_synchronously(self) -> None:
         if self.universe_frame.empty:
             raise RuntimeError("Hourly discovery requires the accepted daily universe cache.")
         now = utc_now()
@@ -780,7 +923,33 @@ class MultiSourceLiveService(LiveService):
             build_as_of=self.pool_build_as_of,
             as_of=now,
         )
-        qualified_accounts = int(discovered["account_key"].nunique())
+        self._commit_hourly_discovery(
+            HourlyDiscoveryResult(
+                generation=self._hourly_generation(),
+                as_of=now,
+                discovered=discovered,
+                metadata=dict(metadata),
+            )
+        )
+
+    def run_hourly_discovery(self) -> None:
+        """Schedule live collection, retaining a synchronous compatibility entry for tools/tests."""
+        if getattr(self, "_hourly_background_enabled", False):
+            if self._consume_completed_hourly_discovery():
+                return
+            self._start_hourly_discovery()
+            return
+        self._run_hourly_discovery_synchronously()
+
+    def _commit_hourly_discovery(self, result: HourlyDiscoveryResult) -> None:
+        now = result.as_of
+        discovered = result.discovered.copy()
+        metadata = dict(result.metadata)
+        qualified_accounts = (
+            int(discovered["account_key"].nunique())
+            if "account_key" in discovered.columns
+            else 0
+        )
         if qualified_accounts == 0:
             # Hourly evidence is a refinement of the accepted daily pool. A
             # transient loss of current profitability must not clear the
@@ -1249,10 +1418,12 @@ class MultiSourceLiveService(LiveService):
                 ).isoformat()
             self._close_client_copies(account_key, "source_position_over_24h")
         for position in list(self.copy_book.positions.values()):
+            increase_block_reason = self._increase_block_reason(position)
             self._sync_independent_position(
                 position,
                 "INDEPENDENT_RECONCILE",
                 allow_increase=allow_increase and position.copy_eligible,
+                increase_block_reason=increase_block_reason,
             )
 
     def _validate_copy_ticket_mapping(self) -> None:
@@ -1373,6 +1544,10 @@ class MultiSourceLiveService(LiveService):
     def refresh_dynamic_sleeves(self) -> None:
         now = utc_now()
         due = scheduler_due(self.scheduler_state, now)
+        if getattr(self, "_hourly_background_enabled", False):
+            if self._consume_completed_hourly_discovery():
+                now = utc_now()
+                due = scheduler_due(self.scheduler_state, now)
         if due.discovery:
             if time.monotonic() - self.last_discovery_attempt >= REBUILD_RETRY_SECONDS:
                 self.last_discovery_attempt = time.monotonic()
@@ -1587,7 +1762,7 @@ class MultiSourceLiveService(LiveService):
                 clients[account_key] = clients.get(account_key, 0.0) + stress
         return total, clusters, clients
 
-    def _reserve_open_request(self) -> None:
+    def _reserve_open_request(self) -> bool:
         now = time.monotonic()
         recent = [
             stamp
@@ -1596,13 +1771,10 @@ class MultiSourceLiveService(LiveService):
         ]
         self.open_request_times = recent
         if len(recent) >= OPEN_REQUEST_LIMIT:
-            error = RuntimeError(
-                f"Order storm guard blocked more than {OPEN_REQUEST_LIMIT} open requests "
-                f"within {OPEN_REQUEST_WINDOW_SECONDS:.0f} seconds."
-            )
-            self.execution_hard_stop("order_storm_guard", error)
-            raise error
+            return False
         recent.append(now)
+        self.open_request_times = recent
+        return True
 
     def _risk_signal_expired(self, position: IndependentCopyPosition) -> bool:
         signal_timestamp = (
@@ -1627,6 +1799,7 @@ class MultiSourceLiveService(LiveService):
         position: IndependentCopyPosition,
         *,
         allow_increase: bool,
+        increase_block_reason: str = "execution_gate_blocked:manual_or_terminal",
     ) -> tuple[float, str]:
         if abs(position.source_lots) < 1e-12:
             return 0.0, "source_closed"
@@ -1722,11 +1895,17 @@ class MultiSourceLiveService(LiveService):
             decision = "risk_allowed_demo_minimum"
         if hold_seconds >= SOURCE_ADD_LIMIT_SECONDS:
             target_abs = min(target_abs, current_abs)
+        blocked_increase = (
+            not allow_increase
+            and proportional > current_abs + 1e-12
+        )
         if not allow_increase:
             target_abs = min(target_abs, current_abs)
+            if blocked_increase:
+                decision = increase_block_reason
         quantized = quantize_lots(target_abs, minimum, step)
         if quantized <= 0:
-            return 0.0, "below_minimum_risk_lot"
+            return 0.0, decision if blocked_increase else "below_minimum_risk_lot"
         return math.copysign(quantized, position.source_lots), decision
 
     def _log_independent_order(
@@ -1794,6 +1973,7 @@ class MultiSourceLiveService(LiveService):
         reason: str,
         *,
         allow_increase: bool,
+        increase_block_reason: str = "execution_gate_blocked:manual_or_terminal",
     ) -> None:
         self._sync_book_children(position)
         before = position.copied_signed_lots
@@ -1801,7 +1981,9 @@ class MultiSourceLiveService(LiveService):
             target, decision = 0.0, "source_closed"
         else:
             target, decision = self._desired_copy_lots(
-                position, allow_increase=allow_increase
+                position,
+                allow_increase=allow_increase,
+                increase_block_reason=increase_block_reason,
             )
         if before * target < -1e-12:
             self._close_position_to(position, 0.0, f"{reason}:reverse_close")
@@ -1821,8 +2003,8 @@ class MultiSourceLiveService(LiveService):
                 return
             can_open = (
                 allow_increase
-                and not self.refresh_mt5_conflicts()
-                and self.quote_allows_open(position.product)
+                and not self._product_conflict_reason(position.product)
+                and self.quote_allows_open(position.product, position.account_key)
             )
             if can_open:
                 if self._risk_signal_expired(position):
@@ -1832,7 +2014,12 @@ class MultiSourceLiveService(LiveService):
                     self.copy_book.remove_closed(position.source_key)
                     return
                 delta = target - before
-                self._reserve_open_request()
+                if not self._reserve_open_request():
+                    position.status = "risk_rejected"
+                    position.reject_reason = "execution_gate_blocked:open_rate_limit"
+                    self.copy_book.rejected_events += 1
+                    self.copy_book.remove_closed(position.source_key)
+                    return
                 result = self.mt.open_position(
                     delta,
                     position.product,
@@ -1850,7 +2037,9 @@ class MultiSourceLiveService(LiveService):
                 position.reject_reason = ""
             else:
                 position.status = "risk_rejected"
-                position.reject_reason = self._open_gate_rejection_reason(position.product)
+                position.reject_reason = self._open_gate_rejection_reason(
+                    position.product, position.account_key
+                )
                 self.copy_book.rejected_events += 1
         elif abs(position.copied_signed_lots) < 1e-12:
             if position.restart_monitor_only and abs(position.source_lots) >= 1e-12:
@@ -1864,14 +2053,15 @@ class MultiSourceLiveService(LiveService):
             position.reject_reason = "" if decision.startswith("risk_allowed") else decision
         self.copy_book.remove_closed(position.source_key)
 
-    def _open_gate_rejection_reason(self, product: str) -> str:
+    def _open_gate_rejection_reason(
+        self, product: str, account_key: str | None = None
+    ) -> str:
         """Return a bounded, operator-facing reason for a blocked new position."""
-        if self.refresh_mt5_conflicts():
-            return "execution_gate_blocked:external_position_conflict"
+        conflict_reason = self._product_conflict_reason(product)
+        if conflict_reason:
+            return conflict_reason
         bid, ask, age = self.mt.quote_state(product)
-        spread_cost = max(0.0, ask - bid) * float(
-            getattr(self.mt.symbol(product), "trade_contract_size", 1.0)
-        )
+        spread_cost = self._spread_cost_usd_per_lot(product, bid, ask)
         if not (ask >= bid > 0):
             return "execution_gate_blocked:invalid_quote"
         if age > QUOTE_MAX_AGE_SECONDS:
@@ -1879,11 +2069,61 @@ class MultiSourceLiveService(LiveService):
         if spread_cost > 1.5 * default_roundtrip_spread_usd_per_lot(product):
             return "execution_gate_blocked:spread"
         db = getattr(self, "db", None)
-        if db is not None and db.selected_source_staleness() > DB_OPEN_BLOCK_SECONDS:
+        if db is not None and self._source_staleness(account_key) > DB_OPEN_BLOCK_SECONDS:
             return "execution_gate_blocked:database_stale"
-        if not hasattr(self, "reconcile_streak") or not self.operational_gates_ready():
-            return "execution_gate_blocked:operational_gates"
+        operational_reason = self._operational_gate_rejection_reason(account_key)
+        if operational_reason:
+            return operational_reason
         return "execution_gate_blocked:manual_or_terminal"
+
+    def _product_conflict_reason(self, product: str) -> str:
+        """Limit foreign-position and pending-order conflicts to this product."""
+        foreign_reader = getattr(self.mt, "all_foreign_positions", None)
+        pending_reader = getattr(self.mt, "all_pending_orders", None)
+        if callable(foreign_reader) and callable(pending_reader):
+            if tuple(foreign_reader((product,))):
+                return "execution_gate_blocked:external_position_conflict"
+            if tuple(pending_reader((product,))):
+                return "execution_gate_blocked:pending_order_conflict"
+            return ""
+        return (
+            "execution_gate_blocked:external_position_conflict"
+            if self.refresh_mt5_conflicts()
+            else ""
+        )
+
+    def _increase_block_reason(
+        self,
+        position: IndependentCopyPosition,
+        *,
+        policy: str | None = None,
+    ) -> str:
+        if getattr(self, "phase", "live") != "live":
+            return "execution_gate_blocked:not_live"
+        if not position.copy_eligible:
+            return "old_or_shadow_position"
+        if (policy or friday_policy(server_time_from_utc(utc_now()))) != "normal":
+            return "execution_gate_blocked:friday_reduce_only"
+        if not self.manual_control_enabled("auto_trading_enabled"):
+            return "execution_gate_blocked:manual_control"
+        terminal_reader = getattr(self.mt, "terminal", None)
+        if callable(terminal_reader):
+            try:
+                if not bool(terminal_reader().trade_allowed):
+                    return "execution_gate_blocked:terminal_autotrading"
+            except Exception:
+                return "execution_gate_blocked:terminal_autotrading"
+        return ""
+
+    def _spread_cost_usd_per_lot(
+        self, product: str, bid: float, ask: float
+    ) -> float:
+        calculator = getattr(self.mt, "spread_cost_usd_per_lot", None)
+        if callable(calculator):
+            return max(0.0, float(calculator(product, bid, ask)))
+        return max(0.0, ask - bid) * float(
+            getattr(self.mt.symbol(product), "trade_contract_size", 1.0)
+        )
 
     def _handle_source_position_change(
         self,
@@ -1919,15 +2159,21 @@ class MultiSourceLiveService(LiveService):
                 position.status = "shadow_monitor"
                 position.reject_reason = "old_or_shadow_position"
         policy = friday_policy(server_time_from_utc(utc_now()))
+        increase_block_reason = self._increase_block_reason(
+            position, policy=policy
+        )
         allow_increase = (
-            self.phase == "live"
-            and position.copy_eligible
-            and policy == "normal"
-            and self.manual_control_enabled("auto_trading_enabled")
+            not increase_block_reason
         )
         self.persist_private_state()
         self._sync_independent_position(
-            position, reason, allow_increase=allow_increase
+            position,
+            reason,
+            allow_increase=allow_increase,
+            increase_block_reason=(
+                increase_block_reason
+                or "execution_gate_blocked:manual_or_terminal"
+            ),
         )
         self.persist_private_state()
         return action, position
@@ -2072,7 +2318,7 @@ class MultiSourceLiveService(LiveService):
                 "quote_age_seconds": age,
                 "spread_allows_open": (
                     spread > 0
-                    and spread * product_spec(product).contract_size
+                    and self._spread_cost_usd_per_lot(product, bid, ask)
                     <= 1.5 * default_roundtrip_spread_usd_per_lot(product)
                 ),
             })
@@ -2152,28 +2398,73 @@ class MultiSourceLiveService(LiveService):
         status["db_seconds_since_success"] = self.db.selected_source_staleness()
         return status
 
-    def operational_gates_ready(self) -> bool:
-        return (
-            self.reconcile_streak >= 3
-            and self.pending_source_snapshot_count == 0
-            and self.portfolio is not None
-            and self.portfolio.duplicate_events == 0
-            and int(self.coverage.get("logical_routes_scanned", 0)) == len(ROUTES)
-            and int(self.coverage.get("physical_sources_scanned", 0)) == len(self.db.sources)
-            and self.db.selected_source_staleness() <= DB_OPEN_BLOCK_SECONDS
-            and len(self.poll_latencies[-120:]) >= MIN_LATENCY_GATE_SAMPLES
-            and (percentile_95(self.poll_latencies[-120:]) or float("inf")) < 2.0
-        )
+    def _source_staleness(self, account_key: str | None = None) -> float:
+        db = self.db
+        account_reader = getattr(db, "account_source_staleness", None)
+        if account_key and callable(account_reader):
+            try:
+                return float(account_reader(account_key))
+            except KeyError:
+                return float("inf")
+        return float(db.selected_source_staleness())
 
-    def quote_allows_open(self, product: str = ALLOWED_SYMBOL) -> bool:
+    def _source_query_latency_seconds(self, source_key: str) -> float:
+        db = getattr(self, "db", None)
+        sources = getattr(db, "sources", {}) if db is not None else {}
+        source = sources.get(source_key)
+        latency_ms = getattr(getattr(source, "health", None), "latency_ms", 0.0)
+        return float(latency_ms or 0.0) / 1000.0
+
+    def operational_gates_ready(self, account_key: str | None = None) -> bool:
+        ready = not self._operational_gate_rejection_reason(account_key)
+        if ready:
+            self.operational_ready_once = True
+        return ready and bool(getattr(self, "operational_ready_once", False))
+
+    def _operational_gate_rejection_reason(
+        self, account_key: str | None = None
+    ) -> str:
+        if self.portfolio is None:
+            return "execution_gate_blocked:operational_gates"
+        if int(getattr(self.portfolio, "duplicate_events", 0)) != 0:
+            return "execution_gate_blocked:duplicate_events"
+        coverage = getattr(self, "coverage", {})
+        source_count = len(getattr(getattr(self, "db", None), "sources", {}))
+        if (
+            int(coverage.get("logical_routes_scanned", 0)) != len(ROUTES)
+            or int(coverage.get("physical_sources_scanned", 0)) != source_count
+        ):
+            return "execution_gate_blocked:source_coverage"
+        if self._source_staleness(account_key) > DB_OPEN_BLOCK_SECONDS:
+            return "execution_gate_blocked:database_stale"
+        if bool(getattr(self, "operational_ready_once", False)):
+            return ""
+        if (
+            getattr(self, "reconcile_streak", 0) < 3
+            or getattr(self, "pending_source_snapshot_count", 0) != 0
+        ):
+            return "execution_gate_blocked:source_reconcile"
+        samples = getattr(self, "poll_latencies", [])[-120:]
+        if (
+            len(samples) < MIN_LATENCY_GATE_SAMPLES
+            or (percentile_95(samples) or float("inf")) >= 2.0
+        ):
+            return "execution_gate_blocked:latency_warmup"
+        return ""
+
+    def quote_allows_open(
+        self,
+        product: str = ALLOWED_SYMBOL,
+        account_key: str | None = None,
+    ) -> bool:
         bid, ask, age = self.mt.quote_state(product)
-        spread_cost = max(0.0, ask - bid) * float(self.mt.symbol(product).trade_contract_size)
+        spread_cost = self._spread_cost_usd_per_lot(product, bid, ask)
         return (
             ask >= bid > 0
             and spread_cost <= 1.5 * default_roundtrip_spread_usd_per_lot(product)
             and age <= QUOTE_MAX_AGE_SECONDS
-            and self.db.selected_source_staleness() <= DB_OPEN_BLOCK_SECONDS
-            and self.operational_gates_ready()
+            and self._source_staleness(account_key) <= DB_OPEN_BLOCK_SECONDS
+            and self.operational_gates_ready(account_key)
         )
 
     def reconcile_sources(self) -> None:
@@ -2592,6 +2883,7 @@ class MultiSourceLiveService(LiveService):
             (utc_now() - filetime_to_datetime(signal_event.timestamp)).total_seconds(),
         )
         self.signal_latencies.append(latency)
+        query_latency = self._source_query_latency_seconds(signal_event.source_key)
         client = self.routed_clients[last_event.account_key]
         dynamic_key = sleeve_key(last_event.account_key, product)
         state = self.sleeve_states.get(dynamic_key)
@@ -2620,6 +2912,7 @@ class MultiSourceLiveService(LiveService):
             and abs(after_lots) < 1e-12
             and existing_copy is None
         )
+        execution_error: Exception | None = None
         if terminal_flat:
             copy_action, copy_position = "batch_terminal_flat", None
         elif (
@@ -2630,15 +2923,23 @@ class MultiSourceLiveService(LiveService):
         ):
             copy_action, copy_position = "signal_expired_no_copy", None
         else:
-            copy_action, copy_position = self._handle_source_position_change(
-                account_key=last_event.account_key,
-                product=product,
-                position_id=last_event.position_id,
-                before_lots=before_lots,
-                after_lots=approved_after,
-                signal_time=filetime_to_datetime(signal_event.timestamp),
-                reason=f"SOURCE:{client.spec.alias}:{client.route_key}",
-            )
+            try:
+                copy_action, copy_position = self._handle_source_position_change(
+                    account_key=last_event.account_key,
+                    product=product,
+                    position_id=last_event.position_id,
+                    before_lots=before_lots,
+                    after_lots=approved_after,
+                    signal_time=filetime_to_datetime(signal_event.timestamp),
+                    reason=f"SOURCE:{client.spec.alias}:{client.route_key}",
+                )
+            except Exception as exc:
+                execution_error = exc
+                copy_action = "broker_error"
+                copy_position = self.copy_book.positions.get(source_key_value)
+                if copy_position is not None:
+                    copy_position.status = "risk_rejected"
+                    copy_position.reject_reason = "execution_gate_blocked:broker_error"
         raw_targets, gross_longs, gross_shorts, _cycle = self._refresh_targets()
         raw = raw_targets.get(product, 0.0)
         gross_long = gross_longs.get(product, 0.0)
@@ -2666,6 +2967,8 @@ class MultiSourceLiveService(LiveService):
                 "gross_long_lots": gross_long,
                 "gross_short_lots": gross_short,
                 "db_latency_seconds": latency,
+                "signal_age_seconds": latency,
+                "query_latency_seconds": query_latency,
                 "allowed_delay_seconds": allowed_delay,
                 "signal_expired": expired,
                 "phase": self.phase,
@@ -2680,6 +2983,8 @@ class MultiSourceLiveService(LiveService):
                 ),
             },
         )
+        if execution_error is not None:
+            raise execution_error
 
     def _approved_source_after(
         self,
@@ -2715,7 +3020,9 @@ class MultiSourceLiveService(LiveService):
 
     @staticmethod
     def _signal_delay_budget(row: Mapping[str, Any]) -> float:
-        enabled_value = row.get("historical_delay_enabled", True)
+        if not row:
+            return 5.0
+        enabled_value = row.get("historical_delay_enabled", False)
         historical_delay_enabled = (
             enabled_value
             if isinstance(enabled_value, bool)
@@ -2755,9 +3062,35 @@ class MultiSourceLiveService(LiveService):
             for row in rows
             if normalize_source_product(row.get("symbol")) is not None
         }
+        for replacement_key in sorted(set(after) - set(before)):
+            source_row = snapshot_rows.get(replacement_key) or {}
+            previous_position_id = source_row.get("source_parent_position_id")
+            if previous_position_id is None:
+                continue
+            previous_key = (
+                replacement_key[0], int(previous_position_id), replacement_key[2]
+            )
+            if previous_key not in before or previous_key in after:
+                continue
+            previous_lots = before[previous_key]
+            replacement_lots = after[replacement_key]
+            if (
+                previous_lots * replacement_lots <= 0
+                or abs(replacement_lots) > abs(previous_lots) + 1e-12
+            ):
+                continue
+            client = self.routed_clients[replacement_key[0]]
+            self.copy_book.migrate_source_position(
+                replacement_key[0],
+                client.spec.alias,
+                replacement_key[2],
+                previous_key[1],
+                replacement_key[1],
+            )
+            before[replacement_key] = before.pop(previous_key)
         if before == after:
             return
-        source_latency = self.db.sources[source_key].health.latency_ms or 0.0
+        source_query_latency = self._source_query_latency_seconds(source_key)
         keys = sorted(set(before) | set(after))
         raw_targets, gross_longs, gross_shorts, _cycle = self._refresh_targets()
         for key in keys:
@@ -2768,8 +3101,18 @@ class MultiSourceLiveService(LiveService):
             product = key[2]
             source_row = snapshot_rows.get(key)
             opened_text = str((source_row or {}).get("source_opened_at") or "")
+            risk_increase = (
+                abs(after.get(key, 0.0)) > abs(before.get(key, 0.0)) + 1e-12
+                or before.get(key, 0.0) * after.get(key, 0.0) < 0
+            )
             signal_time = utc_now()
-            latency_known = False
+            # MT4 exposes positions rather than an append-only Deal stream. A
+            # same-ticket add/reversal is therefore timed from the snapshot in
+            # which its delta is first observed. Only a newly discovered ticket
+            # needs its source open timestamp to establish signal age.
+            latency_known = bool(
+                risk_increase and abs(before.get(key, 0.0)) > 1e-12
+            )
             if opened_text and abs(before.get(key, 0.0)) <= 1e-12:
                 try:
                     signal_time = datetime.fromisoformat(opened_text)
@@ -2780,10 +3123,6 @@ class MultiSourceLiveService(LiveService):
             dynamic_key = sleeve_key(key[0], product)
             row = getattr(self, "sleeve_rows", {}).get(dynamic_key, {})
             allowed_delay = self._signal_delay_budget(row)
-            risk_increase = (
-                abs(after.get(key, 0.0)) > abs(before.get(key, 0.0)) + 1e-12
-                or before.get(key, 0.0) * after.get(key, 0.0) < 0
-            )
             expired = bool(
                 risk_increase
                 and (
@@ -2801,15 +3140,26 @@ class MultiSourceLiveService(LiveService):
                 before.get(key, 0.0), after.get(key, 0.0),
                 entry_timely=not expired,
             )
-            copy_action, copy_position = self._handle_source_position_change(
-                account_key=key[0],
-                product=product,
-                position_id=key[1],
-                before_lots=before.get(key, 0.0),
-                after_lots=approved_after,
-                signal_time=signal_time,
-                reason=f"SOURCE_SNAPSHOT:{source_key}",
-            )
+            execution_error: Exception | None = None
+            try:
+                copy_action, copy_position = self._handle_source_position_change(
+                    account_key=key[0],
+                    product=product,
+                    position_id=key[1],
+                    before_lots=before.get(key, 0.0),
+                    after_lots=approved_after,
+                    signal_time=signal_time,
+                    reason=f"SOURCE_SNAPSHOT:{source_key}",
+                )
+            except Exception as exc:
+                execution_error = exc
+                copy_action = "broker_error"
+                copy_position = self.copy_book.positions.get(
+                    source_position_key(key[0], key[1], product)
+                )
+                if copy_position is not None:
+                    copy_position.status = "risk_rejected"
+                    copy_position.reject_reason = "execution_gate_blocked:broker_error"
             raw = raw_targets.get(product, 0.0)
             gross_long = gross_longs.get(product, 0.0)
             gross_short = gross_shorts.get(product, 0.0)
@@ -2824,7 +3174,7 @@ class MultiSourceLiveService(LiveService):
                     "source_server": client.server,
                     "source_platform": "MT4",
                     "source_side": "BUY" if delta > 0 else "SELL",
-                    "source_entry": 0 if abs(after.get(key, 0.0)) > abs(before.get(key, 0.0)) else 1,
+                    "source_entry": 0 if risk_increase else 1,
                     "source_lots": abs(delta),
                     "product": key[2],
                     "effective_weight": self._effective_copy_weight(
@@ -2835,7 +3185,11 @@ class MultiSourceLiveService(LiveService):
                     "actual_strategy_lots": self.mt.signed_position(product),
                     "gross_long_lots": gross_long,
                     "gross_short_lots": gross_short,
-                    "db_latency_seconds": source_latency / 1000.0,
+                    # Keep the public latency field consistent with MT5: this
+                    # is signal age, not the SQL snapshot query duration.
+                    "db_latency_seconds": latency,
+                    "signal_age_seconds": latency,
+                    "query_latency_seconds": source_query_latency,
                     "allowed_delay_seconds": allowed_delay,
                     "signal_expired": expired,
                     "latency_known": latency_known,
@@ -2849,6 +3203,8 @@ class MultiSourceLiveService(LiveService):
                     ),
                 },
             )
+            if execution_error is not None:
+                raise execution_error
 
     def refresh_mt5_conflicts(self) -> bool:
         managed = set(self.current_targets)
@@ -3111,7 +3467,9 @@ class MultiSourceLiveService(LiveService):
             raise
         self.phase = "recovery_shadow"
         self.shadow_started = time.monotonic()
-        self.required_shadow_seconds = RECOVERY_SHADOW_SECONDS
+        self.required_shadow_seconds = (
+            0.0 if self._demo_fast_activation_enabled() else RECOVERY_SHADOW_SECONDS
+        )
         self.reconcile_streak = 0
         self.last_pool_reload_day = trading_day_key(now)
         self.scheduler_state = mark_scheduler_run(
@@ -3138,6 +3496,18 @@ class MultiSourceLiveService(LiveService):
         for source_key, rows in snapshots.items():
             self.apply_mt4_snapshot(source_key, rows)
         return mt5_errors, mt4_errors
+
+    def write_status_if_due(self, *, force: bool = False) -> bool:
+        now = time.monotonic()
+        if (
+            not force
+            and now - float(getattr(self, "last_status_write", 0.0))
+            < STATUS_WRITE_INTERVAL_SECONDS
+        ):
+            return False
+        self.write_status()
+        self.last_status_write = now
+        return True
 
     def run(self) -> None:
         self.db.connect()
@@ -3178,7 +3548,7 @@ class MultiSourceLiveService(LiveService):
             f"shadow={self.required_shadow_seconds:.0f}s, poll={self.args.poll_ms}ms."
         )
         self.persist_private_state()
-        self.write_status()
+        self.write_status_if_due(force=True)
         started = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=2, thread_name_prefix="copy-source-poll") as poll_executor:
@@ -3220,7 +3590,7 @@ class MultiSourceLiveService(LiveService):
                             if self._live_positions():
                                 self.flatten("selected_source_outage")
                         self.persist_private_state()
-                        self.write_status()
+                        self.write_status_if_due()
                         if not mt5_errors and not mt4_errors:
                             self.last_error = ""
                     except Exception as exc:
@@ -3239,7 +3609,7 @@ class MultiSourceLiveService(LiveService):
                         except Exception as persist_error:
                             self.log(f"persist_after_error_failed: {persist_error}")
                         try:
-                            self.write_status()
+                            self.write_status_if_due(force=True)
                         except Exception as status_error:
                             self.log(f"status_after_error_failed: {status_error}")
                         time.sleep(min(2.0, self.args.poll_ms / 1000.0 * 2))
@@ -3248,9 +3618,10 @@ class MultiSourceLiveService(LiveService):
         finally:
             self.persist_private_state()
             try:
-                self.write_status()
+                self.write_status_if_due(force=True)
             except Exception:
                 pass
+            self.shutdown_hourly_discovery_worker()
             self.db.close()
             self.mt.shutdown()
             self.log("Multi-source service stopped.")

@@ -177,20 +177,34 @@ def csv_schema_archive_path(path: Path) -> Path:
 
 
 def ensure_csv_schema(path: Path, fieldnames: Iterable[str]) -> Path | None:
-    """Rotate a non-empty CSV whose header or row width differs from the schema."""
+    """Upgrade additive headers in place; rotate incompatible public CSVs."""
     expected = tuple(fieldnames)
     if not path.exists() or path.stat().st_size == 0:
         return None
     with path.open("r", newline="", encoding="utf-8-sig") as handle:
-        rows = csv.reader(handle)
-        header = next(rows, [])
-        matches_schema = tuple(header) == expected and all(
-            len(row) == len(expected) for row in rows
-        )
+        rows = list(csv.reader(handle))
+    header = rows[0] if rows else []
+    data_rows = rows[1:]
+    matches_schema = tuple(header) == expected and all(
+        len(row) == len(expected) for row in data_rows
+    )
     if matches_schema:
         return None
     archive_path = csv_schema_archive_path(path)
     path.replace(archive_path)
+    additive = (
+        bool(header)
+        and len(set(header)) == len(header)
+        and set(header).issubset(expected)
+        and all(len(row) == len(header) for row in data_rows)
+    )
+    if additive:
+        with path.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=expected)
+            writer.writeheader()
+            for values in data_rows:
+                legacy = dict(zip(header, values))
+                writer.writerow({column: legacy.get(column, "") for column in expected})
     return archive_path
 
 
@@ -858,6 +872,44 @@ class Mt5Executor:
         if value is None:
             raise RuntimeError(f"MT5 stress calculation failed for {symbol}: {mt5.last_error()}")
         return abs(float(value))
+
+    def spread_cost_usd_per_lot(
+        self,
+        symbol: str,
+        bid: float | None = None,
+        ask: float | None = None,
+    ) -> float:
+        """Convert one-lot bid/ask spread cost into the Demo account currency."""
+        if bid is None or ask is None:
+            tick = self.tick(symbol)
+            bid, ask = float(tick.bid), float(tick.ask)
+        if not (float(ask) >= float(bid) > 0):
+            raise RuntimeError(f"Invalid quote for spread conversion: {symbol}")
+        info = self.symbol(symbol)
+        tick_size = float(getattr(info, "trade_tick_size", 0.0) or 0.0)
+        tick_values = (
+            float(getattr(info, "trade_tick_value_loss", 0.0) or 0.0),
+            float(getattr(info, "trade_tick_value_profit", 0.0) or 0.0),
+        )
+        if tick_size > 0 and max(tick_values) > 0:
+            return (
+                max(0.0, float(ask) - float(bid))
+                / tick_size
+                * max(tick_values)
+            )
+        values = (
+            mt5.order_calc_profit(
+                mt5.ORDER_TYPE_BUY, symbol, 1.0, float(ask), float(bid)
+            ),
+            mt5.order_calc_profit(
+                mt5.ORDER_TYPE_SELL, symbol, 1.0, float(bid), float(ask)
+            ),
+        )
+        if any(value is None for value in values):
+            raise RuntimeError(
+                f"MT5 spread conversion failed for {symbol}: {mt5.last_error()}"
+            )
+        return max(abs(float(value)) for value in values)
 
     def _filling_mode(self, symbol: str = ALLOWED_SYMBOL) -> int:
         flags = int(self.symbol(symbol).filling_mode)

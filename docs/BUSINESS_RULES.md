@@ -85,7 +85,10 @@
 - Source execution is customer-owned: `account + source Position` maps to one or more Demo Tickets.
   Open, add, reduce, close and reverse events may touch only those Tickets. Opposing customers remain
   independently open; combination risk may reject or shrink additions but never nets customer
-  Tickets. Startup and shadow-observed source positions are monitor-only and never chased.
+  Tickets. Startup and shadow-observed source positions are monitor-only and never chased. A proven
+  MT4 partial-close residual (`COMMENT` references the former Ticket) may rekey the same-direction,
+  smaller source Position while preserving its owned Demo Ticket and original entry deadline; it is
+  a reduction, never a new entry or inferred ownership claim.
 - The explicit Demo minimum-lot exception has stable ownership. Once a qualifying source Position
   owns a minimum lot, later reconciliations preserve that Ticket while eligibility remains true.
   Same-direction siblings may own independent Tickets in the explicit Demo mode. Eight open
@@ -121,7 +124,10 @@
   MT4 poll concurrently, and a completed MT5 batch is applied before waiting for MT4 snapshots.
   Runtime database connect/read/write operations use a two-second bound and reconnect on the next
   cycle after failure; the longer build-time timeout remains limited to complete historical builds.
-  A failed source never advances its cursor or converts missing evidence to an empty result.
+  A failed source never advances its cursor or converts missing evidence to an empty result. Live
+  activation requires the complete reconciliation/latency qualification once. Thereafter one routine
+  reconcile drift does not revoke an otherwise healthy live state, but route/source completeness,
+  duplicate-event absence and selected-source freshness remain per-cycle hard gates.
 - MT5 balance, credit and other non-trading ledger actions advance the per-source cursor so polling
   cannot stall, but they contribute no position change, intraday trading P/L, dynamic-weight change
   or executable signal. A duplicate or out-of-order cursor is ignored within that physical source.
@@ -140,7 +146,9 @@
   platform datetime's timezone.
 - An eligible source Position without a Demo child must pass its original entry-delay budget on every
   retry. After expiry it remains `signal_expired_no_copy` and cannot be chased when a prior rejection
-  clears. Existing owned children remain subject to reductions, closes and emergency risk release.
+  clears. A missing or deferred historical-delay sleeve record uses the conservative five-second
+  runtime budget (also bounded by `holdP25 / 3`). Existing owned children remain subject to
+  reductions, closes and emergency risk release.
 - Every risk-increasing order uses the most recent opening, increase or reversal signal timestamp;
   reductions and closes never refresh that deadline. The deadline is checked before execution gates
   and again immediately before the broker open request. An expired addition is ignored, while an
@@ -157,7 +165,9 @@
   Source money is converted to USD first, then source P/L is scaled from the 30-day average closed
   execution size to that Demo product's actual minimum lot. Estimated copy cost is the product
   default round-trip spread at the same minimum lot plus a 25% execution reserve, with rebates
-  excluded. MT5 close counts and lots both use exit/reversal Deals, so partial closes cannot divide
+  excluded. Runtime quote spread is priced by the selected Demo terminal's one-lot profit
+  calculation in its account currency, not by raw quote difference times contract size when the
+  quote currency differs. MT5 close counts and lots both use exit/reversal Deals, so partial closes cannot divide
   unrelated opening volume. The 30-day cost-adjusted comprehensive P/L must be positive; seven-day
   cost coverage must be at least one before percentile ranks are calculated; failed rows cannot
   move qualified-account ranks. Missing or non-finite cost evidence fails closed. Excessive

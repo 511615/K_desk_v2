@@ -43,6 +43,10 @@ timeouts and reconnect after an isolated failure without advancing that source c
 database timeout is reserved for complete historical pool construction. If one source repeatedly
 times out, inspect its source-health error and age; do not increase the live timeout above the
 five-second signal budget or start another Producer.
+Initial live activation requires the complete reconciliation and latency qualification. After that
+one normal transient reconcile drift may remain live, but an incomplete route/source set, duplicate
+event or stale selected source still blocks new exposure; investigate source health rather than
+restarting a healthy Producer to clear a single drift.
 
 If `events_public.csv` continues advancing while `status.json` stops, inspect the Producer log for
 terminal identity changes or `AutoTrading disabled` errors. The Producer must remain the only copy
@@ -118,23 +122,28 @@ Hourly discovery reads only the daily factor-ready cache plus bounded session fa
 discovery leaves the last accepted pool in place and retries no faster than once per minute. A
 membership change seeds current source positions as monitor-only, retains same-day retiring Ticket
 owners for attribution and never replays an offline source increase.
+The hourly SQL collection uses a detached read-only database object with its own physical-source
+connections. Only a generation-matching completed result is committed on the real-time thread, so
+hourly discovery cannot hold the 500 ms poller's source locks. Normal public status writes are
+limited to one per second; errors, startup and shutdown still force an immediate snapshot.
 Successful hourly membership is persisted to the accepted same-day snapshot. A restart restores
 that latest membership. If an older snapshot lacks hourly evidence, those values remain unknown and
 the scheduler runs a bounded discovery immediately instead of publishing fabricated zeros.
 
 `-AllowDemoMinLotOverride` is an explicit `ACCMGlobal-Demo`/`StagedLive` experiment switch. It may
 open the minimum copied lot for each eligible independent source Position when whole-portfolio
-stress, the product-direction cluster limit and margin still fit. It does not authorize trading by
-itself: `-EnableLiveTrading`, terminal AutoTrading, healthy operational gates and a new
+stress and margin still fit. The ordinary product-direction cluster limit is disabled only in this
+explicit Demo mode across supported products; it remains active in every normal server/mode. It does
+not authorize trading by itself: `-EnableLiveTrading`, terminal AutoTrading, healthy operational gates and a new
 post-activation source signal remain mandatory.
 For an active client in this exact mode, initialization floors the client's loss allowance at 20%
 of the 1.5% cycle budget. This prevents a minimum-lot Ticket from being closed by a sub-dollar
 weight-proportional allowance before the source strategy can be evaluated. Zero-weight clients and
 all ordinary modes retain the normal weight-proportional allowance.
 The owning source Position retains that minimum lot across reconciliation. A rolling 60-second guard
-permits at most eight open requests; a ninth request enters execution hard stop and flattens strategy
-Tickets. Investigate and deploy a tested fix before restarting rather than repeatedly relaunching an
-unchanged Producer.
+permits at most eight open requests; an additional request is retained as a retryable
+`execution_gate_blocked:open_rate_limit` decision while its signal remains current. It does not
+flatten unrelated customer Tickets or enter a global hard stop.
 Manual risk controls are written only through the loopback 8777 endpoint and consumed from
 `manual_controls.json` in the Producer output directory. Every update appends
 `manual_controls_audit.jsonl`. Use the separate resume action after changing a gate; it starts
@@ -152,6 +161,9 @@ If an MT4 order appears materially later than the five-second/P25 entry budget, 
 Producer after the Demo is flat, preserve private state and inspect the physical source-time mapping
 plus original entry timestamp. Reconciliation must report `signal_expired_no_copy` and must not
 reopen that Position after the entry deadline. Keep 8777 running during repair.
+For a proven MT4 partial-close residual whose new Ticket Comment references the former Ticket, retain
+the private state and verify that the existing source-to-Demo mapping was rekeyed as one reduction.
+Do not delete state or treat the replacement Ticket as a fresh source entry.
 After deploying an entry-deadline repair, reject the release if any first entry, addition or
 opposite reversal leg is opened after its persisted risk-signal deadline. Verify that an expired
 reversal may close old risk without creating the new leg. The dashboard `currentCopies` table must
