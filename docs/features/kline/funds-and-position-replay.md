@@ -61,9 +61,12 @@ an apparently precise value from a fake opening balance. Floating P/L remains ex
 `includeTimeline` (default `false`) and `refreshTimelineCache` (effective only when replay is
 included, default `false`). An opted-in job writes a versioned, runtime-private `*_timeline.json`
 input and embeds it in the existing standalone `*_trade_kline.html`; opening the artifact does not
-need another 8777/8766 request. Job result data additively exposes timeline availability, event
-counts, liquidation count, cache status and a sanitized reason when the timeline is unavailable.
-Existing chart names, preview URLs and task polling are unchanged.
+need another 8777/8766 request. The artifact stores the repetitive ledger rows as a compact,
+non-executing JSON payload, then expands the replay after the chart's first browser idle slot. This
+keeps initial K-line paint independent from a large historical ledger while preserving standalone
+behavior. Job result data additively exposes timeline availability, event counts, liquidation count,
+cache status and a sanitized reason when the timeline is unavailable. Existing chart names, preview
+URLs and task polling are unchanged.
 
 ## Data, routing and read-only constraints
 
@@ -86,8 +89,11 @@ is owed compensation. MT4/MT5/CRM reads stay read-only. USD/USC money uses the a
 
 Quote/chart generation can complete when an opted-in funds replay is unavailable; the chart then
 displays an explicit unavailable state rather than zero lines. A source ambiguity or database failure
-cannot be silently merged with another route. Event tables paginate at 200 rows. The complete cache,
-worker-owned input JSON and final HTML remain inside the configured runtime directory.
+cannot be silently merged with another route. The full event table remains continuously scrollable,
+with a bounded DOM window. Initial replay decoding is deferred until the browser is idle; replay
+state uses time and bar indexes for binary lookup, and the lower funds curve samples to the visible
+pixel width before each redraw. The complete cache, worker-owned input JSON and final HTML remain
+inside the configured runtime directory.
 
 ## Code and dependencies
 
@@ -104,8 +110,8 @@ invalid-local-cache recovery. Pure tests prove a selected window receives a know
 preserves unknown pre-anchor state, and retains the exact chronological opening and closing source
 events without changing the raw curve. HTML tests prove the artifact embeds the historical-funds
 layout, lower-panel funds switcher, clickable liquidation controls, order/Deal table, full-history
-virtual scrolling, raw event wording, and JavaScript parsing plus activation of the actual funds
-panel hook.
+virtual scrolling, raw event wording, deferred compact-payload decoding, indexed replay lookup,
+and JavaScript parsing plus activation of the actual funds panel hook.
 Historical-funds fixtures continue to cover MT4 cash/Credit/clear, MT5 Action 2/3 and liquidation
 markers. Manual acceptance checks both checkbox states, an MT4 and MT5 chart, USD and USC scaling,
 a cache reuse, explicit refresh, a chart with unavailable funds data, an event-table jump and an HTML

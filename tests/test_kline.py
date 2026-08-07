@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -207,7 +208,21 @@ const canvas = document.getElementById('chart');</script></body></html>'''
 
     result = module.inject_account_timeline(html, timeline)
 
-    assert '"accountTimeline"' in result
+    assert 'id="accountTimelineData"' in result
+    assert 'requestIdleCallback' in result
+    assert 'decodeTimeline' in result
+    assert 'curveTimes' in result
+    assert 'lowerBoundTimelineTime' in result
+    data_start = result.index('const DATA = ') + len('const DATA = ')
+    data_end = result.index(';\nconst canvas', data_start)
+    assert 'accountTimeline' not in result[data_start:data_end]
+    timeline_start = result.index('<script id="accountTimelineData" type="application/json">')
+    timeline_start += len('<script id="accountTimelineData" type="application/json">')
+    timeline_end = result.index('</script>', timeline_start)
+    compact_timeline = json.loads(result[timeline_start:timeline_end])
+    assert compact_timeline['format'] == 'kdesk-timeline-v1'
+    assert compact_timeline['eventFields'][2] == 'timestamp'
+    assert compact_timeline['events'][0][2] == '2026-01-01 10:00:00'
     assert 'id="panelFunds"' in result
     assert '历史资金回溯' in result
     assert 'id="timelineChart"' not in result

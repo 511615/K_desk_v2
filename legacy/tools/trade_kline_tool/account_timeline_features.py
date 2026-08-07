@@ -5,6 +5,29 @@ from __future__ import annotations
 import json
 from typing import Any
 
+_EVENT_FIELDS = (
+    "eventIndex", "id", "timestamp", "kind", "category", "orderId", "positionId", "symbol", "comment",
+    "deltaBalance", "deltaCredit", "realizedPnl", "balance", "credit", "equity", "equityStatus", "liquidation",
+)
+_CURVE_FIELDS = ("timestamp", "kind", "balance", "credit", "equity", "equityStatus")
+
+
+def _compact_rows(rows: list[dict[str, Any]], fields: tuple[str, ...]) -> list[list[Any]]:
+    return [[row.get(field) for field in fields] for row in rows]
+
+
+def _compact_timeline(timeline: dict[str, Any]) -> dict[str, Any]:
+    """Store repetitive replay rows as ordered arrays until the artifact is idle."""
+
+    return {
+        "format": "kdesk-timeline-v1",
+        "meta": {key: value for key, value in timeline.items() if key not in {"events", "curve"}},
+        "eventFields": _EVENT_FIELDS,
+        "events": _compact_rows(list(timeline.get("events") or []), _EVENT_FIELDS),
+        "curveFields": _CURVE_FIELDS,
+        "curve": _compact_rows(list(timeline.get("curve") or []), _CURVE_FIELDS),
+    }
+
 _CSS = """
 .timelinePanel { margin-top:18px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#111827; padding:16px; }
 .timelineHead { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }.timelineHead h2 { margin:0; color:#111827; font-size:20px; }.timelineHead small { display:block; margin-top:5px; color:#64748b; }
@@ -30,21 +53,38 @@ _HTML = """
 
 _JS = r"""
 (() => {
-  const timeline = DATA.accountTimeline;
-  if (!timeline || !Array.isArray(timeline.events)) return;
+  const timelineNode = document.getElementById('accountTimelineData');
+  const decodeTimeline = raw => {
+    const decodeRows = (fields, rows) => (rows || []).map(values => Object.fromEntries((fields || []).map((field, index) => [field, values[index]])));
+    if (!raw || raw.format !== 'kdesk-timeline-v1') return raw || {};
+    return {...(raw.meta || {}), events:decodeRows(raw.eventFields, raw.events), curve:decodeRows(raw.curveFields, raw.curve)};
+  };
+  const startTimeline = () => {
+  let timeline;
+  try { timeline = decodeTimeline(JSON.parse(timelineNode?.textContent || '{}')); } catch (_) { return; }
+  if (!Array.isArray(timeline.events)) return;
   const ROW_HEIGHT = 62;
   const VIRTUAL_BUFFER = 36;
   let virtualStart = -1, virtualEnd = -1, renderScheduled = false;
   const escTimeline = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money = value => value == null || value === '' || !Number.isFinite(Number(value)) ? '数据不足' : Number(value).toFixed(2);
   const moneyClass = value => Number(value) > 0 ? 'positive' : Number(value) < 0 ? 'negative' : '';
+  const curve = (timeline.curve || []).filter(row => row.balance != null && row.credit != null && Number.isFinite(toMs(row.timestamp)));
+  const curveTimes = curve.map(row => toMs(row.timestamp));
+  const curveBarIndexes = curve.map(row => findIndexByMs(toMs(row.timestamp)));
+  const lowerBoundTimelineTime = ms => {
+    let low = 0, high = curveTimes.length;
+    while (low < high) { const middle = (low + high) >> 1; if (curveTimes[middle] <= ms) low = middle + 1; else high = middle; }
+    return low;
+  };
+  const lowerBoundTimelineIndex = value => {
+    let low = 0, high = curveBarIndexes.length;
+    while (low < high) { const middle = (low + high) >> 1; if (curveBarIndexes[middle] < value) low = middle + 1; else high = middle; }
+    return low;
+  };
   const stateAt = ms => {
-    let state = timeline.openingState || {known:false, balance:null, credit:null};
-    (timeline.curve || []).forEach(row => {
-      const at = toMs(row.timestamp);
-      if (Number.isFinite(at) && at <= ms && row.balance != null && row.credit != null) state = {...row, known:true};
-    });
-    return state;
+    const index = lowerBoundTimelineTime(ms) - 1;
+    return index >= 0 ? {...curve[index], known:true} : (timeline.openingState || {known:false, balance:null, credit:null});
   };
   const kindLabel = row => ({trade_open:'订单开仓',trade_close:'订单平仓',deposit:'外部入金',withdrawal:'外部出金',internal_transfer:'内部划转',bonus_grant:'Credit 增加',bonus_remove:'Credit 扣减',negative_balance_clear:'负余额清零',compensation:'补偿入账',cash_reversal:'资金冲正',other_balance:'余额调整',adjustment:'账务调整'})[row.kind] || row.kind || '其他';
   const valid = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
@@ -98,10 +138,14 @@ _JS = r"""
     ctx.save();
     ctx.fillStyle = 'rgba(248,250,252,0.96)'; ctx.fillRect(pad.l, top, plotW, height);
     ctx.strokeStyle = '#dbe4ee'; ctx.strokeRect(pad.l, top, plotW, height);
-    const all = (timeline.curve || []).filter(row => row.balance != null && row.credit != null && Number.isFinite(toMs(row.timestamp)));
-    if (!all.length) { ctx.fillStyle='#64748b'; ctx.font='12px Arial'; ctx.fillText('资金回放：当前时间范围没有可确认的 Balance / Credit 数据', pad.l + 10, top + 22); ctx.restore(); return; }
-    const points = all.map(row => ({...row, idx: findIndexByMs(toMs(row.timestamp))})).filter(row => row.idx >= viewStart - 1 && row.idx <= viewEnd + 1);
-    const shown = points.length ? points : all.map(row => ({...row, idx: findIndexByMs(toMs(row.timestamp))}));
+    if (!curve.length) { ctx.fillStyle='#64748b'; ctx.font='12px Arial'; ctx.fillText('资金回放：当前时间范围没有可确认的 Balance / Credit 数据', pad.l + 10, top + 22); ctx.restore(); return; }
+    const first = lowerBoundTimelineIndex(viewStart - 1), afterLast = lowerBoundTimelineIndex(viewEnd + 1);
+    const start = Math.max(0, Math.min(first, curve.length - 1)), end = Math.max(start + 1, Math.min(curve.length, afterLast));
+    const maxPoints = Math.max(48, Math.floor(plotW));
+    const step = Math.max(1, Math.ceil((end - start) / maxPoints));
+    const shown = [];
+    for (let index = start; index < end; index += step) shown.push({...curve[index], idx:curveBarIndexes[index]});
+    if (shown[shown.length - 1]?.idx !== curveBarIndexes[end - 1]) shown.push({...curve[end - 1], idx:curveBarIndexes[end - 1]});
     const values = shown.flatMap(row => [Number(row.balance), Number(row.credit)]);
     const lo = Math.min(...values), hi = Math.max(...values), span = Math.max(1, hi - lo);
     const chartTop = top + 28, chartBottom = top + height - 22;
@@ -159,6 +203,9 @@ _JS = r"""
   if (fundingFact) fundingFact.textContent = timeline.openingState?.known ? `Balance ${money(timeline.openingState.balance)} / Credit ${money(timeline.openingState.credit)}` : 'Balance / Credit：数据不足';
   const fundsButton = document.getElementById('panelFunds');
   if (fundsButton) fundsButton.addEventListener('click', () => { panelMode='funds'; fundsButton.classList.add('active'); document.getElementById('panelProfit').classList.remove('active'); document.getElementById('panelVolume').classList.remove('active'); document.getElementById('panelPosition').classList.remove('active'); scheduleDraw(false); });
+  };
+  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(startTimeline, {timeout:250});
+  else window.setTimeout(startTimeline, 0);
 })();
 """
 
@@ -175,7 +222,6 @@ def inject_account_timeline(html: str, timeline: dict[str, Any]) -> str:
     if data_end < 0:
         return html
     payload = json.loads(html[data_start:data_end])
-    payload["accountTimeline"] = timeline
     html = html[:data_start] + json.dumps(payload, ensure_ascii=False, allow_nan=True) + html[data_end:]
     html = html.replace("</style>", _CSS + "\n</style>", 1)
     html = html.replace('<button id="panelPosition">仓位</button>', '<button id="panelPosition">仓位</button><button id="panelFunds">资金</button>', 1)
@@ -186,4 +232,7 @@ def inject_account_timeline(html: str, timeline: dict[str, Any]) -> str:
     )
     table_marker = '<div class="tableWrap" data-role="trades"><table id="tradeTable"></table></div>'
     html = html.replace(table_marker, table_marker + _HTML, 1)
-    return html.replace("</body>", "<script>" + _JS + "</script></body>", 1)
+    compact_timeline = json.dumps(_compact_timeline(timeline), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    safe_timeline = compact_timeline.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    timeline_data = '<script id="accountTimelineData" type="application/json">' + safe_timeline + "</script>"
+    return html.replace("</body>", timeline_data + "<script>" + _JS + "</script></body>", 1)
