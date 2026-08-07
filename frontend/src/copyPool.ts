@@ -327,16 +327,16 @@ export function copyReasonLabel(value: unknown): string {
 export function eventExecutionLabel(row: Record<string, unknown>): string {
   const decision = String(row.decision || '').trim()
   const phase = String(row.phase || '').trim()
-  if (decision === 'monitor' && phase === 'pool_rebuild_failed') {
+  if (phase === 'pool_rebuild_failed') {
     return '未跟单：客户池重建失败，执行暂停，目标手数为 0'
   }
-  if (decision === 'monitor' && phase === 'pool_rebuilding') {
+  if (phase === 'pool_rebuilding') {
     return '未跟单：客户池正在重建，执行暂停，目标手数为 0'
   }
-  if (decision === 'monitor' && ['shadow', 'recovery_shadow'].includes(phase)) {
+  if (['shadow', 'recovery_shadow'].includes(phase)) {
     return `未跟单：${phaseLabel(phase)}阶段禁止新增仓位，目标手数为 0`
   }
-  if (decision === 'monitor' && phase === 'armed_waiting_autotrading') {
+  if (phase === 'armed_waiting_autotrading') {
     return '未跟单：MT5 自动交易未就绪，目标手数为 0'
   }
   if (decision === 'active' && Math.abs(Number(row.desiredTargetLots) || 0) > 1e-9) {

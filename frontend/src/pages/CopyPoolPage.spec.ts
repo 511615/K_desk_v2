@@ -57,7 +57,7 @@ vi.mock('@tanstack/vue-query', () => ({
         events: [
           { eventId: 1, time: '2026-08-05T01:30:00Z', accountLogin: '3054777', product: 'XAUUSD', sourceSide: 'BUY', sourceLots: 0.2, sourceEntry: 'IN', decision: '已更新独立来源仓', dbLatencySeconds: 0.4 },
           { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 1, decision: '仅监控', dbLatencySeconds: 0.5 },
-          { eventId: 3, time: '2026-08-05T01:32:00Z', accountLogin: '7787507', product: 'XAUUSD', sourceSide: 'SELL', sourceLots: 0.01, sourceEntry: 0, decision: 'monitor', phase: 'pool_rebuild_failed', desiredTargetLots: 0, dbLatencySeconds: 0.078 },
+          { eventId: 3, time: '2026-08-05T01:32:00Z', accountLogin: '7787507', product: 'XAUUSD', sourceSide: 'SELL', sourceLots: 0.01, sourceEntry: 0, phase: 'pool_rebuild_failed', desiredTargetLots: 0, dbLatencySeconds: 0.078 },
         ],
         orders: [],
         copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],

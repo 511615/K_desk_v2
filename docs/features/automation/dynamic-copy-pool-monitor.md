@@ -219,7 +219,9 @@ signal_expired or risk_rejected. Event placement uses its event-time decision an
 the account-product sleeve's current tier. A monitor event recorded while the pool is rebuilding,
 rebuild has failed, shadow reconciliation is active or AutoTrading is unavailable is shown under
 the corresponding suspended/recovery tier with that concrete phase and a zero target, rather than
-the generic combined point-spread/latency/external-position wording.
+the generic combined point-spread/latency/external-position wording. Event-time phase remains
+authoritative when a compatible older 8777 projection does not yet include the additive decision
+field.
 The `当前跟单` table contains only source Positions with actual owned Demo child Tickets. It shows
 the real source Login and detail link, server/platform, product/direction, source Position and lots,
 Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source
