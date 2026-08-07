@@ -46,8 +46,8 @@ shards and bounded account deep checks.
 
 Legacy polling views expose percent/message/result fields while native job rows/events remain authoritative.
 Push-discovery results add failure totals, stage counts and normalized failure rows without removing
-existing result fields.
-The active-job lookup is read-only and prefers a running discovery job over queued work.
+existing result fields. The active-job lookup is read-only and deterministically prefers a running
+job over queued work, including when both rows have equal or empty timestamp fields.
 
 ## Data, routing and read-only constraints
 

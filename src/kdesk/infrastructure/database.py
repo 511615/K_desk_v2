@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, create_engine, event, func, select, update
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, case, create_engine, event, func, select, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from kdesk.domain.ledger import DEFAULT_ACTIONS, LedgerRecord, now_text
@@ -366,7 +366,11 @@ class Database:
             row = session.scalar(
                 select(JobRunRow)
                 .where(JobRunRow.kind == kind, JobRunRow.status.in_(["queued", "running"]))
-                .order_by(JobRunRow.started_at.desc(), JobRunRow.created_at.desc())
+                .order_by(
+                    case((JobRunRow.status == "running", 0), else_=1),
+                    JobRunRow.started_at.desc(),
+                    JobRunRow.created_at.desc(),
+                )
             )
             return self._job_dict(row) if row else None
 
