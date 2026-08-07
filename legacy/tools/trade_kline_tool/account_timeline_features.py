@@ -50,7 +50,8 @@ _JS = r"""
       const cls = row.liquidation ? 'event-liquidation' : '';
       const id = eventPage * pageSize + index;
       const source = [row.symbol, row.comment].filter(Boolean).join(' / ');
-      return `<tr class="${cls}"><td>${escTimeline(row.timestamp)}</td><td class="left event-${escTimeline(row.category)}">${escTimeline(kindLabel(row.kind))}${row.liquidation ? ' · 爆仓标记' : ''}</td><td>${escTimeline(row.orderId || row.id || '-')}</td><td class="left">${escTimeline(source || '-')}</td><td>${money(row.deltaBalance)}</td><td>${money(row.deltaCredit)}</td><td>${money(row.balance)}</td><td>${money(row.credit)}</td><td><button type="button" data-timeline-event="${id}">定位</button></td></tr>`;
+      const liquidationButton = row.liquidation ? `<button type="button" data-timeline-liquidation="${id}">爆仓点位</button>` : '';
+      return `<tr class="${cls}"><td>${escTimeline(row.timestamp)}</td><td class="left event-${escTimeline(row.category)}">${escTimeline(kindLabel(row.kind))}${row.liquidation ? ' · 爆仓标记' : ''}</td><td>${escTimeline(row.orderId || row.id || '-')}</td><td class="left">${escTimeline(source || '-')}</td><td>${money(row.deltaBalance)}</td><td>${money(row.deltaCredit)}</td><td>${money(row.balance)}</td><td>${money(row.credit)}</td><td>${liquidationButton}<button type="button" data-timeline-event="${id}">定位</button></td></tr>`;
     }).join('') + '</tbody>';
     document.getElementById('timelinePage').textContent = `第 ${eventPage + 1} / ${pages} 页，共 ${events.length} 条`;
     document.getElementById('timelinePrev').disabled = eventPage === 0;
@@ -62,9 +63,10 @@ _JS = r"""
   document.getElementById('timelinePrev').addEventListener('click', () => { eventPage--; renderTimeline(); });
   document.getElementById('timelineNext').addEventListener('click', () => { eventPage++; renderTimeline(); });
   document.getElementById('timelineTable').addEventListener('click', event => {
-    const button = event.target.closest('[data-timeline-event]');
+    const button = event.target.closest('[data-timeline-event],[data-timeline-liquidation]');
     if (!button) return;
-    const row = (timeline.events || [])[Number(button.dataset.timelineEvent)];
+    const index = Number(button.dataset.timelineEvent ?? button.dataset.timelineLiquidation);
+    const row = (timeline.events || [])[index];
     const ms = row ? toMs(row.timestamp) : NaN;
     if (Number.isFinite(ms)) focusTimeMs(ms);
   });
@@ -91,6 +93,22 @@ _JS = r"""
     (timeline.liquidationPoints || []).forEach(point => { const idx=findIndexByMs(toMs(point.timestamp)); if (idx < viewStart || idx > viewEnd) return; const xx=xScale(idx); ctx.fillStyle='#dc2626'; ctx.beginPath(); ctx.arc(xx, chartTop + 8, 4, 0, Math.PI * 2); ctx.fill(); });
     ctx.restore();
   };
+
+  canvas.addEventListener('click', event => {
+    if (panelMode !== 'funds' || drag) return;
+    const rect = canvas.getBoundingClientRect(), pad = {l:72, r:24, t:20, b:74};
+    const plotW = rect.width - pad.l - pad.r, profitH = 118, profitGap = 30;
+    const plotH = Math.max(280, rect.height - pad.t - pad.b - profitH - profitGap);
+    const markerY = pad.t + plotH + profitGap + 36;
+    const x = event.clientX - rect.left, y = event.clientY - rect.top;
+    if (Math.abs(y - markerY) > 12) return;
+    const marker = (timeline.liquidationPoints || []).map(point => {
+      const idx = findIndexByMs(toMs(point.timestamp));
+      return {point, x:pad.l + (idx - viewStart) / Math.max(1, viewEnd - viewStart) * plotW};
+    }).find(item => Math.abs(item.x - x) <= 12);
+    const at = marker ? toMs(marker.point.timestamp) : NaN;
+    if (Number.isFinite(at)) focusTimeMs(at);
+  });
 
   const originalPositionPanel = drawPositionPanel;
   drawPositionPanel = function(pad, plotW, top, height, xScale) {

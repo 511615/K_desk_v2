@@ -195,6 +195,9 @@ const canvas = document.getElementById('chart');</script></body></html>'''
     assert 'id="panelFunds"' in result
     assert '资金与订单事件' in result
     assert 'posFundingFact' in result
+    assert 'data-timeline-liquidation' in result
+    assert "[data-timeline-event],[data-timeline-liquidation]" in result
+    assert "if (Number.isFinite(at)) focusTimeMs(at);" in result
     assert '历史保证金率没有平台盘中快照，未展示估算比例' in result
     assert 'build_position_fused_trade_kline_demo' not in (tool_root / "fused_trade_kline_features.py").read_text(encoding="utf-8")
     node = shutil.which("node")

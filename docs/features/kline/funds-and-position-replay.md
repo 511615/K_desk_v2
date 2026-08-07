@@ -30,9 +30,11 @@ Only the explicit refresh option reads the remote source again.
 
 The bottom chart switcher adds `资金` beside the existing Profit, hand-size and position panels.
 It draws Balance in blue, Credit in orange and red liquidation dots for the factual liquidation
-points already identified by `FIN-HISTORY-001`. The original raw order table remains unchanged. A
-second paged `资金与订单事件` table lists order opening/closing and balance/Credit actions in timestamp
-order; selecting a row moves the K-line viewport to that timestamp.
+points already identified by `FIN-HISTORY-001`. Each visible red dot is a hit target: clicking it
+moves the K-line viewport to that liquidation timestamp. The original raw order table remains
+unchanged. A second paged `资金与订单事件` table lists complete replayed order opening/closing and
+balance/Credit actions in timestamp order; each row has `定位`, and liquidation rows additionally
+have `爆仓点位`, which both move the viewport to that timestamp.
 
 The `仓位` panel displays exact open-order count and lots from the chart order scope. Its Balance and
 Credit card is sourced from the same replay. It no longer defaults to a 10,000 balance or 1:500
@@ -87,7 +89,8 @@ no browser-side API call or write adapter is introduced.
 Cache tests prove the first complete build, reuse without another source read, explicit refresh and
 invalid-local-cache recovery. Pure tests prove a selected window receives a known carry-in state,
 categorizes order/funds events, and preserves unknown pre-anchor state. HTML tests prove the artifact
-embeds the timeline, funds switcher, event table and corrected position wording, and JavaScript parses.
+embeds the timeline, funds switcher, clickable liquidation controls, event table and corrected position
+wording, and JavaScript parses.
 Historical-funds fixtures continue to cover MT4 cash/Credit/clear, MT5 Action 2/3 and liquidation
 markers. Manual acceptance checks both checkbox states, an MT4 and MT5 chart, USD and USC scaling,
 a cache reuse, explicit refresh, a chart with unavailable funds data, an event-table jump and an HTML

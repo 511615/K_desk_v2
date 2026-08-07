@@ -229,7 +229,8 @@ or an explicit unknown state, separate funds/order event categories, no default 
 fallback, usable liquidation markers, paged event rows and standalone HTML JavaScript parsing. They
 also require the replay option to be off by default, one complete cache build, no source read on a
 subsequent chart request, an explicit-refresh rebuild, invalid-cache recovery and full-history default
-dates.
+dates. Every visible K-line funds-panel liquidation marker and its event-table action must move the
+viewport to the same factual timestamp.
 
 Dynamic copy-pool monitor regressions cover malformed or missing snapshot files, stale-source age,
 bounded event/timeline reads, account-product effective-weight projection, virtual-position contribution,
