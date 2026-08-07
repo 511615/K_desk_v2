@@ -108,9 +108,14 @@
 - When the explicit minimum-lot exception is active on `ACCMGlobal-Demo` in `StagedLive`, an active
   client's loss allowance is floored at the existing 20% per-client share of the cycle budget. This
   exception aligns the indivisible 0.01-lot test exposure with its stop budget; it does not increase
-  a zero-weight monitor client, apply on another server/mode or bypass any portfolio hard gate.
+  a zero-weight monitor client, apply on another server/mode or bypass whole-portfolio stress or
+  margin gates. The product-direction cluster limit is `max(40% of cycle stress, one product minimum
+  lot stress)` only in that Demo mode, so an empty cluster can hold one executable minimum lot even
+  when the ordinary 40% share is smaller. Additional same-direction lots consume that same bounded
+  cluster allowance.
 - A 12-hour source position cannot add copied risk. At 24 hours all copies for that client close and
-  the client pauses. A product-direction cluster may use at most 40% of combination stress budget.
+  the client pauses. Outside the explicit Demo minimum-lot exception, a product-direction cluster
+  may use at most 40% of combination stress budget.
   Margin/equity at 15% blocks additions and 25% triggers a strategy hard stop. Three seconds of
   selected-source staleness blocks additions; thirty seconds flattens all strategy Tickets, including
   offsetting gross positions whose net is zero.

@@ -212,6 +212,19 @@ def event_reason_code(
     return "event_detail_unavailable"
 
 
+def cluster_stress_limit(
+    cycle_budget: float,
+    minimum_lot_stress: float,
+    *,
+    demo_minimum_override: bool,
+) -> float:
+    """Keep the normal cluster cap but let Demo fit one executable minimum lot."""
+    normal_limit = max(0.0, cycle_budget) * PORTFOLIO_CLUSTER_RISK_FRACTION
+    if not demo_minimum_override:
+        return normal_limit
+    return max(normal_limit, max(0.0, minimum_lot_stress))
+
+
 def has_complete_hourly_evidence(pool: pd.DataFrame) -> bool:
     return (
         HOURLY_EVIDENCE_COLUMNS.issubset(pool.columns)
@@ -1502,17 +1515,30 @@ class MultiSourceLiveService(LiveService):
         except Exception:
             return False
         remaining_loss = max(0.0, risk.loss_budget_usd - risk.loss_used_usd)
+        cycle_budget = max(float(account.equity), 1.0) * 0.015
+        minimum_stress = minimum * stress
+        demo_override = self._demo_minimum_lot_override_enabled(account)
+        cluster_limit = cluster_stress_limit(
+            cycle_budget,
+            minimum_stress,
+            demo_minimum_override=demo_override,
+        )
         margin_budget = max(float(account.equity), 1.0) * PORTFOLIO_MARGIN_SOFT_FRACTION
         margin_free = max(
             0.0,
             margin_budget - max(float(getattr(account, "margin", 0.0) or 0.0), 0.0),
         )
         strict_capacity = min(remaining_loss / stress, margin_free / margin)
-        if strict_capacity >= minimum - 1e-12:
+        if (
+            strict_capacity >= minimum - 1e-12
+            and minimum_stress <= cycle_budget + 1e-12
+            and minimum_stress <= cluster_limit + 1e-12
+        ):
             return True
         return (
-            self._demo_minimum_lot_override_enabled(account)
-            and minimum * stress <= max(float(account.equity), 1.0) * 0.015
+            demo_override
+            and minimum_stress <= cycle_budget + 1e-12
+            and minimum_stress <= cluster_limit + 1e-12
             and minimum * margin <= margin_free
         )
 
@@ -1651,6 +1677,13 @@ class MultiSourceLiveService(LiveService):
         excluded = {child.ticket for child in position.children}
         total_stress, clusters, client_stress = self._stress_usage(excluded)
         cycle_budget = max(float(account.equity), 1.0) * 0.015
+        minimum_stress = minimum * stress_per_lot
+        demo_override = self._demo_minimum_lot_override_enabled(account)
+        cluster_limit = cluster_stress_limit(
+            cycle_budget,
+            minimum_stress,
+            demo_minimum_override=demo_override,
+        )
         remaining_client = max(
             0.0,
             risk.loss_budget_usd - risk.loss_used_usd
@@ -1676,12 +1709,12 @@ class MultiSourceLiveService(LiveService):
             target_abs < minimum - 1e-12
             and proportional > 0.0
             and allow_increase
-            and self._demo_minimum_lot_override_enabled(account)
+            and demo_override
             and total_stress + minimum * stress_per_lot <= cycle_budget + 1e-12
             and (
                 clusters.get((position.product, position.side), 0.0)
                 + minimum * stress_per_lot
-                <= cycle_budget * PORTFOLIO_CLUSTER_RISK_FRACTION + 1e-12
+                <= cluster_limit + 1e-12
             )
             and minimum * margin_per_lot <= available_margin + 1e-12
         ):

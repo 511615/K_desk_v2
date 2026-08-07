@@ -298,7 +298,9 @@ The Demo minimum-lot regression must keep one source Position's Ticket unchanged
 reconciliation while a same-direction sibling remains unfilled. Budget regressions require a
 tiny-weight active client to receive the 20% cycle-budget floor only for the explicit
 `ACCMGlobal-Demo`/`StagedLive` switch, prove that a 0.69 USD loss does not exhaust that floor, and
-retain weight-proportional behavior without the switch or on another server/mode. A rolling
+retain weight-proportional behavior without the switch or on another server/mode. A realistic gold
+fixture must prove that one 0.01-lot stress amount above the ordinary 40% cluster share is executable
+under the explicit Demo switch while a second same-direction minimum is still rejected. A rolling
 order-storm fixture must hard-stop before a ninth open request in 60 seconds. MT4 adapter tests
 preserve AC raw UTC and convert DBG CN Live1/Live2 raw UTC+3 to UTC; Live3 remains in the complete
 physical-route set under its provisional UTC+3 convention. A normalized snapshot observed two or
