@@ -16,6 +16,7 @@ describe('copy pool presentation helpers', () => {
     expect(eventExecutionLabel({ decision: 'risk_rejected', rawTargetLots: 0.0045, desiredTargetLots: 0 })).toBe('未跟单：目标手数低于最小手')
     expect(eventExecutionLabel({ decision: 'signal_expired', desiredTargetLots: 0 })).toBe('未跟单：信号已过期，未复制')
     expect(eventExecutionLabel({ decision: 'monitor', phase: 'pool_rebuild_failed', desiredTargetLots: 0 })).toBe('未跟单：客户池重建失败，执行暂停，目标手数为 0')
+    expect(eventExecutionLabel({ phase: 'pool_rebuild_failed', desiredTargetLots: 0 })).toBe('未跟单：客户池重建失败，执行暂停，目标手数为 0')
     expect(eventPoolTier({ decision: 'monitor', phase: 'pool_rebuild_failed' }, 'active')).toBe('execution_suspended')
     expect(eventPoolTier({ decision: 'monitor', phase: 'live' }, 'active')).toBe('monitor')
     expect(sourceActionLabel('reverse')).toBe('反转')
