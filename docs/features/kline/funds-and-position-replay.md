@@ -43,6 +43,10 @@ it has not closed; separate open/close rows are not displayed in this replay tab
 curve itself retains every underlying source event and is never simplified by this presentation rule.
 Each table row has `定位`, and liquidation rows additionally have `爆仓点位`, which both move the
 K-line viewport to that timestamp.
+The artifact keeps the established K-line white high-contrast workspace: white cards and tables,
+dark body text, soft gray borders and headers. Only semantic evidence uses color: blue Balance,
+gold Credit, red liquidation/negative values and green positive values. It does not inherit the
+dark modal theme of the legacy `历史资金回溯` page.
 
 The `仓位` panel displays exact open-order count and lots from the chart order scope. Its Balance and
 Credit card is sourced from the same replay. It no longer defaults to a 10,000 balance or 1:500
