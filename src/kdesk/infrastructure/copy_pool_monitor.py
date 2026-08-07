@@ -1284,6 +1284,10 @@ class CopyPoolFileSnapshotRepository:
             "reasonCode": CopyPoolFileSnapshotRepository._event_reason_code(
                 row.get("reason_code")
             ),
+            "spreadCostPerLot": _nullable_float(row.get("spread_cost_per_lot")),
+            "spreadLimitPerLot": _nullable_float(row.get("spread_limit_per_lot")),
+            "bid": _nullable_float(row.get("bid")),
+            "ask": _nullable_float(row.get("ask")),
             "phase": row.get("phase", ""),
         }
 

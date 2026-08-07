@@ -354,6 +354,16 @@ export function eventExecutionLabel(row: Record<string, unknown>): string {
   if (decision === 'active' && Math.abs(Number(row.desiredTargetLots) || 0) > 1e-9) {
     return '跟单成功'
   }
+  if (reasonCode === 'execution_gate_blocked:spread') {
+    const cost = Number(row.spreadCostPerLot)
+    const limit = Number(row.spreadLimitPerLot)
+    const bid = Number(row.bid)
+    const ask = Number(row.ask)
+    if ([cost, limit, bid, ask].every(Number.isFinite)
+      && cost > 0 && limit > 0 && bid > 0 && ask >= bid) {
+      return `未跟单：点差一手成本 ${cost.toFixed(2)}（账户币种）> 上限 ${limit.toFixed(2)}；Bid ${bid.toFixed(3)} / Ask ${ask.toFixed(3)}`
+    }
+  }
   if (reasonCode) {
     return `未跟单：${copyReasonLabel(reasonCode)}`
   }

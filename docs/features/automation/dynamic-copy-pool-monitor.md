@@ -250,6 +250,10 @@ the generic combined point-spread/latency/external-position wording. Event-time 
 authoritative when a compatible older 8777 projection does not yet include the additive decision
 field. A legacy event without `reasonCode` is labelled explicitly as missing historical detail; the
 UI must not infer point spread, delay or external-position failure without event-time evidence.
+When an entry is rejected by the spread gate, new events also snapshot the account-currency spread
+cost per lot, the configured per-lot limit and the event-time Bid/Ask. The API exposes these values
+as nullable numeric evidence and the UI shows the exact comparison. Older rows without the snapshot
+retain the bounded spread label and are not assigned reconstructed prices or costs.
 The `当前跟单` table contains only source Positions with actual owned Demo child Tickets. It shows
 the real source Login and detail link, server/platform, product/direction, source Position and lots,
 Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source

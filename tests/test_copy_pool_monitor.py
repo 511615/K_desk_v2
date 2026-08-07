@@ -485,6 +485,10 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     assert payload["events"][0]["dbLatencySeconds"] == pytest.approx(0.4)
     assert payload["events"][0]["signalAgeSeconds"] == pytest.approx(0.4)
     assert payload["events"][0]["queryLatencySeconds"] is None
+    assert payload["events"][0]["spreadCostPerLot"] is None
+    assert payload["events"][0]["spreadLimitPerLot"] is None
+    assert payload["events"][0]["bid"] is None
+    assert payload["events"][0]["ask"] is None
     assert "reason" not in payload["events"][0]
     assert payload["clientRisks"][0]["accountLogin"] == "5200101"
     assert payload["copyPositions"][0]["accountLogin"] == "5200101"
@@ -577,6 +581,34 @@ def test_event_projects_separate_signal_age_and_query_latency_when_available(
     assert event["dbLatencySeconds"] == pytest.approx(0.4)
     assert event["signalAgeSeconds"] == pytest.approx(2.8)
     assert event["queryLatencySeconds"] == pytest.approx(0.08)
+
+
+def test_event_projects_bounded_gate_evidence_without_private_text(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    write_csv(output / "events_public.csv", [{
+        "event_id": "E4",
+        "time_beijing": "2026-08-07T13:09:35+08:00",
+        "client_alias": "C001",
+        "source_entry": 0,
+        "product": "XAUUSD",
+        "phase": "live",
+        "reason_code": "execution_gate_blocked:spread",
+        "spread_cost_per_lot": 80.0,
+        "spread_limit_per_lot": 45.0,
+        "bid": 4000.0,
+        "ask": 4000.8,
+        "reason": "private database password must not leak",
+    }])
+
+    event = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=1, event_limit=1, order_limit=1
+    )["events"][0]
+
+    assert event["spreadCostPerLot"] == pytest.approx(80.0)
+    assert event["spreadLimitPerLot"] == pytest.approx(45.0)
+    assert event["bid"] == pytest.approx(4000.0)
+    assert event["ask"] == pytest.approx(4000.8)
+    assert "private database password" not in json.dumps(event)
 
 
 def test_copy_pool_projects_only_current_child_tickets_with_exact_pnl_evidence(tmp_path: Path) -> None:

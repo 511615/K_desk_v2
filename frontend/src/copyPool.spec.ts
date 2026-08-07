@@ -19,6 +19,7 @@ describe('copy pool presentation helpers', () => {
     expect(eventExecutionLabel({ decision: 'signal_expired', desiredTargetLots: 0 })).toBe('未跟单：信号已过期，未复制')
     expect(eventExecutionLabel({ decision: 'monitor', reasonCode: 'below_minimum_risk_lot', desiredTargetLots: 0 })).toBe('未跟单：客户独立风险手数低于产品最小手')
     expect(eventExecutionLabel({ decision: 'risk_rejected', reasonCode: 'execution_gate_blocked:spread', desiredTargetLots: 0 })).toBe('未跟单：点差超过开仓上限')
+    expect(eventExecutionLabel({ decision: 'risk_rejected', reasonCode: 'execution_gate_blocked:spread', spreadCostPerLot: 80, spreadLimitPerLot: 45, bid: 4000, ask: 4000.8 })).toBe('未跟单：点差一手成本 80.00（账户币种）> 上限 45.00；Bid 4000.000 / Ask 4000.800')
     expect(eventExecutionLabel({ decision: 'monitor', desiredTargetLots: 0 })).toBe('未跟单：当时仅监控；旧事件未保存具体子原因')
     expect(eventExecutionLabel({ desiredTargetLots: 0 })).toBe('未跟单：旧事件未保存执行结果')
     expect(eventExecutionLabel({ decision: 'monitor', phase: 'pool_rebuild_failed', desiredTargetLots: 0 })).toBe('未跟单：客户池重建失败，执行暂停，目标手数为 0')

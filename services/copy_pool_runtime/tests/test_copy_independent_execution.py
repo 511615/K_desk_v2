@@ -420,6 +420,22 @@ class FakeHedgingMt:
 
 
 class IndependentExecutionServiceTests(unittest.TestCase):
+    def test_spread_rejection_evidence_captures_account_currency_cost_and_quote(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.mt = SimpleNamespace(
+            quote_state=lambda _product: (4000.0, 4000.8, 0.1),
+            spread_cost_usd_per_lot=lambda _product, _bid, _ask: 100.0,
+        )
+
+        evidence = service._event_spread_evidence(
+            "XAUUSD", "execution_gate_blocked:spread"
+        )
+
+        self.assertEqual(evidence["spread_cost_per_lot"], 100.0)
+        self.assertEqual(evidence["spread_limit_per_lot"], 90.0)
+        self.assertEqual(evidence["bid"], 4000.0)
+        self.assertEqual(evidence["ask"], 4000.8)
+
     def test_live_operational_gate_stays_ready_during_one_normal_snapshot_drift(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.operational_ready_once = False

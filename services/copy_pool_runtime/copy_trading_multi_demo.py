@@ -168,6 +168,7 @@ MULTISOURCE_EVENT_PUBLIC_COLUMNS = (
     "gross_long_lots", "gross_short_lots", "db_latency_seconds",
     "signal_age_seconds", "query_latency_seconds", "allowed_delay_seconds",
     "signal_expired", "latency_known", "phase", "reason", "reason_code",
+    "spread_cost_per_lot", "spread_limit_per_lot", "bid", "ask",
 )
 MULTISOURCE_ORDER_PUBLIC_COLUMNS = (
     "order_event", "time_beijing", "client_alias", "source_position_id", "product",
@@ -2076,6 +2077,29 @@ class MultiSourceLiveService(LiveService):
             return operational_reason
         return "execution_gate_blocked:manual_or_terminal"
 
+    def _event_spread_evidence(
+        self,
+        product: str,
+        reason_code: str,
+    ) -> dict[str, float | str]:
+        """Snapshot bounded numeric evidence for a spread rejection."""
+        if reason_code != "execution_gate_blocked:spread":
+            return {
+                "spread_cost_per_lot": "",
+                "spread_limit_per_lot": "",
+                "bid": "",
+                "ask": "",
+            }
+        bid, ask, _age = self.mt.quote_state(product)
+        return {
+            "spread_cost_per_lot": self._spread_cost_usd_per_lot(product, bid, ask),
+            "spread_limit_per_lot": (
+                1.5 * default_roundtrip_spread_usd_per_lot(product)
+            ),
+            "bid": bid,
+            "ask": ask,
+        }
+
     def _product_conflict_reason(self, product: str) -> str:
         """Limit foreign-position and pending-order conflicts to this product."""
         foreign_reader = getattr(self.mt, "all_foreign_positions", None)
@@ -2946,6 +2970,12 @@ class MultiSourceLiveService(LiveService):
         gross_short = gross_shorts.get(product, 0.0)
         desired = self.current_targets.get(product, 0.0)
         self.event_counter += 1
+        published_reason_code = event_reason_code(
+            copy_action, copy_position, signal_expired=expired
+        )
+        spread_evidence = self._event_spread_evidence(
+            product, published_reason_code
+        )
         self._append_event_csv(
             {
                 "event_id": f"E{self.event_counter:07d}",
@@ -2978,9 +3008,8 @@ class MultiSourceLiveService(LiveService):
                     + f"{copy_action}:"
                     f"{copy_position.status if copy_position is not None else 'monitor'}"
                 ),
-                "reason_code": event_reason_code(
-                    copy_action, copy_position, signal_expired=expired
-                ),
+                "reason_code": published_reason_code,
+                **spread_evidence,
             },
         )
         if execution_error is not None:
@@ -3165,6 +3194,12 @@ class MultiSourceLiveService(LiveService):
             gross_short = gross_shorts.get(product, 0.0)
             desired = self.current_targets.get(product, 0.0)
             self.event_counter += 1
+            published_reason_code = event_reason_code(
+                copy_action, copy_position, signal_expired=expired
+            )
+            spread_evidence = self._event_spread_evidence(
+                product, published_reason_code
+            )
             self._append_event_csv(
                 {
                     "event_id": f"E{self.event_counter:07d}",
@@ -3198,9 +3233,8 @@ class MultiSourceLiveService(LiveService):
                         f"MT4:{copy_action}:"
                         f"{copy_position.status if copy_position is not None else 'monitor'}"
                     ),
-                    "reason_code": event_reason_code(
-                        copy_action, copy_position, signal_expired=expired
-                    ),
+                    "reason_code": published_reason_code,
+                    **spread_evidence,
                 },
             )
             if execution_error is not None:
