@@ -195,7 +195,7 @@ const canvas = document.getElementById('chart');</script></body></html>'''
     assert 'id="panelFunds"' in result
     assert '历史资金回溯' in result
     assert '余额与 Credit 回放' in result
-    assert 'Position / Deal' in result
+    assert '订单 / Deal' in result
     assert 'background:#fff; color:#111827' in result
     assert 'background:#061a33' not in result
     assert 'posFundingFact' in result

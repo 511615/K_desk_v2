@@ -235,10 +235,10 @@ dates. Every visible K-line funds-panel liquidation marker and its event-table a
 viewport to the same factual timestamp.
 
 The standalone replay uses the same visible summary, curve and detailed-event hierarchy as
-`历史资金回溯`. Funds ledger rows remain individual. A market Position's opening and closing source
-events must render as exactly one Position lifecycle row, anchored at the final close (or its opening
-when still open), with constituent Deal IDs and summed factual deltas; the Balance/Credit curve keeps
-the original source-event resolution.
+`历史资金回溯`. Funds ledger rows and each market order opening/closing event must remain individual,
+chronological source rows with their factual post-event Balance/Credit values. The table must not fold
+Position lifecycles or sum source-event deltas; the Balance/Credit curve keeps the same original
+source-event resolution.
 
 Dynamic copy-pool monitor regressions cover malformed or missing snapshot files, stale-source age,
 bounded event/timeline reads, account-product effective-weight projection, virtual-position contribution,
