@@ -12,6 +12,9 @@ import pytest
 
 
 RUNTIME_DIR = Path(__file__).resolve().parents[1] / "services" / "copy_pool_runtime"
+EXTERNAL_DEPS = Path("D:/risk/pydeps")
+if EXTERNAL_DEPS.exists() and str(EXTERNAL_DEPS) not in sys.path:
+    sys.path.insert(0, str(EXTERNAL_DEPS))
 if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
