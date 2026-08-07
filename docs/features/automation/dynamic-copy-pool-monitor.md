@@ -173,20 +173,19 @@ values unknown and schedules an immediate bounded discovery refresh.
 
 The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGlobal-Demo` in
 `StagedLive`. It may promote each eligible source Position to the product minimum lot when its
-normal stress allocation is smaller, but only while whole-portfolio stress, the product-direction
-cluster cap and margin permit it. In this explicit Demo mode, an otherwise empty product-direction
-cluster receives an adaptive floor equal to one product minimum lot's stress when that value is
-larger than the normal 40% cluster share. This makes the build-time minimum-lot feasibility result
-match execution and permits one indivisible test lot; the next same-direction minimum lot remains
-subject to the normal/adaptive shared limit. It does not bypass quote, spread, database, Ticket-ownership,
+normal stress allocation is smaller, but only while whole-portfolio stress and margin permit it.
+In this explicit Demo mode the product-direction cluster cap is disabled, so multiple independent
+customers may hold the same product and direction until the separate whole-portfolio stress budget
+is exhausted. Build-time feasibility and execution use the same rule. It does not bypass quote,
+spread, database, Ticket-ownership,
 daily-stop, equity-floor or margin hard gates and is never implicit.
 For an active client under that exact Demo-only switch, the client loss budget is floored at the
 existing 20% per-client share of the 1.5% cycle budget. This keeps the risk allowance consistent
 with the indivisible 0.01-lot test exposure. Clients with zero activity weight receive no floor, and
 all default, non-Demo and non-`StagedLive` execution keeps the weight-proportional budget.
 Once a source Position owns that minimum lot, normal reconciliation preserves the same Ticket while
-the source, weight and gates remain eligible; a same-direction sibling receives its own Ticket only
-when the shared product-direction cluster budget still permits it.
+the source, weight and gates remain eligible; an eligible same-direction sibling receives its own
+Ticket while whole-portfolio stress and margin still permit another minimum lot.
 More than eight Demo open requests in a rolling 60-second window triggers an execution hard stop and
 strategy flatten before another opening request is sent.
 
