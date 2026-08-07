@@ -9,9 +9,9 @@ _CSS = """
 .timelinePanel { margin-top:18px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#111827; padding:16px; }
 .timelineHead { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }.timelineHead h2 { margin:0; color:#111827; font-size:20px; }.timelineHead small { display:block; margin-top:5px; color:#64748b; }
 .timelineSummary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin:14px 0; border:1px solid #d1d5db; border-radius:7px; overflow:hidden; }.timelineSummary div { min-height:70px; padding:11px 13px; border-left:1px solid #e5e7eb; background:#fff; }.timelineSummary div:nth-child(4n+1) { border-left:0; }.timelineSummary span,.timelineSummary b { display:block; }.timelineSummary span { color:#6b7280; font-size:12px; }.timelineSummary b { margin-top:7px; color:#111827; font-size:18px; }.timelineSummary b.positive { color:#059669; }.timelineSummary b.negative { color:#dc2626; }
-.timelineChart { min-height:278px; padding:12px; border:1px solid #d1d5db; border-radius:7px; background:#fff; }.timelineChartHead { display:flex; align-items:end; justify-content:space-between; gap:12px; margin-bottom:8px; }.timelineChartHead b { color:#111827; font-size:16px; }.timelineChartHead span,.timelineNote { color:#64748b; font-size:12px; line-height:1.6; }.timelineChart svg { display:block; width:100%; height:220px; overflow:visible; }.timelineGrid { stroke:#e5e7eb; stroke-width:1; }.timelineBalance { fill:none; stroke:#2563eb; stroke-width:2.5; vector-effect:non-scaling-stroke; }.timelineCredit { fill:none; stroke:#d97706; stroke-width:2; vector-effect:non-scaling-stroke; }.timelineLiquidation { fill:#dc2626; stroke:#fff; stroke-width:1.5; vector-effect:non-scaling-stroke; cursor:pointer; }.timelineLiquidation:hover,.timelineLiquidation:focus { fill:#ef4444; stroke:#111827; outline:none; }
+.timelineNote { color:#64748b; font-size:12px; line-height:1.6; }
 .timelineLiquidations { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:12px 0; padding:10px 12px; border:1px solid #fecaca; border-radius:6px; background:#fff1f2; }.timelineLiquidations[hidden] { display:none; }.timelineLiquidations b { color:#991b1b; font-size:12px; }.timelineLiquidations button { min-height:28px; padding:4px 8px; color:#991b1b; border-color:#fca5a5; background:#fff; font-size:12px; }.timelineLiquidations button:hover,.timelineLiquidations button:focus-visible { color:#7f1d1d; border-color:#dc2626; background:#fee2e2; }
-.timelineEventsHead { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:16px 0 8px; }.timelineEventsHead b { color:#111827; font-size:16px; }.timelineTable { min-width:1280px; color:#111827; }.timelineTable th { color:#374151; background:#f3f4f6; }.timelineTable td { border-color:#e5e7eb; vertical-align:top; }.timelineTable td.event-order { color:#1d4ed8; }.timelineTable td.event-funds { color:#92400e; }.timelineTable tr.event-liquidation { background:#fff1f2; }.timelineTable .timelineKind { display:inline-flex; padding:3px 6px; border:1px solid #9ca3af; border-radius:4px; color:#374151; font-size:11px; white-space:nowrap; }.timelineTable .timelineKind.deposit,.timelineTable .timelineKind.bonus_grant,.timelineTable .timelineKind.negative_balance_clear { color:#047857; border-color:#6ee7b7; background:#ecfdf5; }.timelineTable .timelineKind.withdrawal,.timelineTable .timelineKind.bonus_remove { color:#b45309; border-color:#fcd34d; background:#fffbeb; }.timelineTable .timelineKind.internal_transfer { color:#6d28d9; border-color:#c4b5fd; background:#f5f3ff; }.timelineTable .timelineSub { display:block; margin-top:4px; color:#6b7280; font-size:11px; white-space:nowrap; }.timelineTable .timelineLiquidationLabel { color:#b91c1c; }.timelineTable button { padding:3px 6px; font-size:12px; }.timelineTable .timelineJump { margin-right:4px; color:#991b1b; border-color:#fca5a5; background:#fff; }.timelinePagination { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:10px; color:#64748b; }
+.timelineEventsHead { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:16px 0 8px; }.timelineEventsHead b { color:#111827; font-size:16px; }.timelineTableViewport { max-height:680px; overflow:auto; border:1px solid #d1d5db; border-radius:7px; background:#fff; }.timelineTableViewport .tableWrap { margin:0; overflow:visible; }.timelineTable { min-width:1280px; color:#111827; }.timelineTable th { position:sticky; top:0; z-index:2; color:#374151; background:#f3f4f6; }.timelineTable td { border-color:#e5e7eb; vertical-align:top; }.timelineTable td.event-order { color:#1d4ed8; }.timelineTable td.event-funds { color:#92400e; }.timelineTable tr.event-liquidation { background:#fff1f2; }.timelineTable .timelineSpacer td { height:0; min-height:0; padding:0 !important; border:0 !important; }.timelineTable .timelineKind { display:inline-flex; padding:3px 6px; border:1px solid #9ca3af; border-radius:4px; color:#374151; font-size:11px; white-space:nowrap; }.timelineTable .timelineKind.deposit,.timelineTable .timelineKind.bonus_grant,.timelineTable .timelineKind.negative_balance_clear { color:#047857; border-color:#6ee7b7; background:#ecfdf5; }.timelineTable .timelineKind.withdrawal,.timelineTable .timelineKind.bonus_remove { color:#b45309; border-color:#fcd34d; background:#fffbeb; }.timelineTable .timelineKind.internal_transfer { color:#6d28d9; border-color:#c4b5fd; background:#f5f3ff; }.timelineTable .timelineSub { display:block; margin-top:4px; color:#6b7280; font-size:11px; white-space:nowrap; }.timelineTable .timelineLiquidationLabel { color:#b91c1c; }.timelineTable button { padding:3px 6px; font-size:12px; }.timelineTable .timelineJump { margin-right:4px; color:#991b1b; border-color:#fca5a5; background:#fff; }.timelineTableStatus { margin-top:8px; color:#64748b; font-size:12px; text-align:right; }
 @media (max-width:900px) { .timelineSummary { grid-template-columns:repeat(2,minmax(0,1fr)); }.timelineSummary div:nth-child(odd) { border-left:0; } } @media (max-width:620px) { .timelineSummary { grid-template-columns:1fr; }.timelineSummary div { border-left:0; border-top:1px solid #214f78; }.timelineSummary div:first-child { border-top:0; } }
 """
 
@@ -20,11 +20,10 @@ _HTML = """
 <section class="timelinePanel" id="accountTimelinePanel">
   <div class="timelineHead"><div><h2>历史资金回溯</h2><small id="timelineCoverage">读取中</small></div><div class="timelineNote" id="timelineSource"></div></div>
   <div class="timelineSummary" id="timelineSummary"></div>
-  <div class="timelineChart" id="timelineChart"><div class="timelineNote">等待资金曲线...</div></div>
   <div class="timelineLiquidations" id="timelineLiquidations" hidden></div>
   <div class="timelineEventsHead"><b>资金与订单事件</b><span class="timelineNote" id="timelineEventNote"></span></div>
-  <div class="tableWrap"><table class="timelineTable" id="timelineTable"></table></div>
-  <div class="timelinePagination"><button id="timelinePrev" type="button">上一页</button><span id="timelinePage"></span><button id="timelineNext" type="button">下一页</button></div>
+  <div class="timelineTableViewport" id="timelineTableViewport"><div class="tableWrap"><table class="timelineTable" id="timelineTable"></table></div></div>
+  <div class="timelineTableStatus" id="timelineTableStatus"></div>
 </section>
 """
 
@@ -33,8 +32,9 @@ _JS = r"""
 (() => {
   const timeline = DATA.accountTimeline;
   if (!timeline || !Array.isArray(timeline.events)) return;
-  const pageSize = 200;
-  let eventPage = 0;
+  const ROW_HEIGHT = 62;
+  const VIRTUAL_BUFFER = 36;
+  let virtualStart = -1, virtualEnd = -1, renderScheduled = false;
   const escTimeline = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money = value => value == null || value === '' || !Number.isFinite(Number(value)) ? '数据不足' : Number(value).toFixed(2);
   const moneyClass = value => Number(value) > 0 ? 'positive' : Number(value) < 0 ? 'negative' : '';
@@ -48,30 +48,22 @@ _JS = r"""
   };
   const kindLabel = row => ({trade_open:'订单开仓',trade_close:'订单平仓',deposit:'外部入金',withdrawal:'外部出金',internal_transfer:'内部划转',bonus_grant:'Credit 增加',bonus_remove:'Credit 扣减',negative_balance_clear:'负余额清零',compensation:'补偿入账',cash_reversal:'资金冲正',other_balance:'余额调整',adjustment:'账务调整'})[row.kind] || row.kind || '其他';
   const valid = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
-  const chartPoints = (rows, field, min, max, width, height) => rows.filter(row => valid(row[field])).map((row, index, values) => `${(values.length === 1 ? 0 : index / (values.length - 1)) * width},${height - ((Number(row[field]) - min) / (max - min || 1)) * height}`).join(' ');
   const focusTimestamp = timestamp => { const ms = toMs(timestamp); if (Number.isFinite(ms)) focusTimeMs(ms); };
-  const renderTimelineChart = () => {
-    const curve = (timeline.curve || []).filter(row => valid(row.balance) || valid(row.credit));
-    const chart = document.getElementById('timelineChart');
-    if (!curve.length) { chart.innerHTML = '<div class="timelineNote">没有可绘制的余额或 Credit 快照</div>'; return; }
-    const values = curve.flatMap(row => [row.balance, row.credit]).filter(valid).map(Number), min = Math.min(...values), max = Math.max(...values), pad = Math.max((max - min) * .08, 1), low = min - pad, high = max + pad, width = 1000, height = 190;
-    const markers = (timeline.liquidationPoints || []).map(point => { const index = curve.findIndex(row => row.timestamp === point.timestamp); if (index < 0) return ''; const row = curve[index], value = valid(row.balance) ? Number(row.balance) : Number(row.credit), x = (curve.length === 1 ? 0 : index / (curve.length - 1)) * width, y = height - ((value - low) / (high - low || 1)) * height, label = `${point.label || '爆仓标记'} · ${point.timestamp || '-'} · ${point.orderId || point.positionId || '无订单号'}`; return `<circle class="timelineLiquidation" data-timeline-marker="${escTimeline(point.timestamp || '')}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5" tabindex="0" role="button" aria-label="${escTimeline(label)}，跳转到 K 线"><title>${escTimeline(label)}</title></circle>`; }).join('');
-    chart.innerHTML = `<div class="timelineChartHead"><b>余额与 Credit 回放</b><span>蓝色：余额 · 金色：Credit · 红点：爆仓标记，可点击跳转</span></div><svg viewBox="0 0 ${width} 220" role="img" aria-label="历史余额与 Credit 曲线"><line class="timelineGrid" x1="0" y1="0" x2="${width}" y2="0"/><line class="timelineGrid" x1="0" y1="${height / 2}" x2="${width}" y2="${height / 2}"/><line class="timelineGrid" x1="0" y1="${height}" x2="${width}" y2="${height}"/><polyline class="timelineBalance" points="${chartPoints(curve, 'balance', low, high, width, height)}"/><polyline class="timelineCredit" points="${chartPoints(curve, 'credit', low, high, width, height)}"/>${markers}<text x="0" y="12" fill="#64748b" font-size="11">最高 ${escTimeline(money(high))}</text><text x="0" y="214" fill="#64748b" font-size="11">最低 ${escTimeline(money(low))}</text></svg>`;
-    chart.querySelectorAll('[data-timeline-marker]').forEach(node => { const jump = () => focusTimestamp(node.dataset.timelineMarker); node.addEventListener('click', jump); node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); jump(); } }); });
-  };
-  const renderTimeline = () => {
-    const events = timeline.events || [], pages = Math.max(1, Math.ceil(events.length / pageSize));
-    eventPage = Math.max(0, Math.min(eventPage, pages - 1));
-    const rows = events.slice(eventPage * pageSize, eventPage * pageSize + pageSize);
+  const renderTimeline = (force = false) => {
+    const events = timeline.events || [], viewport = document.getElementById('timelineTableViewport');
+    const visibleStart = Math.max(0, Math.floor(viewport.scrollTop / ROW_HEIGHT) - VIRTUAL_BUFFER);
+    const visibleEnd = Math.min(events.length, Math.ceil((viewport.scrollTop + viewport.clientHeight) / ROW_HEIGHT) + VIRTUAL_BUFFER);
+    if (!force && visibleStart === virtualStart && visibleEnd === virtualEnd) return;
+    virtualStart = visibleStart; virtualEnd = visibleEnd;
+    const rows = events.slice(visibleStart, visibleEnd);
     document.getElementById('timelineTable').innerHTML = '<thead><tr><th>时间</th><th>事件</th><th>订单 / Deal</th><th>品种</th><th>备注</th><th>余额变化</th><th>Credit变化</th><th>实现盈亏</th><th>事件后余额</th><th>事件后Credit</th><th>权益状态</th><th></th></tr></thead><tbody>' + rows.map((row, index) => {
       const cls = row.liquidation ? 'event-liquidation' : '';
-      const id = eventPage * pageSize + index;
+      const id = visibleStart + index;
       const liquidationButton = row.liquidation ? `<button type="button" data-timeline-liquidation="${id}">爆仓点位</button>` : '';
       return `<tr class="${cls}"><td>${escTimeline(row.timestamp)}</td><td class="event-${escTimeline(row.category)}"><span class="timelineKind ${escTimeline(row.kind)}">${escTimeline(kindLabel(row))}</span>${row.liquidation ? '<span class="timelineSub timelineLiquidationLabel">爆仓标记</span>' : ''}</td><td><b>${escTimeline(row.orderId || row.id || '-')}</b>${row.positionId ? `<span class="timelineSub">Position ${escTimeline(row.positionId)}</span>` : ''}</td><td>${escTimeline(row.symbol || '-')}</td><td>${escTimeline(row.comment || '-')}</td><td class="${moneyClass(row.deltaBalance)}">${money(row.deltaBalance)}</td><td class="${moneyClass(row.deltaCredit)}">${money(row.deltaCredit)}</td><td class="${moneyClass(row.realizedPnl)}">${money(row.realizedPnl)}</td><td>${money(row.balance)}</td><td>${money(row.credit)}</td><td>${escTimeline(row.equityStatus === 'authoritative_daily' ? '日快照' : row.equityStatus === 'authoritative_current' ? '当前快照' : row.equityStatus ? '无盘中快照' : '—')}</td><td>${liquidationButton}<button type="button" data-timeline-event="${id}">定位</button></td></tr>`;
-    }).join('') + '</tbody>';
-    document.getElementById('timelinePage').textContent = `第 ${eventPage + 1} / ${pages} 页，共 ${events.length} 条展示事件`;
-    document.getElementById('timelinePrev').disabled = eventPage === 0;
-    document.getElementById('timelineNext').disabled = eventPage >= pages - 1;
+    }).join('') + `<tr class="timelineSpacer"><td colspan="12" style="height:${Math.max(0, (events.length - visibleEnd) * ROW_HEIGHT)}px"></td></tr></tbody>`;
+    const firstSpacer = `<tr class="timelineSpacer"><td colspan="12" style="height:${visibleStart * ROW_HEIGHT}px"></td></tr>`;
+    document.querySelector('#timelineTable tbody').insertAdjacentHTML('afterbegin', firstSpacer);
   };
   const summary = timeline.summary || {};
   const coverage = timeline.coverage || {}, sourceLabel = [timeline.platform, timeline.server].filter(Boolean).join(' / ') || '当前选定路由';
@@ -80,12 +72,16 @@ _JS = r"""
   const summaryItems = [['外部入金', summary.externalDeposit], ['外部出金', summary.externalWithdrawal], ['外部净入金', summary.externalNetDeposit], ['内部划转', summary.internalTransfer], ['Credit 增加', summary.bonusGranted], ['Credit 扣减', summary.bonusRemoved], ['负余额清零', summary.negativeBalanceCleared], ['爆仓标记', summary.liquidationCount]];
   document.getElementById('timelineSummary').innerHTML = summaryItems.map(([label, value], index) => `<div><span>${escTimeline(label)}${index === 7 ? '' : ` (${summary.currency || 'USD'})`}</span><b class="${index === 7 ? '' : moneyClass(index === 1 || index === 5 ? -Number(value || 0) : value)}">${index === 7 ? Number(value || 0) : money(value)}</b></div>`).join('');
   document.getElementById('timelineEventNote').textContent = '资金、开仓与平仓均按真实发生顺序逐笔展示；每行对应事件后的 Balance/Credit。';
+  document.getElementById('timelineTableStatus').textContent = `共 ${summary.eventCount || 0} 条事件，滚动查看全部事件；表格按需渲染以保持流畅。`;
   const liquidationBox = document.getElementById('timelineLiquidations'), liquidations = timeline.liquidationPoints || [];
   liquidationBox.hidden = !liquidations.length;
   liquidationBox.innerHTML = liquidations.length ? `<b>爆仓点位 ${liquidations.length} 个</b>${liquidations.map(point => `<button type="button" data-timeline-liquidation-time="${escTimeline(point.timestamp || '')}">${escTimeline(`${point.label || '爆仓标记'} · ${point.timestamp || '-'} · ${point.orderId || point.positionId || '-'}`)}</button>`).join('')}` : '';
   liquidationBox.querySelectorAll('[data-timeline-liquidation-time]').forEach(node => node.addEventListener('click', () => focusTimestamp(node.dataset.timelineLiquidationTime)));
-  document.getElementById('timelinePrev').addEventListener('click', () => { eventPage--; renderTimeline(); });
-  document.getElementById('timelineNext').addEventListener('click', () => { eventPage++; renderTimeline(); });
+  document.getElementById('timelineTableViewport').addEventListener('scroll', () => {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(() => { renderScheduled = false; renderTimeline(); });
+  });
   document.getElementById('timelineTable').addEventListener('click', event => {
     const button = event.target.closest('[data-timeline-event],[data-timeline-liquidation]');
     if (!button) return;
@@ -94,8 +90,7 @@ _JS = r"""
     const ms = row ? toMs(row.timestamp) : NaN;
     if (Number.isFinite(ms)) focusTimeMs(ms);
   });
-  renderTimelineChart();
-  renderTimeline();
+  renderTimeline(true);
 
   const originalBottomPanel = drawBottomPanel;
   drawBottomPanel = function(rows, pad, plotW, top, height, xScale) {

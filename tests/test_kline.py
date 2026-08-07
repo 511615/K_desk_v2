@@ -194,14 +194,20 @@ const canvas = document.getElementById('chart');</script></body></html>'''
     assert '"accountTimeline"' in result
     assert 'id="panelFunds"' in result
     assert '历史资金回溯' in result
-    assert '余额与 Credit 回放' in result
+    assert 'id="timelineChart"' not in result
+    assert 'renderTimelineChart' not in result
     assert '订单 / Deal' in result
+    assert 'id="timelineTableViewport"' in result
+    assert 'timelinePagination' not in result
+    assert 'const ROW_HEIGHT = 62;' in result
+    assert '滚动查看全部事件' in result
     assert 'background:#fff; color:#111827' in result
     assert 'background:#061a33' not in result
     assert 'posFundingFact' in result
     assert 'data-timeline-liquidation' in result
     assert "[data-timeline-event],[data-timeline-liquidation]" in result
     assert "if (Number.isFinite(at)) focusTimeMs(at);" in result
+    assert "panelMode='funds';" in result
     assert '历史保证金率没有平台盘中快照，未展示估算比例' in result
     assert 'build_position_fused_trade_kline_demo' not in (tool_root / "fused_trade_kline_features.py").read_text(encoding="utf-8")
     node = shutil.which("node")

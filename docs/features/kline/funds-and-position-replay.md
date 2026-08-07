@@ -29,16 +29,19 @@ it locally; later chart requests reuse that complete cache even when the visible
 Only the explicit refresh option reads the remote source again.
 
 The bottom chart switcher adds `资金` beside the existing Profit, hand-size and position panels.
-It draws Balance in blue, Credit in orange and red liquidation dots for the factual liquidation
-points already identified by `FIN-HISTORY-001`. Each visible red dot is a hit target: clicking it
-moves the K-line viewport to that liquidation timestamp.
+Selecting it uses the same K-line lower-panel location to draw Balance in blue, Credit in orange and
+red liquidation dots for the factual liquidation points already identified by `FIN-HISTORY-001`.
+Each visible red dot is a hit target: clicking it moves the K-line viewport to that liquidation
+timestamp. There is no duplicate standalone funds chart below the K-line.
 
 Below the K-line, the standalone artifact renders the same factual layout as `历史资金回溯`: source
 coverage, eight funds/Credit/liquidation summary cards, a full Balance/Credit replay curve, clickable
-liquidation chips, and a paged detailed table. Every funds action, order opening and order closing is
-kept as its own chronological ledger row. Each row therefore shows the factual Balance/Credit state
+liquidation chips, and a detailed table. Every funds action, order opening and order closing is kept
+as its own chronological ledger row. Each row therefore shows the factual Balance/Credit state
 immediately after that action. The Position ID is retained as context beside its Deal; no lifecycle
-folding or summed presentation is used in this replay table or curve.
+folding or summed presentation is used in this replay table or curve. The table has no pagination:
+the user scrolls continuously through the full event history while a buffered virtual renderer keeps
+only nearby rows in the browser DOM.
 Each table row has `定位`, and liquidation rows additionally have `爆仓点位`, which both move the
 K-line viewport to that timestamp.
 The artifact keeps the established K-line white high-contrast workspace: white cards and tables,
@@ -100,8 +103,8 @@ Cache tests prove the first complete build, reuse without another source read, e
 invalid-local-cache recovery. Pure tests prove a selected window receives a known carry-in state,
 preserves unknown pre-anchor state, and retains the exact chronological opening and closing source
 events without changing the raw curve. HTML tests prove the artifact embeds the historical-funds
-layout, funds switcher, clickable liquidation controls, order/Deal table, raw event wording, and
-JavaScript parses.
+layout, lower-panel funds switcher, clickable liquidation controls, order/Deal table, full-history
+virtual scrolling, raw event wording, and JavaScript parses.
 Historical-funds fixtures continue to cover MT4 cash/Credit/clear, MT5 Action 2/3 and liquidation
 markers. Manual acceptance checks both checkbox states, an MT4 and MT5 chart, USD and USC scaling,
 a cache reuse, explicit refresh, a chart with unavailable funds data, an event-table jump and an HTML
