@@ -84,6 +84,22 @@ def test_fallback_source_uses_harder_acceptance_gate() -> None:
     all_tolerated = validation_metrics([EndpointCheck(True, 0, 1), EndpointCheck(False, 0.5, 1)])
     assert validation_passes(all_tolerated, fallback=True)
 
+    near_matched = validation_metrics(
+        [EndpointCheck(True, 0, 1) for _ in range(7)]
+        + [EndpointCheck(False, 0.5, 1) for _ in range(2)]
+        + [EndpointCheck(False, 1.17, 1)]
+    )
+    assert near_matched["insideRatio"] == 0.7
+    assert near_matched["withinTolerance"] == 9
+    assert validation_passes(near_matched, fallback=True)
+
+    distant_outlier = validation_metrics(
+        [EndpointCheck(True, 0, 1) for _ in range(7)]
+        + [EndpointCheck(False, 0.5, 1) for _ in range(2)]
+        + [EndpointCheck(False, 1.26, 1)]
+    )
+    assert not validation_passes(distant_outlier, fallback=True)
+
 
 def test_gmt_expansion_only_runs_after_initial_low_confidence() -> None:
     assert alignment_offsets(True) == (0, -3)
