@@ -174,7 +174,11 @@ values unknown and schedules an immediate bounded discovery refresh.
 The optional `-AllowDemoMinLotOverride` test switch is valid only for `ACCMGlobal-Demo` in
 `StagedLive`. It may promote each eligible source Position to the product minimum lot when its
 normal stress allocation is smaller, but only while whole-portfolio stress, the product-direction
-cluster cap and margin permit it. It does not bypass quote, spread, database, Ticket-ownership,
+cluster cap and margin permit it. In this explicit Demo mode, an otherwise empty product-direction
+cluster receives an adaptive floor equal to one product minimum lot's stress when that value is
+larger than the normal 40% cluster share. This makes the build-time minimum-lot feasibility result
+match execution and permits one indivisible test lot; the next same-direction minimum lot remains
+subject to the normal/adaptive shared limit. It does not bypass quote, spread, database, Ticket-ownership,
 daily-stop, equity-floor or margin hard gates and is never implicit.
 For an active client under that exact Demo-only switch, the client loss budget is floored at the
 existing 20% per-client share of the 1.5% cycle budget. This keeps the risk allowance consistent

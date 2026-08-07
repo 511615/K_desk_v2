@@ -1219,6 +1219,39 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             target, reason = service._desired_copy_lots(position, allow_increase=True)
         self.assertEqual((target, reason), (0.01, "risk_allowed_demo_minimum"))
 
+    def test_demo_override_cluster_floor_can_fit_one_realistic_gold_minimum_lot(self) -> None:
+        mt = FakeHedgingMt()
+        mt.stress_loss_per_lot = lambda _product, _move: 6_418.72
+        service = self.sizing_service(mt)
+        service.args = SimpleNamespace(
+            allow_demo_min_lot_override=True,
+            mode="StagedLive",
+        )
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 781, 0.0, 0.02, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
+            target, reason = service._desired_copy_lots(position, allow_increase=True)
+
+        self.assertEqual((target, reason), (0.01, "risk_allowed_demo_minimum"))
+
+        mt.add(204, "CPV2:C002:XAU-MIN", 1, 0.01)
+        with patch("copy_trading_multi_demo.utc_now", return_value=NOW), patch.object(
+            service, "_position_hold_seconds", return_value=0.0
+        ):
+            second_target, second_reason = service._desired_copy_lots(
+                position, allow_increase=True
+            )
+
+        self.assertEqual(
+            (second_target, second_reason), (0.0, "below_minimum_risk_lot")
+        )
+
     def test_gate_rejection_keeps_specific_reason_in_position_state(self) -> None:
         mt = FakeHedgingMt()
         service = self.sizing_service(mt)
