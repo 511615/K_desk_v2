@@ -163,6 +163,10 @@ never scales lots.
 
 The same numeric login can exist on multiple logical servers. CRM schema and server code are part
 of account identity. A shared physical trading schema must never be used to infer the CRM route.
+An exact CRM route confirmation remains authoritative for source identification when the new account
+has no trade/deal rows yet. Interactive lookup and detail responses retain the confirmed logical
+platform/server and account metadata with an explicit zero-order status; lack of orders is not an
+unknown-source condition and must not trigger cross-source guessing.
 When a newly created account exists in an indexed physical `mt4_users_view` or `mt5_users_view` but
 its CRM mapping has not arrived, interactive account reads may use a fail-closed
 `unique_trade_user_fallback`. It is allowed only for the canonical logical route of that physical

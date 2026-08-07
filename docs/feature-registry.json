@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "1f79dc0104b9",
+  "registryVersion": "711808c8ad17",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -36,7 +36,7 @@
         "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-05",
+      "last_verified_date": "2026-08-06",
       "document": "docs/features/account/account-detail-legacy.md"
     },
     {
@@ -90,7 +90,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-05",
+      "last_verified_date": "2026-08-06",
       "document": "docs/features/account/account-search.md"
     },
     {

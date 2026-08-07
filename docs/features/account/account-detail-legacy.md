@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_netwo
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-05
+last_verified_date: 2026-08-06
 ---
 
 # Legacy account detail page
@@ -50,6 +50,8 @@ compact long per-account identifier lists to eight samples without discarding AP
 Confirmed cent accounts show `USC` with money normalized to USD even when a newly registered MT5
 account has not produced its first daily snapshot. The same-name panel includes every account owned
 by the same CRM user across configured logical servers and displays each account's actual server.
+A zero-order account whose CRM route is confirmed still shows that platform and server in the detail
+header and selectors, plus the explicit `账户暂未做单` state; it is not shown as `未识别平台`.
 MT4 rows whose close time is the `1970-01-01` open-position sentinel, or otherwise is not later
 than the open time, are excluded from closed-order counts, duration metrics and daily P/L charts.
 MT4 detail analytics read the complete closed-order history rather than a 50,000-row prefix. The
@@ -88,6 +90,9 @@ authoritative SQLite. DBG MT5 Live2 resolves only through `crm_vn` code 5 and
 For a temporarily missing CRM account mapping, the selected source can read only the documented
 unique physical trade-user fallback; a duplicate Login or a shared-schema secondary logical route
 does not render another server's data.
+When CRM confirms the selected route but the trading history is empty, detail retains that confirmed
+source identity and reports an empty-order state. It never guesses another physical source merely
+to populate the page.
 
 ## Business rules and units
 
@@ -132,6 +137,8 @@ correct response within 10 seconds.
 DBG CN MT5 account 2014201 is the no-comment EA-route sample: the dialog must list 2014201, 2014202,
 2014137 and 2014195 through conservative complete-ExpertID/time/symbol/direction evidence, while
 keeping the EA headline at zero groups.
+New AC GB MT5 account 954059 must render with `MT5 / AC GB MT5` and zero orders, rather than an
+unidentified platform, before its first deal is recorded.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
 The detail HTML includes the top-right Login search form, its status region and source-aware lookup

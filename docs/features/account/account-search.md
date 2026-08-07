@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["FIN-COMP-001", "FIN-REBATE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-05
+last_verified_date: 2026-08-06
 ---
 
 # Account search and source routing
@@ -21,7 +21,9 @@ which the login exists. The selected result opens `/account/{login}` with platfo
 ## UI and behavior
 
 Results show platform, logical server and account metadata. Shared numeric logins remain separate
-rows. Search does not silently choose a different CRM route.
+rows. Search does not silently choose a different CRM route. A CRM-confirmed newly registered
+account remains a selectable result even before its first trading row exists: it shows its real
+platform/server together with the explicit `账户暂未做单` state.
 
 ## API contract
 
@@ -32,7 +34,9 @@ Each MySQL lookup may additionally expose `routeValidation`; existing response f
 
 ## Data, routing and read-only constraints
 
-CRM account mapping is checked before trading rows. Routes follow `DATA_AND_ROUTING.md`; all
+CRM account mapping is checked before trading rows. A confirmed CRM route is account identity,
+not evidence that an order already exists, so a zero-order lookup retains `latestSource`, platform,
+server and account metadata with `exists=false` and `routeValidation=crm_confirmed`. Routes follow `DATA_AND_ROUTING.md`; all
 queries are read-only. Related-account discovery follows the CRM user across server codes, then
 routes each related login independently instead of reusing the selected account's trading source.
 If CRM mapping is temporarily absent, an indexed trade-user match may be used only under the
@@ -53,8 +57,9 @@ unindexed daily view is not queried synchronously.
 
 ## Loading, empty and failure behavior
 
-No match returns an empty `databases` list. Provider failures surface as an explicit API error and
-must not be presented as a valid zero-value account. Normal synchronous lookup and finance reads
+No CRM or uniquely validated trading-source match returns an empty `databases` list. A confirmed
+zero-order account is not a no-match and reports `账户暂未做单` without fabricated metrics. Provider
+failures surface as an explicit API error and must not be presented as a valid zero-value account. Normal synchronous lookup and finance reads
 must return complete results within 10 seconds from a cold cache.
 
 ## Code and dependencies
@@ -69,7 +74,8 @@ The eleven-server matrix and shared login `10002` must route correctly. Old alia
 accounts to GB finance sources. Account 241003021 proves Live3 search. Newly registered Live3
 account 241003365 proves cent detection before the first `mt5_daily_view` row exists and cross-server
 same-name routing to Live1 account 245856. DBG account 5200101 proves Live2/code 5 routing without
-changing the older DBG GB MT5/code 2 route.
+changing the older DBG GB MT5/code 2 route. Newly registered AC GB MT5 account 954059 proves that
+an account with zero `mt5_deals` rows still returns `MT5 / AC GB MT5` from its CRM-confirmed route.
 
 ## Compatibility and deprecation
 

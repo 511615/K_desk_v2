@@ -1303,7 +1303,26 @@ def query_mysql_account_lookup_source(source: dict, account: str) -> dict | None
                     except Exception:
                         pass
     if not mysql_int(row.get("RawRows")):
-        return None
+        source_label = " / ".join(
+            item for item in (normalize_text(source.get("platform")), normalize_text(source.get("server"))) if item
+        )
+        return {
+            "exists": False,
+            "dbSource": "mysql",
+            "account": account,
+            "orderCount": 0,
+            "chartableOrderCount": 0,
+            "firstTime": "",
+            "lastTime": "",
+            "platforms": [{"value": source.get("platform", ""), "label": source.get("platform", "")}],
+            "servers": [{"value": source.get("server", ""), "label": source.get("server", "")}],
+            "symbols": [],
+            "latestSource": {"platform": source.get("platform", ""), "server": source.get("server", "")},
+            "accountMeta": account_meta,
+            "routeValidation": route_validation,
+            "error": f"已确认 {source_label or '账户来源'}，账户暂未做单",
+            "refreshedAt": now_text(),
+        }
     symbols = [item for item in normalize_text(row.get("Symbols")).split(",") if item]
     return {
         "exists": True,
@@ -3777,7 +3796,7 @@ def build_riskdash_panels(login: str, all_rows: list[dict], all_metrics: dict, f
     if len(servers) != 1 or len(platforms) != 1 or not platforms.issubset({"MT4", "MT5"}):
         return {
             "available": False,
-            "reason": "请选择单一平台和服务器后查看风控面板" if all_rows else "数据库暂无订单",
+            "reason": "请选择单一平台和服务器后查看风控面板" if all_rows else "账户暂未做单",
         }
     server = next(iter(servers))
     platform = next(iter(platforms))
@@ -3963,10 +3982,22 @@ def _account_database_detail_uncached(login: str, filters: dict | None = None) -
     servers = sorted({normalize_text(row.get("server")) for row in all_rows if normalize_text(row.get("server"))})
     symbols = sorted({normalize_text(row.get("symbol")) for row in all_rows if normalize_text(row.get("symbol"))})
     latest_row = max(all_rows, key=lambda row: normalize_text(row.get("close_time") or row.get("open_time"))) if all_rows else None
+    known_source = None
+    if not all_rows:
+        known_source = next((
+            item for item in account_lookup_databases(login)
+            if source_allowed(item.get("latestSource") or {}, platform=source_scope["platform"], server=source_scope["server"])
+        ), None)
+    latest_source = (known_source or {}).get("latestSource") or {
+        "platform": normalize_text(latest_row.get("platform")) if latest_row else "",
+        "server": display_unknown(normalize_text(latest_row.get("server"))) if latest_row else "",
+    }
+    platforms = platforms or ([normalize_text(latest_source.get("platform"))] if normalize_text(latest_source.get("platform")) else [])
+    servers = servers or ([normalize_text(latest_source.get("server"))] if normalize_text(latest_source.get("server")) else [])
     return {
         "exists": bool(all_rows),
         "account": login,
-        "dbSource": "mysql" if uses_mysql else ("sqlite" if all_rows else ""),
+        "dbSource": "mysql" if uses_mysql else ("sqlite" if all_rows else normalize_text((known_source or {}).get("dbSource"))),
         "searchedSources": [source["name"] for source in MYSQL_SOURCES] + ([str(TRADE_DB_PATH)] if TRADE_DB_PATH.exists() else []),
         "orderCount": len(all_rows),
         "chartableOrderCount": all_metrics["chartableOrderCount"],
@@ -3975,16 +4006,14 @@ def _account_database_detail_uncached(login: str, filters: dict | None = None) -
         "platforms": [{"value": value, "label": display_unknown(value)} for value in platforms],
         "servers": [{"value": value, "label": display_unknown(value)} for value in servers],
         "symbols": symbols,
-        "latestSource": {
-            "platform": normalize_text(latest_row.get("platform")) if latest_row else "",
-            "server": display_unknown(normalize_text(latest_row.get("server"))) if latest_row else "",
-        },
-        "accountMeta": account_meta_for_rows(all_rows),
+        "latestSource": latest_source,
+        "accountMeta": account_meta_for_rows(all_rows) if all_rows else (known_source or {}).get("accountMeta", account_money_meta()),
         "metrics": filtered_metrics,
         "allMetrics": all_metrics,
         "visualizations": trade_visualizations(filtered_rows, filtered_metrics),
         "riskPanels": risk_panels,
         "filters": active_filters,
+        "error": normalize_text((known_source or {}).get("error")) if not all_rows else "",
         "refreshedAt": now_text(),
     }
 
@@ -4018,7 +4047,7 @@ def account_risk_panels_payload(login: str, filters: dict | None = None) -> dict
         history_limit = analysis["historyLimit"]
         all_rows = analysis["rows"]
         if not all_rows:
-            raise RuntimeError("数据库暂无订单")
+            raise RuntimeError("账户暂未做单")
         filtered_rows = query_db_trades(login, limit=history_limit, **active_filters) if any(active_filters[key] for key in ("symbol", "start", "end")) else all_rows
         panels = build_riskdash_panels(login, all_rows, analysis["metrics"], filtered_rows)
     except Exception as exc:
@@ -9547,7 +9576,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (!summary.exists) {
         $("dbTradeStatus").classList.add("empty");
-        $("dbTradeStatus").innerHTML = `<b>${escapeText(summary.account || "")}</b><br><span class="muted">数据库暂无订单</span>`;
+        $("dbTradeStatus").innerHTML = `<b>${escapeText(summary.account || "")}</b><br><span class="muted">账户暂未做单</span>`;
         $("dbGenerateBtn").disabled = true;
         return;
       }
@@ -10392,7 +10421,7 @@ WORKBENCH_HTML = r"""<!doctype html>
       const symbols=(db.symbols||[]).slice(0,5).join('、')||'-';
       const currencyText=meta.isCentAccount?'USC 美分账户 · 金额按 USD':(meta.currency?`${meta.currency} 账户`:'币种未识别');
       const href=`/account/${encodeURIComponent(data.account)}?platform=${encodeURIComponent(source.platform||'')}&server=${encodeURIComponent(source.server||'')}`;
-      return `<article class="result" id="accountResult-${index}" data-href="${esc(href)}" tabindex="0"><div><div class="result-account">${esc(data.account)}</div><div class="badges"><span class="badge ${data.marked?'marked':''}">${data.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'数据库暂无订单'}</span><span class="badge">${esc(currencyText)}</span>${data.record?.['建议动作']?`<span class="action">${esc(data.record['建议动作'])}</span>`:''}</div><div class="muted" style="margin-top:8px">刷新 ${esc(db.refreshedAt||'-')}</div></div><div class="result-facts"><div class="fact"><span>订单 / 可画图</span><b>${fmt(db.orderCount)} / ${fmt(db.chartableOrderCount)}</b></div><div class="fact"><span>平台 / 服务器</span><b>${esc(sourceText)}</b></div><div class="fact"><span>数据库状态 / 本地标记</span><b id="lookupStatus-${index}">加载中...</b></div><div class="fact"><span>综合盈利</span><b id="lookupProfit-${index}">加载中...</b></div><div class="fact"><span>交易时间</span><b>${esc(db.firstTime||'-')}<br>${esc(db.lastTime||'-')}</b></div><div class="fact"><span>品种</span><b>${esc(symbols)}</b></div></div><div class="enter">进入详情 →</div></article>`;
+      return `<article class="result" id="accountResult-${index}" data-href="${esc(href)}" tabindex="0"><div><div class="result-account">${esc(data.account)}</div><div class="badges"><span class="badge ${data.marked?'marked':''}">${data.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'账户暂未做单'}</span><span class="badge">${esc(currencyText)}</span>${data.record?.['建议动作']?`<span class="action">${esc(data.record['建议动作'])}</span>`:''}</div><div class="muted" style="margin-top:8px">刷新 ${esc(db.refreshedAt||'-')}</div></div><div class="result-facts"><div class="fact"><span>订单 / 可画图</span><b>${fmt(db.orderCount)} / ${fmt(db.chartableOrderCount)}</b></div><div class="fact"><span>平台 / 服务器</span><b>${esc(sourceText)}</b></div><div class="fact"><span>数据库状态 / 本地标记</span><b id="lookupStatus-${index}">加载中...</b></div><div class="fact"><span>综合盈利</span><b id="lookupProfit-${index}">加载中...</b></div><div class="fact"><span>交易时间</span><b>${esc(db.firstTime||'-')}<br>${esc(db.lastTime||'-')}</b></div><div class="fact"><span>品种</span><b>${esc(symbols)}</b></div></div><div class="enter">进入详情 →</div></article>`;
     }
     async function loadLookupFinance(data,matches){
       const results=await Promise.allSettled(matches.map(async(db,index)=>{const source=db.latestSource||{},q=new URLSearchParams({account:data.account,platform:source.platform||'',server:source.server||''}),finance=await json(`/api/account-lookup-finance?${q}`),statusEl=$(`lookupStatus-${index}`),profitEl=$(`lookupProfit-${index}`);if(statusEl){statusEl.textContent=`${finance.databaseStatus||'-'} / ${finance.localStatus||'-'}`;statusEl.title=`数据库状态 ${finance.databaseStatus||'-'}；本地标记 ${finance.localStatus||'-'}${finance.workflowStatus?`；流程状态 ${finance.workflowStatus}`:''}`;}if(profitEl){const value=Number(finance.comprehensiveProfit||0);profitEl.textContent=`${value>0?'+':''}${new Intl.NumberFormat('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value)}${finance.currency?` ${finance.currency}`:''}`;profitEl.className=value>0?'positive':value<0?'negative':'';}}));
@@ -10402,7 +10431,7 @@ WORKBENCH_HTML = r"""<!doctype html>
     async function lookup(event) {
       event?.preventDefault(); const account=$("accountLookup").value.trim(); if(!account){$("lookupStatus").textContent='请输入账号';return;}
       $("lookupBtn").disabled=true; $("lookupStatus").textContent='正在查询订单数据库...'; $("lookupResult").innerHTML='';
-      try { const data=await json(`/api/account-lookup?account=${encodeURIComponent(account)}`), matches=data.databases||[]; $("lookupStatus").textContent=matches.length?`查询完成 · 找到 ${matches.length} 个平台/服务器账户 · 正在补充状态与综合盈利`:'查询完成 · 数据库暂无订单'; $("lookupResult").innerHTML=matches.length?matches.map((db,index)=>lookupCard(data,db,index)).join(''):lookupCard(data,data.database||{},0); document.querySelectorAll('#lookupResult .result').forEach(card=>{const open=()=>location.href=card.dataset.href||`/account/${encodeURIComponent(data.account)}`;card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter')open();});});if(matches.length){loadLookupFinance(data,matches).then(()=>{if($("accountLookup").value.trim()===account)$("lookupStatus").textContent=`查询完成 · 找到 ${matches.length} 个平台/服务器账户 · 状态与综合盈利已更新`;});} }
+      try { const data=await json(`/api/account-lookup?account=${encodeURIComponent(account)}`), matches=data.databases||[]; $("lookupStatus").textContent=matches.length?`查询完成 · 找到 ${matches.length} 个平台/服务器账户 · 正在补充状态与综合盈利`:'未找到该账号'; $("lookupResult").innerHTML=matches.length?matches.map((db,index)=>lookupCard(data,db,index)).join(''):lookupCard(data,data.database||{},0); document.querySelectorAll('#lookupResult .result').forEach(card=>{const open=()=>location.href=card.dataset.href||`/account/${encodeURIComponent(data.account)}`;card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter')open();});});if(matches.length){loadLookupFinance(data,matches).then(()=>{if($("accountLookup").value.trim()===account)$("lookupStatus").textContent=`查询完成 · 找到 ${matches.length} 个平台/服务器账户 · 状态与综合盈利已更新`;});} }
       catch(err){$("lookupStatus").textContent=err.message;} finally{$("lookupBtn").disabled=false;}
     }
     function localDateTimeValue(value){const shifted=new Date(value.getTime()-value.getTimezoneOffset()*60000);return shifted.toISOString().slice(0,16);}
@@ -11265,7 +11294,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     function profitClass(value){return Number(value)>0?'positive':Number(value)<0?'negative':'';}
     function renderMetrics(db){
       const m=db.metrics||{}, meta=db.accountMeta||{}, unit=meta.displayCurrency?` (${meta.displayCurrency})`:'';
-      if(!db.exists){$("metricGroups").innerHTML=`<div class="empty-state" style="grid-column:1/-1">${esc(db.error||'数据库暂无订单')}</div>`;$("symbolRows").innerHTML='<tr><td colspan="5"><div class="empty-state">暂无订单</div></td></tr>';$("sourceRows").innerHTML='<div class="empty-state">暂无来源</div>';return;}
+      if(!db.exists){$("metricGroups").innerHTML=`<div class="empty-state" style="grid-column:1/-1">${esc(db.error||'账户暂未做单')}</div>`;$("symbolRows").innerHTML='<tr><td colspan="5"><div class="empty-state">暂无订单</div></td></tr>';$("sourceRows").innerHTML='<div class="empty-state">暂无来源</div>';return;}
       $("metricGroups").innerHTML=[
         group('交易概览',[metric('订单数',num(m.orderCount,0)),metric('可画图',num(m.chartableOrderCount,0)),metric('品种数',num(m.symbolCount,0)),metric('活跃天数',num(m.activeDays,0))]),
         group('盈亏表现',[metric(`平仓净盈亏${unit}`,money(m.netProfit),profitClass(m.netProfit)),metric(`平仓毛盈亏${unit}`,money(m.grossProfit),profitClass(m.grossProfit)),metric('净胜率',pct(m.winRate)),metric('净盈利 / 净亏损',`${num(m.winningOrders,0)} / ${num(m.losingOrders,0)}`),metric(`平均 / 中位净盈亏${unit}`,`${money(m.averageProfit)} / ${money(m.medianProfit)}`)]),
@@ -11441,9 +11470,9 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     function render(detail,keepFilters=false){
       state.detail=detail;const db=detail.database||{},source=db.latestSource||{},meta=db.accountMeta||{};$("accountId").textContent=detail.account;document.title=`账号 ${detail.account} · 风控台账`;
       const currencyText=meta.isCentAccount?'USC 美分账户 · 金额已按 USD 折算':(meta.currency==='USD'?'USD 美元账户':(meta.currency?`${meta.currency} 账户`:'币种未识别 · 金额未缩放'));
-      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'数据库暂无订单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;$("copyOriginBtn").hidden=!db.exists;$("eaCommentBtn").hidden=!db.exists;$("relationshipNetworkBtn").hidden=!db.exists;
+      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'账户暂未做单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;$("copyOriginBtn").hidden=!db.exists;$("eaCommentBtn").hidden=!db.exists;$("relationshipNetworkBtn").hidden=!db.exists;
       $("headMeta").innerHTML=`${esc([source.platform,source.server].filter(Boolean).join(' / ')||'未识别平台')}<br>最近交易 ${esc(db.lastTime||'-')}<br>刷新 ${esc(db.refreshedAt||'-')}`;
-      $("metricStatus").textContent=db.exists?`${db.orderCount} 条订单 · ${db.firstTime||'-'} 至 ${db.lastTime||'-'}`:(db.error||'数据库暂无订单');$("dbSource").textContent=db.dbSource?db.dbSource.toUpperCase():'';
+      $("metricStatus").textContent=db.exists?`${db.orderCount} 条订单 · ${db.firstTime||'-'} 至 ${db.lastTime||'-'}`:(db.error||'账户暂未做单');$("dbSource").textContent=db.dbSource?db.dbSource.toUpperCase():'';
       if(!keepFilters){optionList($("platform"),db.platforms||[],'全部平台');optionList($("server"),db.servers||[],'全部服务器');optionList($("symbol"),db.symbols||[],'全部品种');if(state.initialFilters){for(const key of ['platform','server','symbol'])if(state.initialFilters[key])$(key).value=state.initialFilters[key];state.initialFilters=null;}}
       renderChartProducts(db);
       renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;

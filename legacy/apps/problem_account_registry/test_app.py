@@ -561,6 +561,32 @@ class MoneyScalingTests(unittest.TestCase):
         self.assertEqual(payload["accountMeta"]["displayCurrency"], "USD")
         self.assertEqual(payload["accountMeta"]["moneyScale"], 0.01)
 
+    def test_account_lookup_keeps_crm_confirmed_server_when_new_account_has_no_orders(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "RawRows": 0, "OrderCount": 0, "FirstTime": None, "LastTime": None, "Symbols": None,
+        }
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "AC GB MT5", "server": "AC GB MT5", "platform": "MT5",
+            "schema": "int_sass_crm_ac_mt5_live_new", "table": "mt5_deals", "kind": "mt5_deals",
+            "default_currency": "USD", "account_route": {"schema": "int_sass_crm_ac", "mt_server_code": "1"},
+        }
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection), \
+             patch.object(app, "source_account_exists", return_value=True), \
+             patch.object(app, "source_account_route_status", return_value="crm_confirmed"):
+            payload = app.query_mysql_account_lookup_source(source, "954059")
+
+        self.assertFalse(payload["exists"])
+        self.assertEqual(payload["latestSource"], {"platform": "MT5", "server": "AC GB MT5"})
+        self.assertEqual(payload["routeValidation"], "crm_confirmed")
+        self.assertIn("账户暂未做单", payload["error"])
+
     def test_mt4_trade_query_excludes_open_position_sentinel(self):
         cursor = MagicMock()
         cursor.fetchone.side_effect = [
@@ -688,6 +714,29 @@ class AccountLookupPerformanceTests(unittest.TestCase):
             detail = app._account_database_detail_uncached("532573", {"platform": "MT5", "server": "AC GB MT5"})
         self.assertTrue(detail["exists"])
         query_analysis.assert_called_once_with("532573", platform="MT5", server="AC GB MT5")
+
+    def test_detail_keeps_confirmed_server_when_account_has_no_orders(self):
+        analysis = {
+            "rows": [], "costs": None, "metrics": app.trade_metrics([]),
+            "usesMysql": True, "historyLimit": 50000,
+        }
+        route = {
+            "exists": False, "dbSource": "mysql", "account": "954059", "orderCount": 0,
+            "chartableOrderCount": 0, "firstTime": "", "lastTime": "", "symbols": [],
+            "latestSource": {"platform": "MT5", "server": "AC GB MT5"},
+            "accountMeta": app.account_money_meta(source_name="AC GB MT5"),
+            "routeValidation": "crm_confirmed", "error": "账户暂未做单", "refreshedAt": "2026-08-06 11:17:50",
+        }
+
+        with patch.object(app, "account_trade_analysis", return_value=analysis), \
+             patch.object(app, "account_lookup_databases", return_value=[route]):
+            detail = app._account_database_detail_uncached("954059")
+
+        self.assertFalse(detail["exists"])
+        self.assertEqual(detail["latestSource"], {"platform": "MT5", "server": "AC GB MT5"})
+        self.assertEqual(detail["platforms"], [{"value": "MT5", "label": "MT5"}])
+        self.assertEqual(detail["servers"], [{"value": "AC GB MT5", "label": "AC GB MT5"}])
+        self.assertIn("账户暂未做单", detail["error"])
 
     def test_lookup_finance_returns_database_local_status_and_comprehensive_profit(self):
         source = {"name": "Live", "platform": "MT5", "server": "Live", "kind": "mt5_deals"}
