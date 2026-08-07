@@ -36,6 +36,7 @@ class Settings:
     frontend_dist: Path
     ui_mode: str
     copy_pool_output_dir: Path | None = None
+    kuzu_demo_path: Path | None = None
 
     @classmethod
     def load(cls) -> Settings:
@@ -69,6 +70,10 @@ class Settings:
             copy_pool_output_dir=_env_path(
                 "KDESK_COPY_POOL_OUTPUT_DIR",
                 legacy_output / "copy_live_demo_capital10k",
+            ).resolve(),
+            kuzu_demo_path=_env_path(
+                "KDESK_KUZU_DEMO_DB",
+                runtime_dir / "relationship_graph_demo.kuzu",
             ).resolve(),
         )
 

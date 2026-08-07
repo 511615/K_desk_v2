@@ -121,6 +121,8 @@ entry and a heartbeat at least every 10 seconds while remote reads are pending. 
 exceeds the fixed 300-second budget is terminated without changing any remote state, persisted as a
 recoverable deep-stage failure and does not block later candidates or the discovery queue. A timeout
 is unavailable evidence, never a clean result or a no-risk conclusion.
+The production discovery queue runs two independent Workers. A long-running position-risk,
+rebate, bonus or push scan may continue independently while another discovery job is claimed.
 
 ## Code and dependencies
 

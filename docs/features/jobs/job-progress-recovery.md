@@ -4,11 +4,11 @@ title: Persistent job progress and recovery
 module: jobs
 status: active
 apis: ["GET /api/kline/jobs/{job_id}", "GET /api/toxic/jobs/{job_id}", "GET /api/push-discovery/jobs/{job_id}", "GET /api/push-discovery/active", "GET /api/rebate-churning/scans/{job_id}", "GET /api/bonus-arbitrage/scans/active", "GET /api/bonus-arbitrage/scans/{job_id}", "GET /api/position-risk/scans/active", "GET /api/position-risk/scans/{job_id}", "POST /api/jobs/{job_id}/cancel"]
-code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "src/kdesk/api/account_app.py", "frontend/src/pushDiscovery.ts", "frontend/src/frontendUpdate.ts", "frontend/src/components/BonusArbitrageDiscoveryPanel.vue", "frontend/src/components/PositionRiskDiscoveryPanel.vue", "scripts/start_dev.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1"]
+code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "src/kdesk/api/account_app.py", "frontend/src/pushDiscovery.ts", "frontend/src/frontendUpdate.ts", "frontend/src/components/BonusArbitrageDiscoveryPanel.vue", "frontend/src/components/PositionRiskDiscoveryPanel.vue", "scripts/start_dev.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1"]
 tests: ["tests/test_api.py", "tests/test_ledger.py", "tests/test_worker.py", "frontend/src/pushDiscovery.spec.ts", "frontend/src/frontendUpdate.spec.ts", "frontend/src/bonusDiscovery.spec.ts", "frontend/src/positionRiskDiscovery.spec.ts", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: []
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-04
+last_verified_date: 2026-08-07
 ---
 
 # Persistent job progress and recovery
@@ -23,7 +23,10 @@ retry/cancel and restart recovery.
 Pages poll stable job IDs. Queued, running, done, failed and cancelled states have clear messages.
 Completed discovery jobs retain and display non-fatal source/account failures alongside successes.
 K-line jobs likewise retain per-symbol failures and mark the result partial when at least one other
-symbol generated successfully.
+symbol generated successfully. The upload page treats inspection and generation as two durable job
+stages: after inspection reaches `done`, it submits the generation job from the parsed symbol and
+time range, then exposes the generated chart link. Inspection completion alone is not a chart
+completion signal.
 Transient polling disconnects retain the last progress and job ID, then reconnect automatically.
 The workbench restores the latest discovery job after navigation or reload.
 After a task reaches a terminal state, the page advances to the next running or queued discovery job.
@@ -63,6 +66,10 @@ states are not overwritten by stale updates.
 Unknown IDs return 404. Interrupted running work is recoverable according to queue policy; failure
 events retain a sanitized reason. A browser fetch/network error does not convert a durable running
 discovery job into a terminal failed state.
+Workers claim jobs with an atomic SQLite status transition and refresh a five-second lease while executing. A running job is only re-queued after its
+lease has been stale for 180 seconds, so a second Worker cannot reset a healthy long-running scan.
+The production launcher starts one interactive Worker and two discovery Workers by default; a long
+position-risk scan therefore cannot block every other discovery kind.
 Subprocess output is read independently so cancellation is checked at least every 250 milliseconds,
 including database phases that emit no progress lines.
 Push discovery additionally receives a stage heartbeat from its isolated per-account deep-check
@@ -74,7 +81,8 @@ second interruption remains terminal and explicit.
 ## Code and dependencies
 
 Web processes submit/read only; interactive and discovery workers execute separate queues and only
-claim/recover their assigned job kinds.
+claim/recover their assigned job kinds. Production readiness also checks that both Worker queues
+have a live process; an account-only start must explicitly use the account-only health check.
 
 ## Tests and acceptance
 

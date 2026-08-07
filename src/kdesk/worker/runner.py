@@ -89,6 +89,9 @@ def load_push_failures(path: Path, expected_total: int = 0) -> tuple[list[dict],
 
 
 class Worker:
+    HEARTBEAT_INTERVAL_SECONDS = 5
+    STALE_JOB_GRACE_SECONDS = 180
+
     QUEUE_KINDS = {
         "interactive": ("kline_inspect", "kline_generate", "kline_from_database", "toxic_check"),
         "discovery": ("push_discovery", "rebate_churning_scan", "bonus_arbitrage_scan", "position_risk_scan"),
@@ -564,14 +567,38 @@ class Worker:
         if job.get("cancel_requested"):
             self.database.update_job(job["id"], status="cancelled", event_message="任务已取消")
             return
-        self.database.update_job(job["id"], progress=5, event_message=f"开始执行 {job['kind']}")
-        result = handler(job)
-        self.database.update_job(job["id"], status="done", progress=100, result=result, event_message="任务完成")
+        stop_heartbeat = threading.Event()
+        touch_job = getattr(self.database, "touch_job", None)
+
+        def heartbeat() -> None:
+            while not stop_heartbeat.wait(self.HEARTBEAT_INTERVAL_SECONDS):
+                if callable(touch_job):
+                    touch_job(job["id"])
+
+        heartbeat_thread = threading.Thread(target=heartbeat, name=f"job-heartbeat-{job['id']}", daemon=True)
+        heartbeat_thread.start()
+        try:
+            self.database.update_job(job["id"], progress=5, event_message=f"开始执行 {job['kind']}")
+            result = handler(job)
+            self.database.update_job(job["id"], status="done", progress=100, result=result, event_message="任务完成")
+        finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=1)
 
     def run(self, *, once: bool = False, poll_seconds: float = 0.7) -> None:
         self.database.create_schema()
-        self.database.recover_interrupted_jobs(kinds=self.kinds)
+        self.database.recover_interrupted_jobs(
+            kinds=self.kinds,
+            stale_after_seconds=self.STALE_JOB_GRACE_SECONDS,
+        )
+        last_recovery = time.monotonic()
         while self.running:
+            if time.monotonic() - last_recovery >= 15:
+                self.database.recover_interrupted_jobs(
+                    kinds=self.kinds,
+                    stale_after_seconds=self.STALE_JOB_GRACE_SECONDS,
+                )
+                last_recovery = time.monotonic()
             job = self.database.claim_next_job(kinds=self.kinds)
             if not job:
                 if once:

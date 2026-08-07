@@ -726,6 +726,43 @@
         }
       }
     },
+    "/api/accounts/by-login/{login}/historical-funds": {
+      "get": {
+        "summary": "Historical Funds Payload",
+        "operationId": "historical_funds_payload_api_accounts_by_login__login__historical_funds_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/accounts/by-login/{login}/automation-analysis": {
       "get": {
         "summary": "Automation",
@@ -784,6 +821,68 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kuzu-demo": {
+      "get": {
+        "summary": "Kuzu Demo Page",
+        "operationId": "kuzu_demo_page_kuzu_demo_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/kuzu-demo/graph": {
+      "get": {
+        "summary": "Kuzu Demo Graph",
+        "operationId": "kuzu_demo_graph_api_kuzu_demo_graph_get",
+        "parameters": [
+          {
+            "name": "depth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 3,
+              "minimum": 1,
+              "default": 2,
+              "title": "Depth"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Kuzu Demo Graph Api Kuzu Demo Graph Get"
+                }
               }
             }
           },

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import gc
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
+import kuzu
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from kdesk.api.account_app import create_account_app
+from kdesk.api.kline_app import create_kline_app
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
 from kdesk.settings import Settings
 
@@ -44,6 +48,17 @@ def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:
         ledger = client.get("/api/accounts/by-login/302360/ledger").json()
         assert ledger["marked"] is True
         assert ledger["record"]["建议动作"] == "M"
+
+
+def test_kline_upload_page_chains_inspection_to_generation(tmp_path: Path) -> None:
+    app = create_kline_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "startGeneration" in response.text
+    assert "/api/jobs/'+inspect.id+'/generate" in response.text
+    assert "打开生成图表" in response.text
 
 
 def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
@@ -89,6 +104,57 @@ def test_account_detail_always_uses_legacy_page(tmp_path: Path, monkeypatch) -> 
         response = client.get("/account/302360?platform=MT5&server=DBG%20MT5")
         assert response.status_code == 200
         assert "legacy-account:302360" in response.text
+
+
+def test_historical_funds_api_replays_read_only_source_facts(tmp_path: Path, monkeypatch) -> None:
+    def fake_call(_self, name, *args):
+        assert name == "account_historical_funds_source_payload"
+        return {
+            "available": True,
+            "account": "302360",
+            "platform": "MT4",
+            "server": "DBG MT4 CN1",
+            "source": "fixture",
+            "currency": "USD",
+            "moneyScale": 1,
+            "coverage": {"eventRows": 2, "dailyAnchors": 1, "completeHistory": True},
+            "anchors": [{"timestamp": "2026-01-01 00:00:00", "balance": 100, "credit": 20, "equity": 120}],
+            "events": [
+                {"id": "1", "timestamp": "2026-01-01 01:00:00", "CMD": 6, "PROFIT": 100, "COMMENT": "DEP-EO-1"},
+                {"id": "2", "timestamp": "2026-01-01 02:00:00", "CMD": 7, "PROFIT": 10, "COMMENT": "BONUS"},
+            ],
+        }
+
+    monkeypatch.setattr(LegacyBridge, "call", fake_call)
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get("/api/accounts/by-login/302360/historical-funds?platform=MT4&server=DBG%20MT4%20CN1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["available"] is True
+    assert payload["summary"]["externalDeposit"] == 100
+    assert payload["summary"]["bonusGranted"] == 10
+    assert payload["events"][-1]["balance"] == 200
+    assert payload["events"][-1]["credit"] == 30
+
+
+def test_historical_funds_api_returns_a_readable_failure_without_database_detail(tmp_path: Path, monkeypatch) -> None:
+    def failing_call(_self, _name, *_args):
+        raise RuntimeError("source timeout should stay in server logs")
+
+    monkeypatch.setattr(LegacyBridge, "call", failing_call)
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get("/api/accounts/by-login/302360/historical-funds?platform=MT5&server=DBG%20MT5")
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["available"] is False
+    assert payload["error"] == "历史资金数据查询失败，请检查数据库连接"
+    assert "timeout" not in payload["error"]
 
 
 def test_relationship_network_returns_facts_with_partial_source_coverage(tmp_path: Path, monkeypatch) -> None:
@@ -156,6 +222,65 @@ def test_relationship_network_returns_facts_with_partial_source_coverage(tmp_pat
         "account_risk_panels_payload", "account_login_ips_payload", "account_copy_origins_payload",
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload",
     }
+
+
+def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:
+    graph_path = tmp_path / "relationship_graph_demo.kuzu"
+    database = kuzu.Database(str(graph_path))
+    connection = kuzu.Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Entity("
+        "id STRING, kind STRING, label STRING, platform STRING, server STRING, "
+        "detail STRING, subject BOOL, PRIMARY KEY(id))"
+    )
+    connection.execute(
+        "CREATE REL TABLE Evidence("
+        "FROM Entity TO Entity, id STRING, kind STRING, label STRING, evidence STRING)"
+    )
+    connection.execute(
+        "CREATE (:Entity {id: 'account:2013674', kind: 'account', label: '2013674', "
+        "platform: 'MT5', server: 'DBG CN MT5', detail: '', subject: true})"
+    )
+    connection.execute(
+        "CREATE (:Entity {id: 'ea:demo', kind: 'ea_feature', label: 'Demo EA', "
+        "platform: 'MT5', server: 'DBG CN MT5', detail: 'EA / 路由特征', subject: false})"
+    )
+    connection.execute(
+        "CREATE (:Entity {id: 'account:2013675', kind: 'account', label: '2013675', "
+        "platform: 'MT5', server: 'DBG CN MT5', detail: '净盈亏：12 USD', subject: false})"
+    )
+    connection.execute(
+        "MATCH (subject:Entity), (feature:Entity) WHERE subject.id = 'account:2013674' AND feature.id = 'ea:demo' "
+        "CREATE (subject)-[:Evidence {id: 'subject-ea', kind: 'ea_feature', label: 'EA / 路由特征', "
+        "evidence: '[\"匹配规则：Comment + ExpertID\"]'}]->(feature)"
+    )
+    connection.execute(
+        "MATCH (feature:Entity), (peer:Entity) WHERE feature.id = 'ea:demo' AND peer.id = 'account:2013675' "
+        "CREATE (feature)-[:Evidence {id: 'ea-peer', kind: 'ea_feature', label: 'EA 特征匹配', "
+        "evidence: '[\"Comment matched\"]'}]->(peer)"
+    )
+    connection.close()
+    del connection
+    del database
+    gc.collect()
+
+    settings = replace(make_test_settings(tmp_path), kuzu_demo_path=graph_path)
+    app = create_account_app(settings)
+    with TestClient(app) as client:
+        page = client.get('/kuzu-demo')
+        graph = client.get('/api/kuzu-demo/graph?depth=2')
+        invalid_depth = client.get('/api/kuzu-demo/graph?depth=4')
+
+    assert page.status_code == 200
+    assert 'Kuzu 关系图试用' in page.text
+    assert graph.status_code == 200
+    payload = graph.json()
+    assert payload['source'] == 'kuzu-local-cache'
+    assert payload['depth'] == 2
+    assert payload['summary'] == {'entityCount': 3, 'relationshipCount': 2}
+    assert {entity['label'] for entity in payload['entities']} == {'2013674', 'Demo EA', '2013675'}
+    assert payload['relationships'][0]['evidence']
+    assert invalid_depth.status_code == 422
 
 
 def test_vue_workbench_forces_account_links_through_the_server() -> None:

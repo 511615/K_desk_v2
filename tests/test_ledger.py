@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Barrier, Thread
 
 from openpyxl import load_workbook
+from sqlalchemy import text
 
 from kdesk.application.ledger_service import LedgerService
 from kdesk.infrastructure.database import Database
@@ -112,6 +114,57 @@ def test_worker_recovery_is_scoped_to_its_queue(tmp_path: Path) -> None:
     assert database.recover_interrupted_jobs(kinds=("toxic_check",)) == 1
     assert database.get_job(toxic["id"])["status"] == "queued"
     assert database.get_job(discovery["id"])["status"] == "running"
+
+
+def test_worker_recovery_does_not_reset_a_fresh_lease(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    created = database.create_job("push_discovery", {"days": 7})
+    claimed = database.claim_next_job(kinds=("push_discovery",))
+    assert claimed is not None
+
+    assert database.recover_interrupted_jobs(kinds=("push_discovery",), stale_after_seconds=180) == 0
+    assert database.get_job(created["id"])["status"] == "running"
+
+    with database.session() as session:
+        session.execute(
+            text("update job_runs set heartbeat_at = '2020-01-01 00:00:00' where job_id = :job_id"),
+            {"job_id": created["id"]},
+        )
+    assert database.recover_interrupted_jobs(kinds=("push_discovery",), stale_after_seconds=180) == 1
+    assert database.get_job(created["id"])["status"] == "queued"
+
+
+def test_touch_job_refreshes_only_running_jobs(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    created = database.create_job("push_discovery", {"days": 7})
+    database.touch_job(created["id"])
+    assert database.get_job(created["id"])["heartbeat_at"] == ""
+    database.claim_next_job(kinds=("push_discovery",))
+    database.touch_job(created["id"])
+    assert database.get_job(created["id"])["heartbeat_at"]
+
+
+def test_concurrent_workers_claim_a_job_once(tmp_path: Path) -> None:
+    database = Database(tmp_path / "jobs.sqlite")
+    database.create_schema()
+    created = database.create_job("push_discovery", {"days": 7})
+    barrier = Barrier(2)
+    claims: list[dict | None] = []
+
+    def claim() -> None:
+        barrier.wait()
+        claims.append(database.claim_next_job(kinds=("push_discovery",)))
+
+    threads = [Thread(target=claim) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sum(item is not None for item in claims) == 1
+    assert database.get_job(created["id"])["attempts"] == 1
 
 
 def test_ledger_service_batch_import_preview_and_delete(tmp_path: Path) -> None:

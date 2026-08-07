@@ -4,9 +4,10 @@ import json
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, create_engine, event, select
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, create_engine, event, func, select, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from kdesk.domain.ledger import DEFAULT_ACTIONS, LedgerRecord, now_text
@@ -342,6 +343,7 @@ class Database:
             "created_at": row.created_at,
             "started_at": row.started_at,
             "finished_at": row.finished_at,
+            "heartbeat_at": row.heartbeat_at,
             "cancel_requested": row.cancel_requested,
         }
 
@@ -371,19 +373,31 @@ class Database:
     def claim_next_job(self, *, kinds: tuple[str, ...] | None = None) -> dict | None:
         if kinds is not None and not kinds:
             return None
-        with self.session() as session:
-            statement = select(JobRunRow).where(JobRunRow.status == "queued")
+        # Select and claim in one write transaction. Multiple discovery Workers may
+        # poll concurrently; the conditional update ensures only one can win.
+        now = now_text()
+        with self.engine.begin() as connection:
+            statement = select(JobRunRow.job_id).where(JobRunRow.status == "queued")
             if kinds is not None:
                 statement = statement.where(JobRunRow.kind.in_(kinds))
-            row = session.scalar(statement.order_by(JobRunRow.created_at))
-            if not row:
+            job_id = connection.execute(statement.order_by(JobRunRow.created_at).limit(1)).scalar_one_or_none()
+            if not job_id:
                 return None
-            row.status = "running"
-            row.started_at = row.started_at or now_text()
-            row.heartbeat_at = now_text()
-            row.attempts += 1
-            session.flush()
-            return self._job_dict(row)
+            claimed = connection.execute(
+                update(JobRunRow)
+                .where(JobRunRow.job_id == job_id, JobRunRow.status == "queued")
+                .values(
+                    status="running",
+                    started_at=func.coalesce(JobRunRow.started_at, now),
+                    heartbeat_at=now,
+                    attempts=JobRunRow.attempts + 1,
+                )
+            )
+            if claimed.rowcount != 1:
+                return None
+        with self._session_factory() as session:
+            row = session.get(JobRunRow, job_id)
+            return self._job_dict(row) if row else None
 
     def update_job(self, job_id: str, *, status: str | None = None, progress: int | None = None, result: dict | None = None, error: str | None = None, event_message: str = "", event_level: str = "info") -> None:
         with self.session() as session:
@@ -404,6 +418,13 @@ class Database:
             if event_message:
                 session.add(JobEventRow(job_id=job_id, created_at=now_text(), level=event_level, message=event_message[-8000:]))
 
+    def touch_job(self, job_id: str) -> None:
+        """Refresh a running job lease without adding a visible progress event."""
+        with self.session() as session:
+            row = session.get(JobRunRow, job_id)
+            if row and row.status == "running":
+                row.heartbeat_at = now_text()
+
     def request_job_cancel(self, job_id: str) -> dict | None:
         with self.session() as session:
             row = session.get(JobRunRow, job_id)
@@ -417,16 +438,32 @@ class Database:
             session.flush()
             return self._job_dict(row)
 
-    def recover_interrupted_jobs(self, *, kinds: tuple[str, ...] | None = None) -> int:
+    def recover_interrupted_jobs(
+        self,
+        *,
+        kinds: tuple[str, ...] | None = None,
+        stale_after_seconds: int = 0,
+    ) -> int:
         if kinds is not None and not kinds:
             return 0
+        if stale_after_seconds < 0:
+            raise ValueError("stale_after_seconds must be non-negative")
         recovered = 0
+        now = datetime.now()
         with self.session() as session:
             statement = select(JobRunRow).where(JobRunRow.status == "running")
             if kinds is not None:
                 statement = statement.where(JobRunRow.kind.in_(kinds))
             rows = session.scalars(statement).all()
             for row in rows:
+                if stale_after_seconds:
+                    heartbeat_text = row.heartbeat_at or row.started_at or row.created_at
+                    try:
+                        heartbeat = datetime.strptime(heartbeat_text, "%Y-%m-%d %H:%M:%S")
+                    except (TypeError, ValueError):
+                        heartbeat = datetime.min
+                    if now - heartbeat < timedelta(seconds=stale_after_seconds):
+                        continue
                 if row.cancel_requested:
                     row.status = "cancelled"
                     row.finished_at = now_text()
@@ -437,6 +474,7 @@ class Database:
                     row.status = "failed"
                     row.finished_at = now_text()
                     row.error = "Worker interrupted after maximum attempts"
-                session.add(JobEventRow(job_id=row.job_id, created_at=now_text(), level="warning", message="Worker重启，任务状态已恢复"))
+                message = "Worker租约超时，任务状态已恢复" if stale_after_seconds else "Worker重启，任务状态已恢复"
+                session.add(JobEventRow(job_id=row.job_id, created_at=now_text(), level="warning", message=message))
                 recovered += 1
         return recovered

@@ -68,6 +68,20 @@ aggregate in ten-account indexed batches. The DBG CN non-candidate regression `2
 omitted-date request must report `query.fullHistory=true`.
 MT4 account-detail regressions require open-position sentinel rows (`CLOSE_TIME=1970-01-01`) to be
 excluded from closed-order counts, holding duration, daily P/L and closed profit.
+Historical-funds regressions require an additive legacy-toolbar control immediately after Toxic with
+working open, close and event paging handlers. MT4 replay uses close time for closed market rows,
+keeps pre-anchor events with unknown balance/Credit/equity, classifies `TRS-`/`TFM-`/`TFH-`/`CRM-T`
+as internal rather than external cash, and never creates intraday equity from a balance event. MT4
+5005187 must retain its forced close, following `RST` clear and later `TRS` transfers separately;
+MT4 5012309 must retain deposit, Credit grant/removal and clear rows. An MT5 cash/Action-3 Credit
+fixture must preserve timestamp order and USD/USC scaling. Stop Out (`MT4 REASON=5`, `MT5 Reason=6`)
+and explicit negative-balance clear rows must each expose a clickable liquidation marker; stop loss
+and ordinary losses must not. All live validation is read-only.
+DBG GB MT5 account 3066617 is the MT5 daily-view timeout regression: the historical endpoint must
+not execute the unindexed daily-snapshot query, must retain the complete indexed deal ledger and
+current-account-calibrated balance/Credit replay, return HTTP 200 with `dailyAnchorsAvailable=false`, and explain that historic equity snapshots are
+unavailable. A total account-history failure remains HTTP 503 but returns a sanitized application
+error rather than exposing raw database detail or `HTTP 503` as the only user-facing explanation.
 Relationship-network regressions require the legacy entry button to remain after EA and before Toxic,
 with working open, reset and close handlers. API fixtures must retain typed evidence from every
 available source when another source fails, preserve selected filters, expose no risk score or
