@@ -120,7 +120,11 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 
 ### Persistent jobs
 
-- `POST /api/kline/generate-from-db`
+- `POST /api/kline/generate-from-db` - existing request fields remain compatible; additive boolean
+  `includeTimeline` defaults to `false` and embeds the cached factual Balance/Credit replay only
+  when selected. Additive `refreshTimelineCache` defaults to `false` and is effective only with
+  `includeTimeline=true`; it refreshes the complete local account-route replay cache through the
+  existing read-only source.
 - `GET /api/kline/jobs/{job_id}`
 - `GET /api/toxic/check-types`
 - `POST /api/accounts/by-login/{login}/toxic-checks`

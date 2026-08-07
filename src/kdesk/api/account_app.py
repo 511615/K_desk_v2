@@ -631,7 +631,11 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             "symbol": str(payload.get("symbol", "")),
             "start": str(payload.get("start", "")),
             "end": str(payload.get("end", "")),
+            "includeTimeline": _payload_bool(payload, "includeTimeline", False),
+            "refreshTimelineCache": _payload_bool(payload, "refreshTimelineCache", False),
         }
+        if not clean_payload["includeTimeline"]:
+            clean_payload["refreshTimelineCache"] = False
         key = "kline:" + json.dumps(clean_payload, sort_keys=True, ensure_ascii=False)
         job = database.create_job("kline_from_database", clean_payload, idempotency_key=key)
         return {"ok": True, "job": job}

@@ -207,3 +207,20 @@ const canvas = document.getElementById('chart');</script></body></html>'''
             check=False,
         )
         assert check.returncode == 0, check.stderr
+
+
+def test_database_kline_timeline_is_opt_in_and_reuses_a_full_history_cache() -> None:
+    root = Path(__file__).resolve().parents[1]
+    legacy = (root / "legacy" / "apps" / "problem_account_registry" / "app.py").read_text(encoding="utf-8")
+    api = (root / "src" / "kdesk" / "api" / "account_app.py").read_text(encoding="utf-8")
+    worker = (root / "src" / "kdesk" / "worker" / "runner.py").read_text(encoding="utf-8")
+
+    assert "KlineTimelineCache(KLINE_TIMELINE_CACHE_DIR).get_or_build" in legacy
+    assert '"includeTimeline": payload_bool(payload.get("includeTimeline"))' in legacy
+    assert '"refreshTimelineCache": payload_bool(payload.get("refreshTimelineCache"))' in legacy
+    assert "if timeline_path is not None:" in legacy
+    assert 'id="includeTimeline"' in legacy
+    assert "时间留空即按所选账号和品种的全量历史生成" in legacy
+    assert '"includeTimeline": _payload_bool(payload, "includeTimeline", False)' in api
+    assert '"refreshTimelineCache": _payload_bool(payload, "refreshTimelineCache", False)' in api
+    assert '"includeTimeline", "refreshTimelineCache"' in worker

@@ -57,6 +57,9 @@ OUT_DIR = Path(os.environ.get("ACCOUNT_REGISTRY_DATA_DIR", ROOT / "local_data" /
 QUICK_ACTIONS_PATH = Path(os.environ.get("ACCOUNT_QUICK_ACTIONS_PATH", OUT_DIR / "quick_actions.json"))
 DEFAULT_KLINE_OUT_DIR = LEGACY_RISK_ROOT / "output_data" if LEGACY_RISK_ROOT.exists() else ROOT / "outputs" / "kline"
 KLINE_OUT_DIR = Path(os.environ.get("TRADE_KLINE_OUT_DIR", DEFAULT_KLINE_OUT_DIR))
+KLINE_TIMELINE_CACHE_DIR = Path(
+    os.environ.get("KDESK_KLINE_TIMELINE_CACHE_DIR", KLINE_OUT_DIR.parent / "cache" / "kline_timeline")
+)
 TRADE_KLINE_WEB_URL = os.environ.get("TRADE_KLINE_WEB_URL", "http://127.0.0.1:8766")
 TRADE_DB_PATH = Path(os.environ.get("ACCOUNT_TRADE_DB_PATH", LEGACY_RISK_ROOT / "output_data" / "account_trade_lookup" / "trades.sqlite"))
 TRADE_DB_SOURCE = os.environ.get("ACCOUNT_TRADE_DB_SOURCE", "auto").lower()
@@ -450,6 +453,16 @@ def read_source_text() -> str:
 
 def normalize_text(value: object) -> str:
     return str(value or "").strip()
+
+
+def payload_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    return bool(value)
 
 
 def uniq_join(values: list[str], sep: str = "；") -> str:
@@ -7714,62 +7727,80 @@ def parse_generated_html_path(output: str) -> Path | None:
     return None
 
 
+def unavailable_kline_timeline(reason: str) -> dict:
+    return {
+        "version": 1,
+        "available": False,
+        "reason": reason,
+        "events": [],
+        "curve": [],
+        "liquidationPoints": [],
+        "summary": {"currency": "USD", "eventCount": 0, "allEventCount": 0},
+        "openingState": {"timestamp": "", "balance": None, "credit": None, "known": False},
+    }
+
+
 def build_db_kline_timeline(account: str, filters: dict) -> dict:
-    """Build a read-only Balance/Credit replay for the same routed K-line account."""
+    """Slice a cached full-account Balance/Credit replay for a K-line chart."""
     route_filters = {
         "platform": normalize_text(filters.get("platform")),
         "server": normalize_text(filters.get("server")),
     }
     try:
-        raw = account_historical_funds_source_payload(account, route_filters)
-        if not raw.get("available"):
-            return {
-                "version": 1,
-                "available": False,
-                "reason": normalize_text(raw.get("reason")) or "账户资金时间线不可用",
-                "events": [],
-                "curve": [],
-                "liquidationPoints": [],
-                "summary": {"currency": "USD", "eventCount": 0, "allEventCount": 0},
-                "openingState": {"timestamp": "", "balance": None, "credit": None, "known": False},
-            }
+        from kdesk.application.kline_timeline_cache import KlineTimelineCache
         from kdesk.domain.historical_funds import build_historical_funds
         from kdesk.domain.kline_timeline import build_kline_timeline
 
-        replay = build_historical_funds(
-            platform=raw.get("platform", ""),
-            currency=raw.get("currency", "USD"),
-            money_scale=numeric_value(raw.get("moneyScale")) or 1.0,
-            events=raw.get("events", []),
-            anchors=raw.get("anchors", []),
-            current_anchor=raw.get("currentAnchor"),
+        def build_full_replay() -> dict:
+            raw = account_historical_funds_source_payload(account, route_filters)
+            if not raw.get("available"):
+                return {"available": False, "reason": normalize_text(raw.get("reason")) or "账户资金时间线不可用"}
+            return {
+                "available": True,
+                "replay": build_historical_funds(
+                    platform=raw.get("platform", ""),
+                    currency=raw.get("currency", "USD"),
+                    money_scale=numeric_value(raw.get("moneyScale")) or 1.0,
+                    events=raw.get("events", []),
+                    anchors=raw.get("anchors", []),
+                    current_anchor=raw.get("currentAnchor"),
+                ),
+                "source": {
+                    "platform": raw.get("platform", ""),
+                    "server": raw.get("server", ""),
+                    "source": raw.get("source", ""),
+                    "coverage": raw.get("coverage", {}),
+                },
+            }
+
+        cached, cache_status = KlineTimelineCache(KLINE_TIMELINE_CACHE_DIR).get_or_build(
+            account,
+            route_filters["platform"],
+            route_filters["server"],
+            build_full_replay,
+            refresh=bool(filters.get("refreshTimelineCache")),
         )
+        if not cached.get("available"):
+            return unavailable_kline_timeline(normalize_text(cached.get("reason")) or "账户资金时间线不可用")
+        source = cached.get("source") if isinstance(cached.get("source"), dict) else {}
         timeline = build_kline_timeline(
-            replay,
+            cached["replay"],
             start=normalize_text(filters.get("start")),
             end=normalize_text(filters.get("end")),
         )
         timeline.update({
             "available": True,
             "account": normalize_text(account),
-            "platform": raw.get("platform", ""),
-            "server": raw.get("server", ""),
-            "source": raw.get("source", ""),
-            "coverage": raw.get("coverage", {}),
+            "platform": source.get("platform", route_filters["platform"]),
+            "server": source.get("server", route_filters["server"]),
+            "source": source.get("source", ""),
+            "coverage": source.get("coverage", {}),
+            "cacheStatus": cache_status,
         })
         return timeline
     except Exception as exc:
         logger.warning("K-line funds timeline unavailable for %s: %s", account, exc)
-        return {
-            "version": 1,
-            "available": False,
-            "reason": "账户资金时间线读取失败",
-            "events": [],
-            "curve": [],
-            "liquidationPoints": [],
-            "summary": {"currency": "USD", "eventCount": 0, "allEventCount": 0},
-            "openingState": {"timestamp": "", "balance": None, "credit": None, "known": False},
-        }
+        return unavailable_kline_timeline("账户资金时间线读取失败")
 
 
 def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
@@ -7787,10 +7818,14 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
         )
         update_kline_job(job_id, message=f"已读取 {len(rows)} 条订单，正在写入标准 CSV", percent=20)
         trades_path, stem = write_trades_csv_from_db(account, rows)
-        update_kline_job(job_id, message="正在读取账户资金与 Credit 时间线", percent=27)
-        timeline = build_db_kline_timeline(account, filters)
-        timeline_path = KLINE_OUT_DIR / f"{stem}_timeline.json"
-        timeline_path.write_text(json.dumps(timeline, ensure_ascii=False), encoding="utf-8")
+        include_timeline = bool(filters.get("includeTimeline"))
+        timeline = None
+        timeline_path = None
+        if include_timeline:
+            update_kline_job(job_id, message="正在读取或复用全量资金与 Credit 缓存", percent=27)
+            timeline = build_db_kline_timeline(account, filters)
+            timeline_path = KLINE_OUT_DIR / f"{stem}_timeline.json"
+            timeline_path.write_text(json.dumps(timeline, ensure_ascii=False), encoding="utf-8")
         update_kline_job(job_id, stem=stem, tradesCsv=str(trades_path), message="正在调用 K 线生成脚本", percent=35)
         cmd = [
             str(K_DESK_PYTHON),
@@ -7807,9 +7842,9 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
             normalize_text(filters.get("platform")),
             "--server",
             normalize_text(filters.get("server")),
-            "--timeline-json",
-            str(timeline_path),
         ]
+        if timeline_path is not None:
+            cmd.extend(["--timeline-json", str(timeline_path)])
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env.setdefault("K_DESK_ROOT", str(ROOT))
@@ -7861,13 +7896,18 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
                 symbols=generation.get("symbols") or [],
                 failures=generation.get("failures") or [],
                 quoteSources=generation.get("quoteSources") or [],
-                timeline={
-                    "available": bool(timeline.get("available")),
-                    "eventCount": timeline.get("summary", {}).get("eventCount", 0),
-                    "allEventCount": timeline.get("summary", {}).get("allEventCount", 0),
-                    "liquidationCount": timeline.get("summary", {}).get("liquidationCount", 0),
-                    "reason": timeline.get("reason", ""),
-                },
+                timeline=(
+                    {
+                        "available": bool(timeline.get("available")),
+                        "eventCount": timeline.get("summary", {}).get("eventCount", 0),
+                        "allEventCount": timeline.get("summary", {}).get("allEventCount", 0),
+                        "liquidationCount": timeline.get("summary", {}).get("liquidationCount", 0),
+                        "reason": timeline.get("reason", ""),
+                        "cacheStatus": timeline.get("cacheStatus", ""),
+                    }
+                    if timeline
+                    else None
+                ),
             )
         else:
             failures = generation.get("failures") or []
@@ -8635,7 +8675,11 @@ class Handler(BaseHTTPRequestHandler):
                 "symbol": normalize_text(payload.get("symbol")),
                 "start": normalize_text(payload.get("start")),
                 "end": normalize_text(payload.get("end")),
+                "includeTimeline": payload_bool(payload.get("includeTimeline")),
+                "refreshTimelineCache": payload_bool(payload.get("refreshTimelineCache")),
             }
+            if not filters["includeTimeline"]:
+                filters["refreshTimelineCache"] = False
             update_kline_job(job_id, status="queued", message="已提交，等待生成", percent=0, account=account, filters=filters, createdAt=now_text())
             threading.Thread(target=run_db_kline_job, args=(job_id, account, filters), daemon=True).start()
             json_response(self, {"ok": True, "job": get_kline_job(job_id)})
@@ -8729,7 +8773,11 @@ class Handler(BaseHTTPRequestHandler):
                 "symbol": normalize_text(payload.get("symbol")),
                 "start": normalize_text(payload.get("start")),
                 "end": normalize_text(payload.get("end")),
+                "includeTimeline": payload_bool(payload.get("includeTimeline")),
+                "refreshTimelineCache": payload_bool(payload.get("refreshTimelineCache")),
             }
+            if not filters["includeTimeline"]:
+                filters["refreshTimelineCache"] = False
             update_kline_job(job_id, status="queued", message="已提交，等待生成", percent=0, account=account, filters=filters, createdAt=now_text())
             threading.Thread(target=run_db_kline_job, args=(job_id, account, filters), daemon=True).start()
             json_response(self, {"ok": True, "job": get_kline_job(job_id)})
@@ -11411,7 +11459,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       <section class="section">
         <div class="section-head"><h2>交易图表</h2><div class="section-sub" id="chartCount"></div></div>
         <div class="chart-product-grid" id="chartProducts"><div class="empty-state">正在解析品种...</div></div>
-        <div class="chart-tools"><div><div class="chart-filter-grid"><label>图表品种<select id="chartSymbol"><option value="">全部品种</option></select></label><label>开始时间<input type="datetime-local" id="chartStart" /></label><label>结束时间<input type="datetime-local" id="chartEnd" /></label></div><div class="muted">K 线生成范围独立于页面指标筛选；平台和服务器沿用上方当前选择。</div><div class="progress"><div id="jobProgress"></div></div><div class="job-text" id="jobText"></div></div><button class="primary" id="generateBtn">生成 K 线图</button></div>
+        <div class="chart-tools"><div><div class="chart-filter-grid"><label>图表品种<select id="chartSymbol"><option value="">全部品种</option></select></label><label>开始时间<input type="datetime-local" id="chartStart" /></label><label>结束时间<input type="datetime-local" id="chartEnd" /></label></div><div class="chart-filter-grid"><label><input type="checkbox" id="includeTimeline" /> 包含资金与 Credit 回放</label><label><input type="checkbox" id="refreshTimelineCache" disabled /> 刷新全量资金缓存</label></div><div class="muted">时间留空即按所选账号和品种的全量历史生成；勾选回放后首次只读读取完整资金历史并缓存，后续生成复用缓存。</div><div class="progress"><div id="jobProgress"></div></div><div class="job-text" id="jobText"></div></div><button class="primary" id="generateBtn">生成 K 线图</button></div>
         <div class="chart-list" id="charts"></div>
       </section>
       <div class="dashboard-column">
@@ -11913,7 +11961,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     async function saveStatusOnly(){if($("status").disabled)return;const accounts=targetAccounts(),value=$("status").value;$("status").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号状态...`:'正在保存状态...';try{await markRequest({status:value},accounts);$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent='状态已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("status").disabled=false;}}
     async function save(){const action=state.selectedAction==='自定义'?($("customAction").value.trim()||'自定义'):state.selectedAction,accounts=targetAccounts();$("saveBtn").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号...`:'正在保存...';try{await markRequest({action,group:$("group").value.trim(),tags:$("tags").value.trim(),note:$("note").value.trim(),status:$("status").value,owner:$("owner").value.trim()},accounts);applyLocalAction(action,accounts);state.formDirty=false;$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent=accounts.length>1?`已保存 ${accounts.length} 个账号`:'已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("saveBtn").disabled=false;}}
     function preview(url){$("previewFrame").src=url;$("previewOpen").href=url;$("previewDialog").showModal();}
-    async function generate(){const start=databaseTime($("chartStart").value),end=databaseTime($("chartEnd").value,true);if(start&&end&&start>end){$("jobText").textContent='开始时间不能晚于结束时间';return;}$("generateBtn").disabled=true;$("jobText").textContent='正在提交生成任务...';$("jobProgress").style.width='3%';try{const current=filters(),payload={account:LOGIN,platform:current.platform,server:current.server,symbol:$("chartSymbol").value,start,end};const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});$("jobText").textContent=`已提交 · ${payload.symbol||'全部品种'} · ${start||'最早'} 至 ${end||'最新'}`;poll(data.job.id);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
+    async function generate(){const start=databaseTime($("chartStart").value),end=databaseTime($("chartEnd").value,true);if(start&&end&&start>end){$("jobText").textContent='开始时间不能晚于结束时间';return;}$("generateBtn").disabled=true;$("jobText").textContent='正在提交生成任务...';$("jobProgress").style.width='3%';try{const current=filters(),includeTimeline=$("includeTimeline").checked,payload={account:LOGIN,platform:current.platform,server:current.server,symbol:$("chartSymbol").value,start,end,includeTimeline,refreshTimelineCache:includeTimeline&&$("refreshTimelineCache").checked};const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});$("jobText").textContent=`已提交 · ${payload.symbol||'全部品种'} · ${start||'全量'} 至 ${end||'全量'}${includeTimeline?' · 含资金回放':''}`;poll(data.job.id);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     async function poll(id){clearTimeout(state.jobTimer);try{const data=await json(`/api/kline/jobs/${encodeURIComponent(id)}`),job=data.job||{};$("jobProgress").style.width=`${Math.max(0,Math.min(100,Number(job.percent||0)))}%`;$("jobText").textContent=[job.message,job.elapsedSeconds?`${job.elapsedSeconds}s`:''].filter(Boolean).join(' · ');if(job.status==='done'){if(job.chart){state.detail.charts=[job.chart,...(state.detail.charts||[]).filter(c=>c.name!==job.chart.name)];renderCharts(state.detail.charts);preview(job.chart.url);}$("generateBtn").disabled=false;return;}if(job.status==='failed'||job.status==='missing'){$("generateBtn").disabled=false;return;}state.jobTimer=setTimeout(()=>poll(id),1000);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     function toxicMode(){return document.querySelector('input[name="toxicMode"]:checked')?.value||'selected';}
     function renderToxicSelector(){
@@ -12054,7 +12102,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         state.toxic.jobTimer=setTimeout(()=>pollToxic(id),800);
       }catch(err){$("toxicStatus").textContent=err.message;state.toxic.running=false;$("startToxic").disabled=false;$("toxicBtn").disabled=false;}
     }
-    $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("historicalFundsBtn").addEventListener('click',openHistoricalFunds);$("historicalFundsPrev").addEventListener('click',()=>{if(state.historicalFunds.page>1){state.historicalFunds.page--;renderHistoricalFundsEvents();}});$("historicalFundsNext").addEventListener('click',()=>{const pages=Math.ceil((state.historicalFunds.data?.events?.length||0)/state.historicalFunds.pageSize);if(state.historicalFunds.page<pages){state.historicalFunds.page++;renderHistoricalFundsEvents();}});$("closeHistoricalFunds").addEventListener('click',()=>$("historicalFundsDialog").close());$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
+    $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("includeTimeline").addEventListener('change',event=>{$("refreshTimelineCache").disabled=!event.target.checked;if(!event.target.checked)$("refreshTimelineCache").checked=false;});$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("historicalFundsBtn").addEventListener('click',openHistoricalFunds);$("historicalFundsPrev").addEventListener('click',()=>{if(state.historicalFunds.page>1){state.historicalFunds.page--;renderHistoricalFundsEvents();}});$("historicalFundsNext").addEventListener('click',()=>{const pages=Math.ceil((state.historicalFunds.data?.events?.length||0)/state.historicalFunds.pageSize);if(state.historicalFunds.page<pages){state.historicalFunds.page++;renderHistoricalFundsEvents();}});$("closeHistoricalFunds").addEventListener('click',()=>$("historicalFundsDialog").close());$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
     ["customAction","group","tags","note","owner"].forEach(id=>$(id).addEventListener('input',()=>{state.formDirty=true;}));
     $("orderDetails").addEventListener('toggle',()=>{if($("orderDetails").open&&!state.orders.loaded)loadOrders(1);});$("orderPrev").addEventListener('click',()=>loadOrders(state.orders.page-1));$("orderNext").addEventListener('click',()=>loadOrders(state.orders.page+1));
     loadLedger();load().catch(err=>{$("metricStatus").textContent=err.message;});loadIps();

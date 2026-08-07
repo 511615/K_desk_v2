@@ -230,7 +230,10 @@ class Worker:
     def _kline_from_database(self, job: dict) -> dict:
         payload = job["payload"]
         legacy = self.legacy.module()
-        filters = {key: payload.get(key, "") for key in ("platform", "server", "symbol", "start", "end")}
+        filters = {
+            key: payload.get(key, "")
+            for key in ("platform", "server", "symbol", "start", "end", "includeTimeline", "refreshTimelineCache")
+        }
         self._run_legacy_monitored(
             job,
             lambda: legacy.run_db_kline_job(job["id"], payload["account"], filters),
