@@ -492,6 +492,8 @@ to remain monitor-only even in live reconciliation, retain a uniquely recoverabl
 remove the monitor-only mapping after its source close without sending a Demo order.
 Holding-statistics regressions force MT5 Login and time-window subdivision, reconstruct a Position
 whose opening and close fall in adjacent windows, and require its exact duration and sample count.
+Governed Full verification imports the dashboard API from the active worktree's `src` directory,
+so another checkout's editable installation cannot satisfy these assertions with stale code.
 
 ## Manual risk controls
 

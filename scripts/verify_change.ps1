@@ -60,7 +60,11 @@ if (Test-Path -LiteralPath $CopyPoolRuntime) {
 }
 
 if ($Mode -in @('Full', 'Release')) {
-    Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'pytest') -Label 'Python and legacy tests'
+    $rootPythonPath = Join-Path $Root 'src'
+    if ($env:PYTHONPATH) {
+        $rootPythonPath = "$rootPythonPath;$env:PYTHONPATH"
+    }
+    Invoke-NativeChecked -FilePath $Python -Arguments @('-m', 'pytest') -Label 'Python and legacy tests' -Environment @{ PYTHONPATH = $rootPythonPath }
     if (Test-Path -LiteralPath $CopyPoolRuntime) {
         $runtimePythonPath = "$CopyPoolRuntime;$CopyPoolExternalDeps"
         if ($env:PYTHONPATH) {

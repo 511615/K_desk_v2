@@ -6,6 +6,8 @@
   Producer correctness-only Ruff selectors and focused tests.
 - Full: Fast plus all pytest/legacy tests, the versioned copy-pool Producer regression suite,
   frontend Vitest and production build, OpenAPI and architecture checks.
+  Root pytest prepends the current worktree's `src` directory to `PYTHONPATH`, preventing an
+  editable package installed by another worktree from validating stale code.
 - Release: Full plus explicitly configured read-only live contracts, version/release readiness and
   production health acceptance, including the Playwright legacy-detail route test.
 

@@ -63,6 +63,8 @@ reconcile-drift retention with current hard health gates intact, missing-delay f
 account-currency spread conversion, source-isolated staleness, detached hourly collection, precise
 event reasons and explicit-Demo minimum-lot behavior. Fast and Full verification are required
 before promotion.
+Full verification resolves `kdesk` from the current worktree's `src` tree so API assertions cannot
+accidentally exercise an editable installation from the running production checkout.
 
 ## Deployment and rollback
 
