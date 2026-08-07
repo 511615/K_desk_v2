@@ -64,7 +64,7 @@ class Settings:
             ).resolve(),
             bootstrap_xlsx=_env_path("KDESK_BOOTSTRAP_XLSX", runtime_dir / "import" / "problematic_accounts.xlsx").resolve(),
             legacy_compat_dir=(runtime_dir / "legacy_compat").resolve(),
-            frontend_dist=(root / "frontend" / "dist").resolve(),
+            frontend_dist=_env_path("KDESK_FRONTEND_DIST", root / "frontend" / "dist").resolve(),
             ui_mode=os.environ.get("KDESK_UI_MODE", "vue").strip().lower() or "vue",
             copy_pool_output_dir=_env_path(
                 "KDESK_COPY_POOL_OUTPUT_DIR",

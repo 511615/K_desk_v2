@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, delayGateLabel, eventExecutionLabel, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
+import { accountPrimaryLabel, accountSecondaryLabel, copyReasonLabel, copyStatusLabel, currentCopyRows, delayGateLabel, eventExecutionLabel, eventPoolTier, formatDuration, linePath, orderActionLabel, phaseLabel, POOL_TIER_TABS, poolTierLabel, poolTierReason, resolvePoolTierRows, schedulerStateLabel, sourceActionLabel, sourceEntryLabel, sourceSideLabel, sourceStateFailed, sourceStateLabel, stepPath, weightReason, weightStateLabel } from './copyPool'
 
 describe('copy pool presentation helpers', () => {
   it('localizes operational states and events', () => {
@@ -15,6 +15,9 @@ describe('copy pool presentation helpers', () => {
     expect(eventExecutionLabel({ decision: 'active', desiredTargetLots: 0.01 })).toBe('跟单成功')
     expect(eventExecutionLabel({ decision: 'risk_rejected', rawTargetLots: 0.0045, desiredTargetLots: 0 })).toBe('未跟单：目标手数低于最小手')
     expect(eventExecutionLabel({ decision: 'signal_expired', desiredTargetLots: 0 })).toBe('未跟单：信号已过期，未复制')
+    expect(eventExecutionLabel({ decision: 'monitor', phase: 'pool_rebuild_failed', desiredTargetLots: 0 })).toBe('未跟单：客户池重建失败，执行暂停，目标手数为 0')
+    expect(eventPoolTier({ decision: 'monitor', phase: 'pool_rebuild_failed' }, 'active')).toBe('execution_suspended')
+    expect(eventPoolTier({ decision: 'monitor', phase: 'live' }, 'active')).toBe('monitor')
     expect(sourceActionLabel('reverse')).toBe('反转')
     expect(sourceSideLabel('BUY')).toBe('买入')
     expect(sourceEntryLabel(1)).toBe('平仓')

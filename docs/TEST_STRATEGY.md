@@ -9,6 +9,10 @@
 - Release: Full plus explicitly configured read-only live contracts, version/release readiness and
   production health acceptance, including the Playwright legacy-detail route test.
 
+Production-version regressions require `Settings` to honor a pinned `KDESK_FRONTEND_DIST` and the
+launcher to reject non-main or dirty checkouts before startup while selecting a full-Git-SHA
+frontend release directory.
+
 ## Representative server matrix
 
 | Logical server | Stable sample |
