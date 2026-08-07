@@ -68,8 +68,16 @@ virtual positions, trading P/L, weights or signals. Accepted pool snapshots requ
 configured route/source key sets and a successful health row for every physical source. Runtime
 state persists effective weights by composite account-product key so a same-alias historical event
 from a prior pool build cannot overwrite the current pool projection. The dashboard multiplies a
-sleeve dynamic weight by the client-specific Demo loss-budget factor before clamping it through the
-sleeve base weight.
+  sleeve dynamic weight by the client-specific Demo loss-budget factor before clamping it through the
+  sleeve base weight.
+
+At runtime every selected physical source receives its own worker in the MT5 or MT4 poll wave; the
+five MT5 sources therefore cannot leave one source queued behind a four-worker ceiling. The MT5 and
+MT4 waves start together, and completed MT5 Deals are applied before the producer waits for the MT4
+snapshot wave. Live connections use two-second connect, read and write timeouts. A timeout closes
+only that physical source connection, preserves its cursor and reconnects on a later cycle. Historical
+pool construction retains the longer complete-read timeout and switches to the bounded live profile
+only after an accepted pool has loaded.
 
 Raw MT4 `OPEN_TIME` is physical-server time, not MySQL session time. AC `mt4_export_syc` uses UTC;
 DBG `crm_cn_mt4_live1` and `crm_cn_mt4_live2` use UTC+3. DBG `crm_vn_mt4_live3` remains in the full

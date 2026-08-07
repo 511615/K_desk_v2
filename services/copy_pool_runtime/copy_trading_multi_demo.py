@@ -5,6 +5,7 @@ import json
 import math
 import signal
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -109,6 +110,9 @@ CLIENT_RISK_REFRESH_SECONDS = 10.0
 REBUILD_RETRY_SECONDS = 60.0
 CLIENT_PAUSE_SECONDS = 2 * 60 * 60
 CLIENT_RECOVERY_SHADOW_SECONDS = 15 * 60
+REALTIME_DB_CONNECT_TIMEOUT_SECONDS = 2
+REALTIME_DB_READ_TIMEOUT_SECONDS = 2
+REALTIME_DB_WRITE_TIMEOUT_SECONDS = 2
 
 
 def atomic_csv(path: Path, frame: pd.DataFrame, *, encoding: str) -> None:
@@ -3026,6 +3030,26 @@ class MultiSourceLiveService(LiveService):
         )
         self.log("All-source daily pool rebuild completed; recovery shadow started.")
 
+    def _poll_source_cycle(
+        self,
+        poll_executor: ThreadPoolExecutor,
+    ) -> tuple[list[str], list[str]]:
+        """Poll MT5 and MT4 together, applying MT5 events as soon as they are ready."""
+        assert self.portfolio is not None
+        mt5_future = poll_executor.submit(
+            self.db.poll_mt5_events,
+            self.portfolio.cursors,
+        )
+        mt4_future = poll_executor.submit(self.db.poll_mt4_positions)
+
+        events, mt5_errors = mt5_future.result()
+        self.apply_event_batch(events)
+
+        snapshots, mt4_errors = mt4_future.result()
+        for source_key, rows in snapshots.items():
+            self.apply_mt4_snapshot(source_key, rows)
+        return mt5_errors, mt4_errors
+
     def run(self) -> None:
         self.db.connect()
         self.load_pool(force_rebuild=self.args.force_rebuild)
@@ -3036,6 +3060,11 @@ class MultiSourceLiveService(LiveService):
             )
             self.db.close()
             return
+        self.db.configure_realtime_timeouts(
+            connect_seconds=REALTIME_DB_CONNECT_TIMEOUT_SECONDS,
+            read_seconds=REALTIME_DB_READ_TIMEOUT_SECONDS,
+            write_seconds=REALTIME_DB_WRITE_TIMEOUT_SECONDS,
+        )
         self.mt.initialize()
         self.product_execution = self.mt.configure_symbols(self.current_targets)
         account = self.mt.account()
@@ -3063,73 +3092,70 @@ class MultiSourceLiveService(LiveService):
         self.write_status()
         started = time.monotonic()
         try:
-            while self.running:
-                if self.args.run_seconds and time.monotonic() - started >= self.args.run_seconds:
-                    break
-                loop_started = time.monotonic()
-                try:
-                    assert self.portfolio is not None
-                    self.refresh_manual_controls()
-                    events, mt5_errors = self.db.poll_mt5_events(self.portfolio.cursors)
-                    snapshots, mt4_errors = self.db.poll_mt4_positions()
-                    self.apply_event_batch(events)
-                    for source_key, rows in snapshots.items():
-                        self.apply_mt4_snapshot(source_key, rows)
-                    self.poll_latencies.append(time.monotonic() - loop_started)
-                    if not mt5_errors and not mt4_errors:
-                        self.last_db_success = time.monotonic()
-                    else:
-                        self.last_error = "; ".join(mt5_errors + mt4_errors)
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="copy-source-poll") as poll_executor:
+                while self.running:
+                    if self.args.run_seconds and time.monotonic() - started >= self.args.run_seconds:
+                        break
+                    loop_started = time.monotonic()
+                    try:
+                        assert self.portfolio is not None
+                        self.refresh_manual_controls()
+                        mt5_errors, mt4_errors = self._poll_source_cycle(poll_executor)
+                        self.poll_latencies.append(time.monotonic() - loop_started)
+                        if not mt5_errors and not mt4_errors:
+                            self.last_db_success = time.monotonic()
+                        else:
+                            self.last_error = "; ".join(mt5_errors + mt4_errors)
 
-                    if time.monotonic() - self.last_intraday_refresh >= INTRADAY_REFRESH_SECONDS:
-                        self.portfolio.set_intraday_net(
-                            self.db.intraday_net(trading_day_start_utc(utc_now()))
-                        )
-                        product_net_reader = getattr(self.db, "intraday_product_net", None)
-                        if callable(product_net_reader):
-                            self.portfolio.set_intraday_product_net(
-                                product_net_reader(trading_day_start_utc(utc_now()))
+                        if time.monotonic() - self.last_intraday_refresh >= INTRADAY_REFRESH_SECONDS:
+                            self.portfolio.set_intraday_net(
+                                self.db.intraday_net(trading_day_start_utc(utc_now()))
                             )
-                        self.portfolio.set_open_risk(self.db.selected_open_risk())
-                        self._refresh_independent_client_risk(force=True)
-                        self.last_intraday_refresh = time.monotonic()
-                    if time.monotonic() - self.last_reconcile >= RECONCILE_SECONDS:
-                        self.reconcile_sources()
-                    self.maybe_daily_rebuild()
-                    self.maybe_transition_live()
-                    self.refresh_dynamic_sleeves()
-                    self.risk_check()
-                    self.refresh_mt5_conflicts()
-                    self.reconcile_mt5_target()
-                    if self.db.selected_source_staleness() >= DB_FLATTEN_SECONDS:
-                        if self._live_positions():
-                            self.flatten("selected_source_outage")
-                    self.persist_private_state()
-                    self.write_status()
-                    if not mt5_errors and not mt4_errors:
-                        self.last_error = ""
-                except Exception as exc:
-                    self.last_error = f"{type(exc).__name__}: {exc}"
-                    self.log(self.last_error)
-                    if self.db.selected_source_staleness() >= DB_FLATTEN_SECONDS:
-                        try:
+                            product_net_reader = getattr(self.db, "intraday_product_net", None)
+                            if callable(product_net_reader):
+                                self.portfolio.set_intraday_product_net(
+                                    product_net_reader(trading_day_start_utc(utc_now()))
+                                )
+                            self.portfolio.set_open_risk(self.db.selected_open_risk())
+                            self._refresh_independent_client_risk(force=True)
+                            self.last_intraday_refresh = time.monotonic()
+                        if time.monotonic() - self.last_reconcile >= RECONCILE_SECONDS:
+                            self.reconcile_sources()
+                        self.maybe_daily_rebuild()
+                        self.maybe_transition_live()
+                        self.refresh_dynamic_sleeves()
+                        self.risk_check()
+                        self.refresh_mt5_conflicts()
+                        self.reconcile_mt5_target()
+                        if self.db.selected_source_staleness() >= DB_FLATTEN_SECONDS:
                             if self._live_positions():
-                                self.flatten("database_or_runtime_outage")
-                        except Exception as flatten_error:
-                            self.log(f"Emergency flatten failed: {flatten_error}")
-                    # Preserve the heartbeat and diagnostic state even when a
-                    # broker/database operation failed in this poll cycle.
-                    try:
+                                self.flatten("selected_source_outage")
                         self.persist_private_state()
-                    except Exception as persist_error:
-                        self.log(f"persist_after_error_failed: {persist_error}")
-                    try:
                         self.write_status()
-                    except Exception as status_error:
-                        self.log(f"status_after_error_failed: {status_error}")
-                    time.sleep(min(2.0, self.args.poll_ms / 1000.0 * 2))
-                elapsed = time.monotonic() - loop_started
-                time.sleep(max(0.0, self.args.poll_ms / 1000.0 - elapsed))
+                        if not mt5_errors and not mt4_errors:
+                            self.last_error = ""
+                    except Exception as exc:
+                        self.last_error = f"{type(exc).__name__}: {exc}"
+                        self.log(self.last_error)
+                        if self.db.selected_source_staleness() >= DB_FLATTEN_SECONDS:
+                            try:
+                                if self._live_positions():
+                                    self.flatten("database_or_runtime_outage")
+                            except Exception as flatten_error:
+                                self.log(f"Emergency flatten failed: {flatten_error}")
+                        # Preserve the heartbeat and diagnostic state even when a
+                        # broker/database operation failed in this poll cycle.
+                        try:
+                            self.persist_private_state()
+                        except Exception as persist_error:
+                            self.log(f"persist_after_error_failed: {persist_error}")
+                        try:
+                            self.write_status()
+                        except Exception as status_error:
+                            self.log(f"status_after_error_failed: {status_error}")
+                        time.sleep(min(2.0, self.args.poll_ms / 1000.0 * 2))
+                    elapsed = time.monotonic() - loop_started
+                    time.sleep(max(0.0, self.args.poll_ms / 1000.0 - elapsed))
         finally:
             self.persist_private_state()
             try:

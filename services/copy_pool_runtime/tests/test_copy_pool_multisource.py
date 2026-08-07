@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -74,6 +75,99 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_realtime_mt5_poll_starts_every_selected_physical_source_without_queueing(self) -> None:
+        database = MultiSourceDatabase()
+        entered = 0
+        entered_lock = threading.Lock()
+        all_entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingSource:
+            platform = "MT5"
+            schema = "test"
+
+            def query(self, _sql: str, _params: object = ()) -> list[dict[str, object]]:
+                nonlocal entered
+                with entered_lock:
+                    entered += 1
+                    if entered == 5:
+                        all_entered.set()
+                release.wait(timeout=2.0)
+                return []
+
+        database.sources = {
+            f"source_{index}": BlockingSource()  # type: ignore[assignment]
+            for index in range(5)
+        }
+        database.clients_by_source_login = {
+            key: {index + 1: f"account_{index}"}
+            for index, key in enumerate(database.sources)
+        }
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(database.poll_mt5_events, {})
+            try:
+                self.assertTrue(
+                    all_entered.wait(timeout=0.5),
+                    "all five MT5 sources must start in the same poll wave",
+                )
+            finally:
+                release.set()
+            events, errors = future.result(timeout=2.0)
+
+        self.assertEqual(events, [])
+        self.assertEqual(errors, [])
+
+    def test_runtime_database_timeouts_are_short_and_reset_existing_connections(self) -> None:
+        database = MultiSourceDatabase()
+        sources = list(database.sources.values())
+        for source in sources:
+            source.connection = unittest.mock.Mock()
+
+        database.configure_realtime_timeouts(connect_seconds=2, read_seconds=2, write_seconds=2)
+
+        for source in sources:
+            self.assertEqual(source.connect_timeout_seconds, 2)
+            self.assertEqual(source.read_timeout_seconds, 2)
+            self.assertEqual(source.write_timeout_seconds, 2)
+            self.assertIsNone(source.connection)
+
+    def test_poll_cycle_applies_mt5_events_before_waiting_for_slow_mt4(self) -> None:
+        mt4_started = threading.Event()
+        release_mt4 = threading.Event()
+        mt5_applied = threading.Event()
+        event = unittest.mock.sentinel.mt5_event
+
+        class FakeDatabase:
+            @staticmethod
+            def poll_mt5_events(_cursors):
+                return [event], []
+
+            @staticmethod
+            def poll_mt4_positions():
+                mt4_started.set()
+                release_mt4.wait(timeout=2.0)
+                return {}, []
+
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.db = FakeDatabase()
+        service.portfolio = SimpleNamespace(cursors={})
+        service.apply_event_batch = lambda events: mt5_applied.set() if events == [event] else None
+        service.apply_mt4_snapshot = unittest.mock.Mock()
+
+        with ThreadPoolExecutor(max_workers=2) as poll_executor:
+            with ThreadPoolExecutor(max_workers=1) as caller:
+                future = caller.submit(service._poll_source_cycle, poll_executor)
+                self.assertTrue(mt4_started.wait(timeout=0.5))
+                try:
+                    self.assertTrue(
+                        mt5_applied.wait(timeout=0.5),
+                        "ready MT5 events must be applied before the MT4 poll completes",
+                    )
+                finally:
+                    release_mt4.set()
+                self.assertEqual(future.result(timeout=2.0), ([], []))
+
     def test_live_autotrading_regression_pauses_without_broker_reconcile(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.phase = "live"
