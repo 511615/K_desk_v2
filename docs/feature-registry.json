@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "dfe21cca4204",
+  "registryVersion": "78ac7fd524bf",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -535,6 +535,7 @@
         "frontend/src/kdesk-theme.css",
         "src/kdesk/domain/kline.py",
         "src/kdesk/application/kline_generation.py",
+        "src/kdesk/application/kline_timeline_cache.py",
         "src/kdesk/infrastructure/quote_sources.py",
         "src/kdesk/api/account_app.py",
         "src/kdesk/api/kline_app.py",
@@ -547,6 +548,7 @@
       "tests": [
         "tests/test_api.py",
         "tests/test_kline.py",
+        "tests/test_kline_timeline_cache.py",
         "tests/test_worker.py"
       ],
       "depends_on": [
@@ -568,7 +570,11 @@
         "GET /output/{name}"
       ],
       "code": [
+        "src/kdesk/application/kline_timeline_cache.py",
         "src/kdesk/domain/kline_timeline.py",
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/worker/runner.py",
+        "frontend/src/pages/AccountPage.vue",
         "legacy/apps/problem_account_registry/app.py",
         "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
         "legacy/tools/trade_kline_tool/fused_trade_kline_features.py",
@@ -576,6 +582,7 @@
         "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"
       ],
       "tests": [
+        "tests/test_kline_timeline_cache.py",
         "tests/test_kline_timeline.py",
         "tests/test_kline.py",
         "tests/test_historical_funds.py"

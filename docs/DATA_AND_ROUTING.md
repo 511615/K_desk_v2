@@ -16,9 +16,12 @@ The MT5 `mt5_daily_view` is not queried online because it is not indexed by Logi
 filter can become a full-view scan. Current balance/Credit calibrates the replay and the API marks
 historical equity snapshots unavailable. It returns raw coverage counts and does not read a second logical
 route to merge a shared Login. The data is read-only and is not copied into SQLite or Excel.
-Database K-line generation may package this same selected-route replay into its local output artifact;
-the package is Worker-local, uses no new remote source and remains inside the configured runtime
-artifact directory.
+Database K-line generation may package this same selected-route replay into its local output artifact.
+When the user explicitly includes the replay, the Worker first saves the complete account/platform/server
+replay under `runtime/<profile>/cache/kline_timeline`; later charts reuse that local cache and do not
+read the remote funds source. An explicit chart refresh is the only normal cache-refresh path. The
+timeline input package uses no new remote source and remains inside the configured runtime artifact
+directory.
 The separate `ACC-REL-002` Kuzu demo reads an operator-created local file at
 `KDESK_KUZU_DEMO_DB` (default `runtime/<profile>/relationship_graph_demo.kuzu`). It is a
 non-authoritative evidence projection for one bounded demo subject: it does not refresh from, write
