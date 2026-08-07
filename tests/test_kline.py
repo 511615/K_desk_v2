@@ -193,7 +193,9 @@ const canvas = document.getElementById('chart');</script></body></html>'''
 
     assert '"accountTimeline"' in result
     assert 'id="panelFunds"' in result
-    assert '资金与订单事件' in result
+    assert '历史资金回溯' in result
+    assert '余额与 Credit 回放' in result
+    assert 'Position / Deal' in result
     assert 'posFundingFact' in result
     assert 'data-timeline-liquidation' in result
     assert "[data-timeline-event],[data-timeline-liquidation]" in result

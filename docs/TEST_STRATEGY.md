@@ -234,6 +234,12 @@ subsequent chart request, an explicit-refresh rebuild, invalid-cache recovery an
 dates. Every visible K-line funds-panel liquidation marker and its event-table action must move the
 viewport to the same factual timestamp.
 
+The standalone replay uses the same visible summary, curve and detailed-event hierarchy as
+`历史资金回溯`. Funds ledger rows remain individual. A market Position's opening and closing source
+events must render as exactly one Position lifecycle row, anchored at the final close (or its opening
+when still open), with constituent Deal IDs and summed factual deltas; the Balance/Credit curve keeps
+the original source-event resolution.
+
 Dynamic copy-pool monitor regressions cover malformed or missing snapshot files, stale-source age,
 bounded event/timeline reads, account-product effective-weight projection, virtual-position contribution,
 client Demo loss budgets, sanitized source Position/Demo Ticket mappings and per-product

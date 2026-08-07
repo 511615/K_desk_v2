@@ -31,10 +31,18 @@ Only the explicit refresh option reads the remote source again.
 The bottom chart switcher adds `资金` beside the existing Profit, hand-size and position panels.
 It draws Balance in blue, Credit in orange and red liquidation dots for the factual liquidation
 points already identified by `FIN-HISTORY-001`. Each visible red dot is a hit target: clicking it
-moves the K-line viewport to that liquidation timestamp. The original raw order table remains
-unchanged. A second paged `资金与订单事件` table lists complete replayed order opening/closing and
-balance/Credit actions in timestamp order; each row has `定位`, and liquidation rows additionally
-have `爆仓点位`, which both move the viewport to that timestamp.
+moves the K-line viewport to that liquidation timestamp.
+
+Below the K-line, the standalone artifact renders the same factual layout as `历史资金回溯`: source
+coverage, eight funds/Credit/liquidation summary cards, a full Balance/Credit replay curve, clickable
+liquidation chips, and a paged detailed table. Funds actions remain individual ledger rows. Market
+orders are intentionally folded into one row per Position: opening and every closing Deal are shown
+as one Position lifecycle with open/close time, constituent Deal IDs, summed factual balance/Credit
+deltas and realized P/L. The Position row is anchored to its final close, or to its opening time when
+it has not closed; separate open/close rows are not displayed in this replay table. The Balance/Credit
+curve itself retains every underlying source event and is never simplified by this presentation rule.
+Each table row has `定位`, and liquidation rows additionally have `爆仓点位`, which both move the
+K-line viewport to that timestamp.
 
 The `仓位` panel displays exact open-order count and lots from the chart order scope. Its Balance and
 Credit card is sourced from the same replay. It no longer defaults to a 10,000 balance or 1:500
@@ -88,9 +96,10 @@ no browser-side API call or write adapter is introduced.
 
 Cache tests prove the first complete build, reuse without another source read, explicit refresh and
 invalid-local-cache recovery. Pure tests prove a selected window receives a known carry-in state,
-categorizes order/funds events, and preserves unknown pre-anchor state. HTML tests prove the artifact
-embeds the timeline, funds switcher, clickable liquidation controls, event table and corrected position
-wording, and JavaScript parses.
+preserves unknown pre-anchor state, and folds a Position's opening/closing source events into one
+factually summed lifecycle row without changing the raw curve. HTML tests prove the artifact embeds
+the historical-funds layout, funds switcher, clickable liquidation controls, Position/Deal table,
+corrected position wording, and JavaScript parses.
 Historical-funds fixtures continue to cover MT4 cash/Credit/clear, MT5 Action 2/3 and liquidation
 markers. Manual acceptance checks both checkbox states, an MT4 and MT5 chart, USD and USC scaling,
 a cache reuse, explicit refresh, a chart with unavailable funds data, an event-table jump and an HTML

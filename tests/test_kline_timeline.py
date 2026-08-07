@@ -3,7 +3,7 @@ from __future__ import annotations
 from kdesk.domain.kline_timeline import build_kline_timeline
 
 
-def test_kline_timeline_keeps_a_known_opening_cash_credit_state_and_interleaves_events() -> None:
+def test_kline_timeline_keeps_known_carry_in_and_collapses_order_events_into_one_position() -> None:
     replay = {
         "summary": {"currency": "USD", "moneyScale": 1.0, "eventCount": 5},
         "events": [
@@ -72,15 +72,25 @@ def test_kline_timeline_keeps_a_known_opening_cash_credit_state_and_interleaves_
 
     timeline = build_kline_timeline(replay, start="2026-01-01 09:30:00", end="2026-01-01 10:00:00")
 
-    assert timeline["version"] == 1
+    assert timeline["version"] == 2
     assert timeline["openingState"] == {
         "timestamp": "2026-01-01 09:00:00",
         "balance": 1000.0,
         "credit": 0.0,
         "known": True,
     }
-    assert [item["kind"] for item in timeline["events"]] == ["trade_open", "bonus_grant", "trade_close"]
-    assert [item["category"] for item in timeline["events"]] == ["order", "funds", "order"]
+    assert [item["kind"] for item in timeline["events"]] == ["bonus_grant", "trade_position"]
+    assert [item["category"] for item in timeline["events"]] == ["funds", "position"]
+    position = timeline["events"][-1]
+    assert position["positionId"] == "101"
+    assert position["positionOpenTime"] == "2026-01-01 09:30:00"
+    assert position["positionCloseTime"] == "2026-01-01 10:00:00"
+    assert position["positionState"] == "closed"
+    assert position["sourceOrderEventCount"] == 2
+    assert position["deltaBalance"] == -125.0
+    assert position["realizedPnl"] == 0.0
+    assert timeline["summary"]["positionEventCount"] == 1
+    assert timeline["summary"]["sourceOrderEventCount"] == 2
     assert timeline["curve"][-1]["balance"] == 875.0
     assert timeline["summary"]["liquidationCount"] == 0
 
@@ -109,4 +119,6 @@ def test_kline_timeline_keeps_unknown_pre_anchor_state_unknown_instead_of_using_
     assert timeline["openingState"]["known"] is False
     assert timeline["openingState"]["balance"] is None
     assert timeline["events"][0]["balance"] is None
+    assert timeline["events"][0]["kind"] == "trade_position"
+    assert timeline["events"][0]["positionState"] == "open"
     assert timeline["summary"]["knownStateEventCount"] == 0
