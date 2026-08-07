@@ -125,7 +125,16 @@ def validation_passes(metrics: dict, *, fallback: bool) -> bool:
     if median is None or float(median) > 2:
         return False
     if fallback:
-        return inside_ratio >= 0.8 or bool(metrics.get("allWithinTolerance"))
+        within_tolerance_ratio = int(metrics.get("withinTolerance") or 0) / matched
+        maximum = metrics.get("maxNormalizedDistance")
+        near_match = (
+            inside_ratio >= 0.7
+            and within_tolerance_ratio >= 0.9
+            and float(median) <= 0.25
+            and maximum is not None
+            and float(maximum) <= 1.25
+        )
+        return inside_ratio >= 0.8 or bool(metrics.get("allWithinTolerance")) or near_match
     return inside_ratio >= 0.6
 
 

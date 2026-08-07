@@ -92,8 +92,8 @@ _JS = r"""
   });
   renderTimeline(true);
 
-  const originalBottomPanel = drawBottomPanel;
-  drawBottomPanel = function(rows, pad, plotW, top, height, xScale) {
+  const originalBottomPanel = drawKdeskBottomPanel;
+  drawKdeskBottomPanel = function(rows, pad, plotW, top, height, xScale) {
     if (panelMode !== 'funds') return originalBottomPanel(rows, pad, plotW, top, height, xScale);
     ctx.save();
     ctx.fillStyle = 'rgba(248,250,252,0.96)'; ctx.fillRect(pad.l, top, plotW, height);
@@ -158,7 +158,7 @@ _JS = r"""
   const fundingFact = document.getElementById('posFundingFact');
   if (fundingFact) fundingFact.textContent = timeline.openingState?.known ? `Balance ${money(timeline.openingState.balance)} / Credit ${money(timeline.openingState.credit)}` : 'Balance / Credit：数据不足';
   const fundsButton = document.getElementById('panelFunds');
-  if (fundsButton) fundsButton.addEventListener('click', () => { panelMode='funds'; fundsButton.classList.add('active'); document.getElementById('panelProfit').classList.remove('active'); document.getElementById('panelVolume').classList.remove('active'); document.getElementById('panelPosition').classList.remove('active'); draw(false); });
+  if (fundsButton) fundsButton.addEventListener('click', () => { panelMode='funds'; fundsButton.classList.add('active'); document.getElementById('panelProfit').classList.remove('active'); document.getElementById('panelVolume').classList.remove('active'); document.getElementById('panelPosition').classList.remove('active'); scheduleDraw(false); });
 })();
 """
 

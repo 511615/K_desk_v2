@@ -347,7 +347,9 @@ physical source completed; partial coverage or no closed target order is data-in
   M1 endpoint evidence; `UT100` belongs to the `NAS100Roll` family.
 - Validate open and close endpoints for at most five evenly sampled orders. Same-source quotes need
   at least 60% envelope hits and normalized median distance no greater than 2. Explicit fallback
-  quotes need at least 80% hits or every endpoint within tolerance.
+  quotes need at least 80% hits or every endpoint within tolerance. One bounded near-match route is
+  permitted only with at least 70% raw hits, 90% endpoint tolerance hits, median normalized distance
+  no greater than 0.25 and maximum normalized distance no greater than 1.25.
 - Try existing GMT/GMT+3 modes before expanding to allowed integer offsets GMT-4 through GMT+4.
 - Never infer an arbitrary whole-series price shift. Apply and disclose only a provider-configured
   correction.

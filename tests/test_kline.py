@@ -84,6 +84,22 @@ def test_fallback_source_uses_harder_acceptance_gate() -> None:
     all_tolerated = validation_metrics([EndpointCheck(True, 0, 1), EndpointCheck(False, 0.5, 1)])
     assert validation_passes(all_tolerated, fallback=True)
 
+    near_matched = validation_metrics(
+        [EndpointCheck(True, 0, 1) for _ in range(7)]
+        + [EndpointCheck(False, 0.5, 1) for _ in range(2)]
+        + [EndpointCheck(False, 1.17, 1)]
+    )
+    assert near_matched["insideRatio"] == 0.7
+    assert near_matched["withinTolerance"] == 9
+    assert validation_passes(near_matched, fallback=True)
+
+    distant_outlier = validation_metrics(
+        [EndpointCheck(True, 0, 1) for _ in range(7)]
+        + [EndpointCheck(False, 0.5, 1) for _ in range(2)]
+        + [EndpointCheck(False, 1.26, 1)]
+    )
+    assert not validation_passes(distant_outlier, fallback=True)
+
 
 def test_gmt_expansion_only_runs_after_initial_low_confidence() -> None:
     assert alignment_offsets(True) == (0, -3)
@@ -201,6 +217,9 @@ const canvas = document.getElementById('chart');</script></body></html>'''
     assert 'timelinePagination' not in result
     assert 'const ROW_HEIGHT = 62;' in result
     assert '滚动查看全部事件' in result
+    assert 'const originalBottomPanel = drawKdeskBottomPanel;' in result
+    assert 'drawKdeskBottomPanel = function' in result
+    assert 'drawBottomPanel' not in result
     assert 'background:#fff; color:#111827' in result
     assert 'background:#061a33' not in result
     assert 'posFundingFact' in result
@@ -208,6 +227,7 @@ const canvas = document.getElementById('chart');</script></body></html>'''
     assert "[data-timeline-event],[data-timeline-liquidation]" in result
     assert "if (Number.isFinite(at)) focusTimeMs(at);" in result
     assert "panelMode='funds';" in result
+    assert 'scheduleDraw(false);' in result
     assert '历史保证金率没有平台盘中快照，未展示估算比例' in result
     assert 'build_position_fused_trade_kline_demo' not in (tool_root / "fused_trade_kline_features.py").read_text(encoding="utf-8")
     node = shutil.which("node")

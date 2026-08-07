@@ -72,7 +72,9 @@ compatible. Alignment samples up to five
 evenly distributed orders at both endpoints. GMT and GMT+3 are tried first; offsets GMT-4 through
 GMT+4 are considered only after initial rejection. Same-source acceptance requires 60% raw M1
 envelope hits and normalized median distance at most 2; fallback requires 80% hits or every endpoint
-within tolerance. Price correction is applied only when declared by the selected provider.
+within tolerance. A narrowly bounded fallback near-match is also accepted only with at least 70% raw
+hits, 90% endpoint tolerance hits, median normalized distance at most 0.25 and maximum normalized
+distance at most 1.25. Price correction is applied only when declared by the selected provider.
 
 Gaps over five minutes form segment boundaries and gaps over sixty minutes are labelled closed/no
 quote. Long-history aggregation occurs within each segment. Missing-minute trades retain their real
