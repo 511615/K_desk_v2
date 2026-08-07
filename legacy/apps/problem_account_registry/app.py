@@ -1749,6 +1749,128 @@ def query_mysql_trades(
     return rows if limit is None else rows[:limit]
 
 
+def query_mysql_historical_funds_source(source: dict, account: str) -> dict | None:
+    """Read the complete read-only ledger, deal and daily-anchor facts for one routed account."""
+    account = normalize_text(account)
+    with mysql_trade_connect(source) as conn:
+        with conn.cursor() as cur:
+            if not source_account_exists(cur, source, account):
+                return None
+            if source.get("kind") == "mt5_deals":
+                cur.execute(
+                    f"select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc, Symbol, "
+                    f"Profit, Commission, Storage, Fee, Comment "
+                    f"from `{source['schema']}`.`{source['table']}` where Login = %s "
+                    "order by TimeMsc, Deal",
+                    (int(account),),
+                )
+                events = cur.fetchall()
+                meta = query_mysql_mt5_account_meta(cur, source, account)
+                cur.execute(
+                    f"select Balance, Credit, Equity from `{source['schema']}`.`mt5_accounts` "
+                    "where Login = %s limit 1",
+                    (int(account),),
+                )
+                current_row = cur.fetchone() or {}
+                current_anchor = {
+                    "timestamp": now_text(),
+                    "balance": current_row.get("Balance"),
+                    "credit": current_row.get("Credit"),
+                    "equity": current_row.get("Equity"),
+                } if current_row else None
+                # This MT5 daily view has no Login index. A historical filter therefore becomes a
+                # full-view scan and can block the account page for the database read timeout.
+                # Use the indexed deal ledger plus the current account row; do not query the view.
+                anchors = []
+                daily_anchor_available = False
+                daily_anchor_reason = (
+                    "MT5 日快照视图未按账号索引，未执行全表查询；"
+                    "余额和 Credit 已按当前账户状态回放，历史权益快照不可用"
+                )
+            else:
+                cur.execute(
+                    f"select TICKET, LOGIN, CMD, SYMBOL, VOLUME, OPEN_TIME, OPEN_PRICE, CLOSE_TIME, "
+                    f"CLOSE_PRICE, COMMISSION, TAXES, SWAPS, PROFIT, COMMENT, REASON, MAGIC "
+                    f"from `{source['schema']}`.`{source['table']}` where LOGIN = %s "
+                    "order by OPEN_TIME, TICKET",
+                    (int(account),),
+                )
+                events = cur.fetchall()
+                cur.execute(
+                    f"select TIME, BALANCE, CREDIT, DEPOSIT, EQUITY from `{source['schema']}`.`mt4_daily` "
+                    "where LOGIN = %s order by TIME",
+                    (int(account),),
+                )
+                anchors = cur.fetchall()
+                meta = account_money_meta(source_name=source.get("name"))
+                try:
+                    cur.execute(
+                        f"select CURRENCY, `GROUP` as AccountGroup from `{source['schema']}`.`mt4_users_view` "
+                        "where LOGIN = %s limit 1",
+                        (int(account),),
+                    )
+                    meta_row = cur.fetchone() or {}
+                    if meta_row:
+                        meta = account_money_meta(
+                            meta_row.get("CURRENCY"), meta_row.get("AccountGroup"), source.get("name"),
+                            "mt4_users_view",
+                        )
+                except Exception:
+                    pass
+                current_anchor = None
+                daily_anchor_available = True
+                daily_anchor_reason = ""
+    return {
+        "account": account,
+        "platform": source.get("platform", ""),
+        "server": source.get("server", source.get("name", "")),
+        "source": source.get("name", ""),
+        "currency": meta.get("displayCurrency") or meta.get("currency") or "USD",
+        "moneyScale": numeric_value(meta.get("moneyScale")) or 1.0,
+        "events": [dict(row) for row in events],
+        "anchors": [dict(row) for row in anchors],
+        "currentAnchor": current_anchor,
+        "coverage": {
+            "eventRows": len(events),
+            "dailyAnchors": len(anchors),
+            "dailyAnchorsAvailable": daily_anchor_available,
+            "dailyAnchorReason": daily_anchor_reason,
+            "completeHistory": True,
+        },
+    }
+
+
+def account_historical_funds_source_payload(login: str, filters: dict | None = None) -> dict:
+    login = normalize_text(login)
+    filters = filters or {}
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    if not re.fullmatch(r"\d+", login):
+        raise ValueError("账号格式无效")
+    sources = [source for source in MYSQL_SOURCES if source_allowed(source, platform=platform, server=server)]
+    matches: list[dict] = []
+    errors: list[str] = []
+    for source in sources:
+        try:
+            result = query_mysql_historical_funds_source(source, login)
+            if result:
+                matches.append(result)
+        except Exception as exc:
+            errors.append(f"{source.get('name')}: {exc}")
+    if len(matches) > 1:
+        return {
+            "available": False,
+            "account": login,
+            "reason": "账号匹配多个服务器，请先选择平台和服务器",
+            "sources": [{"platform": item["platform"], "server": item["server"]} for item in matches],
+        }
+    if not matches:
+        if errors:
+            raise RuntimeError("；".join(errors[:3]))
+        return {"available": False, "account": login, "reason": "数据库没有找到该账号的历史资金数据"}
+    return {"available": True, **matches[0]}
+
+
 def query_mysql_trade_cost_source(
     source: dict,
     account: str,
@@ -10868,8 +10990,43 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .relationship-entry:hover,.relationship-entry:focus-visible { color:#fff; border-color:#ac8fff!important; background:#4b3479!important; box-shadow:0 0 14px #9d76ff55!important; }
     .toxic-entry { color:#fff; border-color:#ff8a4c; background:linear-gradient(135deg,#b74218,#e85d24); box-shadow:0 0 15px #ff6a2f44; }
     .toxic-entry:hover,.toxic-entry:focus-visible { border-color:#ffb083!important; background:linear-gradient(135deg,#d9531f,#ff7837)!important; box-shadow:0 0 18px #ff6a2f66!important; }
+    .historical-funds-entry { color:#dcf9ff; border-color:#287b9e; background:#073c57; box-shadow:0 0 14px #168cbb38; }
+    .historical-funds-entry:hover,.historical-funds-entry:focus-visible { color:#fff; border-color:#5fd3f5!important; background:#07536f!important; box-shadow:0 0 18px #28c5ef55!important; }
     .toxic-dialog { width:min(1080px,calc(100% - 30px)); height:min(850px,calc(100% - 30px)); }
     .toxic-body { height:calc(100% - 50px); overflow:auto; padding:16px; }
+    .historical-funds-dialog { width:min(1280px,calc(100% - 30px)); }
+    .funds-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin:0 0 14px; border:1px solid #214f78; border-radius:7px; overflow:hidden; }
+    .funds-summary div { min-height:68px; padding:10px 12px; border-left:1px solid #214f78; background:#071a31; }
+    .funds-summary div:nth-child(4n+1) { border-left:0; }
+    .funds-summary span,.funds-summary b { display:block; }
+    .funds-summary span { color:#7895b8; font-size:11px; }
+    .funds-summary b { margin-top:6px; color:#eaf6ff; font-size:16px; }
+    .funds-chart { min-height:260px; padding:12px; border:1px solid #214f78; border-radius:7px; background:#06162b; }
+    .funds-chart-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:8px; }
+    .funds-chart-head b { color:#eaf6ff; font-size:13px; }
+    .funds-chart-head span,.funds-note { color:#7895b8; font-size:11px; line-height:1.6; }
+    .funds-chart svg { display:block; width:100%; height:220px; overflow:visible; }
+    .funds-chart-grid { stroke:#16436c; stroke-width:1; }
+    .funds-chart-balance { fill:none; stroke:#20b9ff; stroke-width:2.5; vector-effect:non-scaling-stroke; }
+    .funds-chart-credit { fill:none; stroke:#e5af48; stroke-width:2; vector-effect:non-scaling-stroke; }
+    .funds-chart-liquidation { fill:#ff5d66; stroke:#ffd4d7; stroke-width:1.5; vector-effect:non-scaling-stroke; cursor:pointer; }
+    .funds-chart-liquidation:hover,.funds-chart-liquidation:focus { fill:#ff8790; stroke:#fff; outline:none; }
+    .funds-liquidations { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:10px 0 0; padding:10px 12px; border:1px solid #7c3945; border-radius:6px; background:#28131b; }
+    .funds-liquidations b { color:#ffd9dc; font-size:11px; }
+    .funds-liquidation-jump { min-height:28px; padding:4px 8px; color:#ffd9dc; border-color:#a94958; background:#4a1c27; font-size:11px; }
+    .funds-liquidation-jump:hover,.funds-liquidation-jump:focus-visible { color:#fff; border-color:#ff7a85!important; background:#682430!important; }
+    .funds-events-head { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:16px 0 8px; }
+    .funds-events-head b { color:#eaf6ff; font-size:13px; }
+    .funds-event-pager { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin:10px 0 0; color:#7895b8; font-size:11px; }
+    .funds-events-table { min-width:1180px; }
+    .funds-events-table td { vertical-align:top; }
+    .funds-event-focus td { box-shadow:inset 0 2px 0 #ff8a93,inset 0 -2px 0 #ff8a93; }
+    .funds-kind { display:inline-flex; padding:3px 6px; border:1px solid #376486; border-radius:4px; color:#bcd7ef; font-size:10px; white-space:nowrap; }
+    .funds-kind.deposit,.funds-kind.bonus_grant,.funds-kind.negative_balance_clear { color:#70dfb1; border-color:#21835e; background:#0b322b; }
+    .funds-kind.withdrawal,.funds-kind.bonus_remove { color:#ffc08a; border-color:#92572e; background:#38240f; }
+    .funds-kind.internal_transfer { color:#d1c4ff; border-color:#6955a0; background:#282044; }
+    .funds-liquidation-label { display:block; margin-top:4px; color:#ffafb5; font-size:10px; white-space:nowrap; }
+    .funds-event-liquidation td { background:#2b151d; }
     .copy-panel { margin-bottom:16px; overflow:hidden; border:1px solid #234e79; border-radius:7px; background:#071a31; }
     .copy-panel:last-child { margin-bottom:0; }
     .copy-panel-title { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 16px; border-bottom:1px solid #234e79; color:#dbeafe; background:#092744; }
@@ -11036,6 +11193,8 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       .chart-product-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .toxic-sync-kpis { grid-template-columns:repeat(3,1fr); }
       .toxic-sync-kpis div:nth-child(4) { border-left:0; }
+      .funds-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .funds-summary div:nth-child(odd) { border-left:0; }
     }
     @media (max-width:620px) {
       .topbar { height:auto; min-height:64px; grid-template-columns:auto minmax(0,1fr); gap:7px 12px; padding:8px 12px 10px; }
@@ -11053,6 +11212,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       .history-item { grid-template-columns:1fr; gap:5px; } .source-row { grid-template-columns:1fr 1fr; }
       .toxic-selector { grid-template-columns:1fr; } .toxic-result { grid-template-columns:72px 1fr; } .toxic-result-summary,.toxic-result-actions { grid-column:1/-1; } .toxic-chain-fact { grid-template-columns:1fr; gap:2px; }
       .toxic-sync-kpis { grid-template-columns:repeat(2,1fr); } .toxic-sync-kpis div:nth-child(odd) { border-left:0; }
+      .funds-summary { grid-template-columns:1fr; } .funds-summary div { border-left:0; border-top:1px solid #214f78; } .funds-summary div:first-child { border-top:0; }
       .relationship-network-layout { grid-template-columns:1fr; } .relationship-network-detail { border-left:0; border-top:1px solid #174674; max-height:360px; } #relationshipNetworkGraph { min-height:540px; }
     }
   </style>
@@ -11097,6 +11257,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       <button id="eaCommentBtn" class="ea-query-entry" type="button" hidden>EA 查询</button>
       <button id="relationshipNetworkBtn" class="relationship-entry" type="button" hidden>关系网络</button>
       <button id="toxicBtn" class="toxic-entry" type="button">Toxic 检测</button>
+      <button id="historicalFundsBtn" class="historical-funds-entry" type="button">历史资金回溯</button>
     </section>
 
     <section class="section" id="sameNameSection">
@@ -11218,6 +11379,18 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       <div class="toxic-results" id="toxicResults"><div class="toxic-empty">人工选择项目，或先运行初筛后从结果中继续深度检测。</div></div>
     </div>
   </dialog>
+  <dialog id="historicalFundsDialog" class="toxic-dialog historical-funds-dialog">
+    <div class="dialog-head"><b>历史资金回溯</b><div class="dialog-head-actions"><span class="status" id="historicalFundsStatus"></span><button id="closeHistoricalFunds" type="button">关闭</button></div></div>
+    <div class="toxic-body">
+      <div class="funds-note" id="historicalFundsNote">按当前选定的平台和服务器读取完整的只读资金、订单和日快照数据。此页面只复现事实，不自动判断赔付。</div>
+      <div class="funds-summary" id="historicalFundsSummary"></div>
+      <div class="funds-chart" id="historicalFundsChart"><div class="empty-state">等待查询...</div></div>
+      <div class="funds-liquidations" id="historicalFundsLiquidations" hidden></div>
+      <div class="funds-events-head"><b>资金与订单事件</b><span class="funds-note" id="historicalFundsEventNote"></span></div>
+      <div class="table-wrap"><table class="risk-table funds-events-table"><thead><tr><th>时间</th><th>事件</th><th>订单 / Deal</th><th>品种</th><th>备注</th><th>余额变化</th><th>Credit变化</th><th>实现盈亏</th><th>事件后余额</th><th>事件后Credit</th><th>权益状态</th></tr></thead><tbody id="historicalFundsEvents"><tr><td colspan="11"><div class="empty-state">尚未查询</div></td></tr></tbody></table></div>
+      <div class="funds-event-pager"><span id="historicalFundsPageStatus"></span><button id="historicalFundsPrev" type="button">上一页</button><button id="historicalFundsNext" type="button">下一页</button></div>
+    </div>
+  </dialog>
   <dialog id="copyDialog" class="toxic-dialog">
     <div class="dialog-head"><b>跟单查询</b><div class="dialog-head-actions"><span class="status" id="copyExportStatus"></span><button id="exportCopyReportBtn" type="button">导出 Excel</button><button id="closeCopyDialog" type="button">关闭</button></div></div>
     <div class="toxic-body">
@@ -11272,7 +11445,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     const LOGIN=__ACCOUNT_LOGIN_JSON__;
     const $=id=>document.getElementById(id);
     const initialParams=new URLSearchParams(location.search);
-    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,toxic:{jobTimer:null,running:false,lastResult:null}};
+    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null}};
     const TOXIC_TYPES=[
       {id:'market_pushing',label:'推盘',tick:true},{id:'quote_latency_arbitrage',label:'报价延迟套利',tick:true},{id:'cross_platform_spread_arbitrage',label:'跨平台点差套利',tick:true},
       {id:'rebate_churning',label:'刷返佣'},{id:'bonus_arbitrage',label:'赠金套利'},{id:'short_close_trading',label:'短平交易'},
@@ -11475,7 +11648,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       $("metricStatus").textContent=db.exists?`${db.orderCount} 条订单 · ${db.firstTime||'-'} 至 ${db.lastTime||'-'}`:(db.error||'账户暂未做单');$("dbSource").textContent=db.dbSource?db.dbSource.toUpperCase():'';
       if(!keepFilters){optionList($("platform"),db.platforms||[],'全部平台');optionList($("server"),db.servers||[],'全部服务器');optionList($("symbol"),db.symbols||[],'全部品种');if(state.initialFilters){for(const key of ['platform','server','symbol'])if(state.initialFilters[key])$(key).value=state.initialFilters[key];state.initialFilters=null;}}
       renderChartProducts(db);
-      renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;
+      renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;$("historicalFundsBtn").disabled=!db.exists;
     }
     function filters(){return state.initialFilters||{platform:$("platform").value,server:$("server").value,symbol:$("symbol").value};}
     async function openAccountFromDetailSearch(event){
@@ -11681,6 +11854,49 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       $("toxicModeNote").textContent=screen?'对全部类型做轻量初筛；结果中可对单项继续深度检测。':'仅运行勾选的专项算法；需要 Tick 的项目会按需读取候选时段报价。';
       $("startToxic").textContent=screen?'开始初筛':'开始专项检测';
     }
+    const fundsKinds={trade_open:'开仓',trade_close:'平仓',deposit:'外部入金',withdrawal:'外部出金',internal_transfer:'内部划转',bonus_grant:'Credit 增加',bonus_remove:'Credit 扣减',negative_balance_clear:'负余额清零',compensation:'补偿入账',cash_reversal:'资金冲正',adjustment:'账务调整',other_balance:'余额调整'};
+    const fundsValue=value=>value===null||value===undefined||value===''?'—':amount(value);
+    const validFundsValue=value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value));
+    function fundsSeriesPoints(points,key,min,max,width,height){return points.filter(row=>validFundsValue(row[key])).map((row,index,rows)=>`${(rows.length===1?0:index/(rows.length-1))*width},${height-((Number(row[key])-min)/(max-min||1))*height}`).join(' ');}
+    function jumpToHistoricalFundsEvent(value){
+      const funds=state.historicalFunds,eventIndex=Number(value),events=funds.data?.events||[];
+      if(!Number.isInteger(eventIndex)||eventIndex<0||eventIndex>=events.length)return;
+      funds.page=Math.floor(eventIndex/funds.pageSize)+1;renderHistoricalFundsEvents();
+      const target=$(`historicalFundsEvent-${eventIndex}`);if(!target)return;
+      target.scrollIntoView({block:'center',behavior:'smooth'});target.classList.add('funds-event-focus');
+      setTimeout(()=>target.classList.remove('funds-event-focus'),1800);
+    }
+    function bindLiquidationJumps(root){root.querySelectorAll('[data-liquidation-index]').forEach(node=>{const jump=()=>jumpToHistoricalFundsEvent(node.dataset.liquidationIndex);node.addEventListener('click',jump);node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();jump();}});});}
+    function renderHistoricalFundsChart(data){
+      const curve=(data.curve||[]).filter(row=>validFundsValue(row.balance)||validFundsValue(row.credit));
+      if(!curve.length){$("historicalFundsChart").innerHTML='<div class="empty-state">没有可绘制的余额或 Credit 快照</div>';return;}
+      const values=curve.flatMap(row=>[row.balance,row.credit]).filter(validFundsValue).map(Number),min=Math.min(...values),max=Math.max(...values),pad=Math.max((max-min)*.08,1),low=min-pad,high=max+pad,width=1000,height=190;
+      const balance=fundsSeriesPoints(curve,'balance',low,high,width,height),credit=fundsSeriesPoints(curve,'credit',low,high,width,height);
+      const markers=(data.liquidationPoints||[]).map(point=>{const index=curve.findIndex(row=>Number(row.eventIndex)===Number(point.eventIndex));if(index<0)return '';const row=curve[index],value=validFundsValue(row.balance)?Number(row.balance):Number(row.credit),x=(curve.length===1?0:index/(curve.length-1))*width,y=height-((value-low)/(high-low||1))*height,label=`${point.label||'爆仓标记'} · ${point.timestamp||'-'} · ${point.orderId||'无订单号'}`;return `<circle class="funds-chart-liquidation" data-liquidation-index="${Number(point.eventIndex)}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5" tabindex="0" role="button" aria-label="${esc(label)}，跳转到事件"><title>${esc(label)}</title></circle>`;}).join('');
+      const chart=$("historicalFundsChart");chart.innerHTML=`<div class="funds-chart-head"><b>余额与 Credit 回放</b><span>蓝色：余额 · 金色：Credit · 红点：爆仓标记，可点击跳转</span></div><svg viewBox="0 0 ${width} 220" role="img" aria-label="历史余额与 Credit 曲线"><line class="funds-chart-grid" x1="0" y1="0" x2="${width}" y2="0"/><line class="funds-chart-grid" x1="0" y1="${height/2}" x2="${width}" y2="${height/2}"/><line class="funds-chart-grid" x1="0" y1="${height}" x2="${width}" y2="${height}"/><polyline class="funds-chart-balance" points="${balance}"/><polyline class="funds-chart-credit" points="${credit}"/>${markers}<text x="0" y="12" fill="#7895b8" font-size="11">最高 ${esc(amount(high))}</text><text x="0" y="214" fill="#7895b8" font-size="11">最低 ${esc(amount(low))}</text></svg>`;bindLiquidationJumps(chart);
+    }
+    function renderHistoricalFundsEvents(){
+      const funds=state.historicalFunds,data=funds.data,events=data?.events||[],start=(funds.page-1)*funds.pageSize,rows=events.slice(start,start+funds.pageSize),pages=Math.max(1,Math.ceil(events.length/funds.pageSize));
+      $("historicalFundsPageStatus").textContent=`第 ${funds.page} / ${pages} 页，共 ${num(events.length,0)} 条`;
+      $("historicalFundsPrev").disabled=funds.page<=1;$("historicalFundsNext").disabled=funds.page>=pages;
+      $("historicalFundsEvents").innerHTML=rows.length?rows.map(row=>`<tr id="historicalFundsEvent-${Number(row.eventIndex)}" class="${row.liquidation?'funds-event-liquidation':''}"><td>${esc(row.timestamp||'-')}</td><td><span class="funds-kind ${esc(row.kind||'other')}">${esc(fundsKinds[row.kind]||'其他')}</span>${row.liquidation?`<span class="funds-liquidation-label">${esc(row.liquidation.label||'爆仓标记')}</span>`:''}</td><td>${esc(row.orderId||'-')}</td><td>${esc(row.symbol||'-')}</td><td>${esc(row.comment||'-')}</td><td class="${profitClass(row.deltaBalance)}">${fundsValue(row.deltaBalance)}</td><td class="${profitClass(row.deltaCredit)}">${fundsValue(row.deltaCredit)}</td><td class="${profitClass(row.realizedPnl)}">${fundsValue(row.realizedPnl)}</td><td>${fundsValue(row.balance)}</td><td>${fundsValue(row.credit)}</td><td>${row.equityStatus==='authoritative_daily'?'日快照':row.equityStatus==='missing_intraday_snapshot'?'无盘中快照':row.equityStatus==='before_first_anchor'?'首个快照前':'—'}</td></tr>`).join(''):'<tr><td colspan="11"><div class="empty-state">没有可回放的事件</div></td></tr>';
+    }
+    function renderHistoricalFunds(data){
+      const summary=data.summary||{},currency=summary.currency||data.currency||'USD',items=[['外部入金',summary.externalDeposit],['外部出金',summary.externalWithdrawal],['外部净入金',summary.externalNetDeposit],['内部划转',summary.internalTransfer],['Credit 增加',summary.bonusGranted],['Credit 扣减',summary.bonusRemoved],['负余额清零',summary.negativeBalanceCleared],['爆仓标记',summary.liquidationCount]];
+      $("historicalFundsSummary").innerHTML=items.map(([label,value],index)=>`<div><span>${esc(label)}${index===7?'':' ('+esc(currency)+')'}</span><b class="${index===7?'':profitClass(index===1||index===5?-Number(value||0):value)}">${index===7?num(value,0):fundsValue(value)}</b></div>`).join('');
+      const anchorNote=data.coverage?.dailyAnchorsAvailable===false?`${data.coverage?.dailyAnchorReason||'历史日快照不可用。'} `:'';
+      $("historicalFundsNote").textContent=`来源：${data.platform||'-'} / ${data.server||'-'}。完整读取 ${num(data.coverage?.eventRows,0)} 条订单与资金事件、${num(data.coverage?.dailyAnchors,0)} 条日快照；${anchorNote}余额和 Credit 按事件回放，权益不补造。`;
+      const equityNote=summary.equityCoverage==='daily_anchors_only'?'权益只在日快照处有事实值；':summary.equityCoverage==='current_anchor_only'?'仅当前账户快照有权益事实值；':'未取得权益快照；';
+      $("historicalFundsEventNote").textContent=`${equityNote}外部入出金、内部划转与 Credit 分开列示。`;
+      const liquidations=data.liquidationPoints||[],liquidationPanel=$("historicalFundsLiquidations");liquidationPanel.hidden=!liquidations.length;liquidationPanel.innerHTML=liquidations.length?`<b>爆仓点位 ${num(liquidations.length,0)} 个</b>${liquidations.map(point=>`<button class="funds-liquidation-jump" type="button" data-liquidation-index="${Number(point.eventIndex)}">${esc(point.label||'爆仓标记')} · ${esc(point.timestamp||'-')} · ${esc(point.orderId||'无订单号')}</button>`).join('')}`:'';bindLiquidationJumps(liquidationPanel);
+      renderHistoricalFundsChart(data);renderHistoricalFundsEvents();
+    }
+    async function openHistoricalFunds(){
+      const funds=state.historicalFunds;if(funds.loading)return;funds.loading=true;funds.data=null;funds.page=1;$("historicalFundsStatus").textContent='正在读取完整历史...';$("historicalFundsSummary").innerHTML='';$("historicalFundsChart").innerHTML='<div class="empty-state">正在读取订单、资金流水和日快照...</div>';$("historicalFundsEvents").innerHTML='<tr><td colspan="11"><div class="empty-state">正在读取...</div></td></tr>';$("historicalFundsDialog").showModal();
+      try{const current=filters(),query=new URLSearchParams({platform:current.platform||'',server:current.server||''});const data=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/historical-funds?${query}`);if(!data.available)throw new Error(data.reason||'未找到历史资金数据');funds.data=data;renderHistoricalFunds(data);$("historicalFundsStatus").textContent=`已回放 ${num(data.summary?.eventCount,0)} 条事件`;}
+      catch(err){$("historicalFundsStatus").textContent=err.message;$("historicalFundsChart").innerHTML=`<div class="empty-state">${esc(err.message)}</div>`;}
+      finally{funds.loading=false;}
+    }
     function openToxic(){if(!$("toxicSelector").children.length)renderToxicSelector();updateToxicMode();$("toxicDialog").showModal();}
     function selectedToxicTypes(){return [...document.querySelectorAll('#toxicSelector input:checked')].map(input=>input.value);}
     function toxicResultClass(result){return Number(result.score)>=90?'critical':Number(result.score)>=75?'high':Number(result.score)>=60?'warning':'';}
@@ -11767,7 +11983,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
         state.toxic.jobTimer=setTimeout(()=>pollToxic(id),800);
       }catch(err){$("toxicStatus").textContent=err.message;state.toxic.running=false;$("startToxic").disabled=false;$("toxicBtn").disabled=false;}
     }
-    $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
+    $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("historicalFundsBtn").addEventListener('click',openHistoricalFunds);$("historicalFundsPrev").addEventListener('click',()=>{if(state.historicalFunds.page>1){state.historicalFunds.page--;renderHistoricalFundsEvents();}});$("historicalFundsNext").addEventListener('click',()=>{const pages=Math.ceil((state.historicalFunds.data?.events?.length||0)/state.historicalFunds.pageSize);if(state.historicalFunds.page<pages){state.historicalFunds.page++;renderHistoricalFundsEvents();}});$("closeHistoricalFunds").addEventListener('click',()=>$("historicalFundsDialog").close());$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
     ["customAction","group","tags","note","owner"].forEach(id=>$(id).addEventListener('input',()=>{state.formDirty=true;}));
     $("orderDetails").addEventListener('toggle',()=>{if($("orderDetails").open&&!state.orders.loaded)loadOrders(1);});$("orderPrev").addEventListener('click',()=>loadOrders(state.orders.page-1));$("orderNext").addEventListener('click',()=>loadOrders(state.orders.page+1));
     loadLedger();load().catch(err=>{$("metricStatus").textContent=err.message;});loadIps();

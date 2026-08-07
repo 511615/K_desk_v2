@@ -3,12 +3,12 @@ feature_id: ACC-DETAIL-001
 title: Legacy account detail page
 module: account
 status: active
-apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
+apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/historical-funds", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
 code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
-depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
+depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "FIN-HISTORY-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-06
+last_verified_date: 2026-08-07
 ---
 
 # Legacy account detail page
@@ -21,11 +21,11 @@ service. Platform/server query parameters select the account source.
 ## UI and behavior
 
 The page contains ledger controls, finance and risk panels, order paging, chart generation, copy
-origin, EA comment, relationship-network and Toxic controls. Copy and EA query dialogs each provide a one-click Excel
+origin, EA comment, relationship-network, Toxic and historical-funds controls. The `历史资金回溯`
+button is immediately after Toxic and opens a separate factual timeline. Copy and EA query dialogs each provide a one-click Excel
 profit report using the current platform/server filters. Copy and EA expose optional opening-time
 start/end controls and an explicit query action; each dialog's visible result and Excel export always
-use the same range.
-It is intentionally not replaced by the
+use the same range. It is intentionally not replaced by the
 Vue AccountPage.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
 ledger. It reuses the read-only account lookup route, preferring a matching current platform/server
@@ -65,6 +65,13 @@ cannot prevent the initial ledger, detail, risk and IP requests from starting.
 The Toxic `平台内多账户对锁` item renders a dedicated query result: physical-source coverage,
 opposite-account routing, subject/peer lots and exact synchronized opening/closing order evidence. It
 does not display the copied account-internal reverse-leg score as the completed result.
+The historical-funds dialog pages raw events while preserving complete totals. It shows external
+cashflows separately from internal account transfers, Credit changes, negative-balance clear rows and
+trade realization. Its balance/Credit curve is replayed only from sourced ledger/trade facts after a
+daily anchor; equity is shown only at authoritative daily anchors and is never synthesized between
+them. Platform Stop Out and negative-balance-clear events appear as red clickable curve markers and
+as a complete jump list; selecting one opens its event page and highlights the raw row. It makes no
+conclusion about bonus deduction, debt forgiveness or customer compensation.
 The additive read-only `复制实验` section matches the selected Login, platform and server against
 `AUT-POOL-001`. It shows account-product sleeves, base/current weight, the client loss budget and
 each source Position to Demo Ticket mapping. Execution states and rejection reasons are localized
@@ -75,6 +82,9 @@ the rest of the account page.
 
 The HTML URL and supporting detail/risk API response structures remain backward compatible.
 The additive relationship-network response is governed by `ACC-REL-001`.
+The additive historical-funds response is governed by `FIN-HISTORY-001` and accepts the existing
+platform/server selection; it deliberately ignores the page symbol filter because funding history is
+account-wide.
 The copy-experiment section consumes the existing read-only `GET /api/copy-pool/dashboard` contract
 owned by `AUT-POOL-001`; it adds no account-detail write endpoint.
 
@@ -101,6 +111,7 @@ Weekend and opening Toxic rows defer to `TOX-POSITION-001` and present leverage-
 position evidence rather than the copied page's legacy time-only heuristics.
 Cross-account hedge queries defer to `TOX-HEDGE-001` and show only opposite synchronized open/close
 evidence, without adding other Toxic conclusions.
+Historical cash/Credit reconstruction, classifications and limitations defer to `FIN-HISTORY-001`.
 
 ## Loading, empty and failure behavior
 

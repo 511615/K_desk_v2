@@ -205,6 +205,9 @@ and stale-state labels remain tied to Producer evidence. It uses
 the K_desk dark operations theme, Chinese labels and responsive desktop/mobile layouts. Every visible account label, event, mapping and
 filter uses the actual trading Login; the private `C001` alias remains an internal mapping and redirect
 identifier only. Platform/server context remains a secondary line.
+The displayed operational clock is normalized to Beijing time. Current Demo account state, Ticket
+ownership, strategy P/L, source/risk events and execution gates are shown in separate bounded
+panels so an operator can distinguish live account facts from historical event rows.
 On narrow screens, source-health rows reduce their fixed columns and gaps while retaining the
 candidate/eligible/selected funnel and latency; wide account tables scroll inside their own panel
 without widening the page.

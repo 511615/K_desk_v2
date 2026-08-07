@@ -4,7 +4,7 @@
 | --- | --- | --- | --- |
 | Account | Search, source selection, legacy detail page and evidence-only relationship network | FastAPI composition + LegacyBridge | `ACC` |
 | Ledger | Account marks, history, quick actions, Excel compatibility | native domain/application/SQLite | `LED` |
-| Finance | Balance, deposits, costs, rebates, comprehensive P/L | governed legacy analytics | `FIN` |
+| Finance | Balance, deposits, costs, rebates, comprehensive P/L and historical funds backtrace | governed legacy analytics + replay domain | `FIN` |
 | Trades | Orders, metrics, hierarchy and database summaries | governed legacy analytics | `TRD` |
 | Automation | Copy origins, follower profit, EA comment groups and dynamic copy-pool execution | governed legacy services + separate versioned Producer | `AUT` |
 | Toxic | Detector selection, market-pushing analysis, evidence | persistent job + governed legacy rules | `TOX` |

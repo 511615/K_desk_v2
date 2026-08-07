@@ -37,6 +37,10 @@ vertical features move into application/domain modules.
 existing legacy-backed account, IP, Copy, EA and rebate payloads through that boundary, then returns
 typed evidence entities and edges. The legacy detail HTML owns its graph interaction only; it never
 calculates relationship risk, strength or a conclusion.
+`KuzuRelationshipDemoRepository` is a separate read-only infrastructure adapter for a deliberately
+isolated local graph-file trial. It is not a remote-data provider or a replacement for the legacy
+relationship service; the standalone API validates its bounded traversal depth before the adapter
+opens the local file.
 
 ## Compatibility boundary
 

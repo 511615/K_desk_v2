@@ -39,6 +39,11 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 
 - `GET /api/accounts/by-login/{login}/detail`
 - `GET /api/accounts/by-login/{login}/risk-panels`
+- `GET /api/accounts/by-login/{login}/historical-funds` - full account-wide read-only replay of
+  trade, balance, Credit and daily-anchor facts for the selected platform/server; external cashflow,
+  internal transfer and compensation-style entries remain classified separately. MT5 backtrace does
+  not query the unindexed daily view; it returns a current-account-calibrated balance/Credit replay with explicit snapshot
+  coverage rather than failing the complete ledger response; intraday equity is not fabricated
 - `GET /api/accounts/by-login/{login}/automation-analysis`
 - `GET /api/accounts/by-login/{login}/relationship-network` - additive evidence-only relationship
   graph for same-CRM-user accounts, current-account IP observations, EA/route features, Copy and
@@ -48,6 +53,8 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
 - `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the
   opening-time range for Signal trade and time-scoped rebate totals
+- `GET /kuzu-demo` - isolated local Kuzu evidence-graph trial page; no legacy page behavior changes
+- `GET /api/kuzu-demo/graph?depth=1|2|3` - bounded read-only traversal of the local Kuzu demo file
 - `GET /api/accounts/by-login/{login}/ea-comment-profit` - member rows additively expose
   `expertIds`, `matchClue` and `matchClues`; groups expose `expertId` and `matchRule`. Conservative
   no-comment MT5 route groups additively expose `signatureType=expert-sequence`, `sharedExpertIds`

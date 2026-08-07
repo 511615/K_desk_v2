@@ -9,6 +9,13 @@ revision state. Excel files are import/export snapshots only.
 The account relationship network has no independent store or remote query protocol. It composes the
 already routed read-only account-risk, login-IP, Copy, EA and CRM-rebate response payloads and never
 writes an inferred cross-account relationship.
+Historical funds backtrace has no independent store. For one selected account route it reads the
+complete platform ledger/trade facts and daily account anchors through LegacyBridge. MT4 sources are
+`mt4_trades` plus `mt4_daily`; MT5 sources are the indexed `mt5_deals` and current `mt5_accounts`.
+The MT5 `mt5_daily_view` is not queried online because it is not indexed by Login and an account
+filter can become a full-view scan. Current balance/Credit calibrates the replay and the API marks
+historical equity snapshots unavailable. It returns raw coverage counts and does not read a second logical
+route to merge a shared Login. The data is read-only and is not copied into SQLite or Excel.
 The separate `ACC-REL-002` Kuzu demo reads an operator-created local file at
 `KDESK_KUZU_DEMO_DB` (default `runtime/<profile>/relationship_graph_demo.kuzu`). It is a
 non-authoritative evidence projection for one bounded demo subject: it does not refresh from, write

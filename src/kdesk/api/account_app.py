@@ -17,8 +17,10 @@ from pydantic import BaseModel, ConfigDict
 
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
+from kdesk.api.kuzu_demo_page import render_kuzu_demo_page
 from kdesk.application.bonus_arbitrage_scan import normalize_bonus_scan_options
 from kdesk.application.copy_pool_monitor import CopyPoolMonitorService
+from kdesk.application.historical_funds import HistoricalFundsService
 from kdesk.application.ledger_service import LedgerService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
@@ -32,6 +34,7 @@ from kdesk.infrastructure.automation_reports import (
 from kdesk.infrastructure.copy_pool_monitor import CopyPoolFileSnapshotRepository
 from kdesk.infrastructure.database import Database
 from kdesk.infrastructure.excel_io import export_audit_json
+from kdesk.infrastructure.kuzu_relationship_demo import KuzuRelationshipDemoRepository
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
 from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
@@ -146,6 +149,8 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     ledger = LedgerService(database, compatibility_workbook=compat_workbook)
     legacy = LegacyBridge(config)
     relationship_network = AccountRelationshipNetworkService(legacy.call)
+    historical_funds = HistoricalFundsService(legacy.call)
+    kuzu_demo = KuzuRelationshipDemoRepository(config.kuzu_demo_path) if config.kuzu_demo_path else None
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
             config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
@@ -167,6 +172,8 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.ledger = ledger
     app.state.legacy = legacy
     app.state.relationship_network = relationship_network
+    app.state.historical_funds = historical_funds
+    app.state.kuzu_demo = kuzu_demo
     app.state.copy_pool = copy_pool
 
     assets = config.frontend_dist / "assets"
@@ -337,6 +344,28 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def risk_panels(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_risk_panels_payload", _safe_login(login), legacy_filters(request.query_params))
 
+    @app.get("/api/accounts/by-login/{login}/historical-funds")
+    async def historical_funds_payload(login: str, request: Request):
+        try:
+            data = await run_in_threadpool(
+                historical_funds.build,
+                _safe_login(login),
+                legacy_filters(request.query_params),
+            )
+            return {"ok": True, **data}
+        except (RuntimeError, ValueError) as exc:
+            logger.warning("Historical funds query failed for account %s: %s", login, exc)
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "available": False,
+                    "account": str(login),
+                    "error": "历史资金数据查询失败，请检查数据库连接",
+                    "reason": "历史资金数据查询失败，请检查数据库连接",
+                },
+                status_code=503,
+            )
+
     @app.get("/api/accounts/by-login/{login}/automation-analysis")
     async def automation(login: str, request: Request):
         return await run_in_threadpool(legacy.call, "account_automation_payload", _safe_login(login), legacy_filters(request.query_params))
@@ -348,6 +377,22 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             _safe_login(login),
             legacy_filters(request.query_params),
         )
+
+    @app.get("/kuzu-demo", response_class=HTMLResponse)
+    async def kuzu_demo_page() -> HTMLResponse:
+        return HTMLResponse(render_kuzu_demo_page(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/kuzu-demo/graph")
+    async def kuzu_demo_graph(depth: int = Query(2, ge=1, le=3)) -> dict:
+        if kuzu_demo is None:
+            raise HTTPException(status_code=404, detail="Kuzu 图谱试用未配置")
+        try:
+            return await run_in_threadpool(kuzu_demo.graph, depth)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Kuzu 图谱试用数据不存在") from exc
+        except (RuntimeError, ValueError):
+            logger.exception("Kuzu demo graph read failed")
+            raise HTTPException(status_code=503, detail="Kuzu 图谱暂时不可用") from None
 
     @app.get("/api/accounts/by-login/{login}/copy-origins")
     async def copy_origins(login: str, request: Request):

@@ -6,11 +6,15 @@
 | --- | --- | --- |
 | Account web | `127.0.0.1:8777` | `127.0.0.1:8877` |
 | K-line web | `127.0.0.1:8766` | `127.0.0.1:8866` |
-| Workers | interactive and discovery queues (push, rebate, bonus and position-risk discovery) | isolated dev queues |
+| Workers | one interactive Worker and two discovery Workers (push, rebate, bonus and position-risk discovery) | isolated dev queues |
 
 Use `scripts/start_prod.ps1`, `stop_prod.ps1` and `health_check_prod.ps1`. The stop script verifies
 port ownership before terminating a process. Production logs are under `runtime/prod/logs` and must
 not contain credentials or sensitive account fields.
+The default production start launches two discovery Workers so a long scan cannot serialize all
+platform discovery tasks. `start_prod.ps1 -DiscoveryWorkers 1` is available for a constrained host.
+The production health check reports both Worker queues in addition to the two HTTP services; a
+missing Worker is a failed readiness result even when `8777` is still serving pages.
 `scripts/start_prod.ps1 -AccountOnly` starts only the main account service on 8777 and intentionally
 does not start 8766 or production workers; use it for the dedicated copy-pool deployment.
 

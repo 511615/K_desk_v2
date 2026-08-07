@@ -7,6 +7,18 @@
 - Net deposit is deposits minus withdrawals and excludes compensation, rewards and negative-balance clearing.
 - MT5 `CRM-DP-` comments are deposits and `CRM-CW` comments are withdrawals.
 - MT4 `CPS_` balance rows are compensation and `CCB-Reward` rows are negative-balance clearing.
+- Historical funds backtrace is an evidence view, not a compensation decision. It replays routed
+  MT4/MT5 trade and ledger deltas after the first authoritative daily balance/Credit anchor. External
+  deposits and withdrawals use their recognized `DEP-`/`WDR-` or CRM equivalents; `TFM-`, `TFH-`,
+  `TRS-` and `CRM-T` are internal transfers and never external net deposit. Credit grant/removal,
+  negative-balance clear, compensation, reversal and other balance adjustments remain separate.
+  A liquidation marker requires platform Stop Out evidence (MT4 `REASON=5` or MT5 `Reason=6`) or an
+  explicit negative-balance-clear entry; stop loss and negative realized P/L alone are not enough.
+  A chart may show reconstructed balance and Credit. MT5 online backtrace does not read its
+  unindexed daily view; its complete indexed ledger is calibrated from the authoritative current
+  Balance/Credit row, while historical and
+  intraday equity/margin remain `unknown` unless an authoritative snapshot exists. The feature never
+  decides an amount to deduct, clear or repay.
 - MT5 USC detection uses a distinct `Cent` or `USC` users-group segment. Explicit currency segments
   are retained; standard groups use the configured source default USD. The resulting `0.01` USC
   scale applies to platform money only, not prices, lots, identifiers, timestamps or CRM rebates.

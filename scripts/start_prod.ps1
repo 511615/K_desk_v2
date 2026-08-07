@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$AccountOnly
+    [switch]$AccountOnly,
+    [ValidateRange(1, 4)][int]$DiscoveryWorkers = 2
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,18 +119,36 @@ Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kde
 if (-not $AccountOnly) {
     Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
 
-    foreach ($queue in @("interactive", "discovery")) {
+    $queuePlans = @(
+        @{ Queue = "interactive"; Count = 1 },
+        @{ Queue = "discovery"; Count = $DiscoveryWorkers }
+    )
+    foreach ($plan in $queuePlans) {
+        $queue = $plan.Queue
         $workers = @(Get-CimInstance Win32_Process | Where-Object {
             $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
-            $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*"
+            $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*" -and
+            $_.ExecutablePath -eq $Python
         })
-        if ($workers.Count -eq 0) {
-            Start-KDeskProductionProcess -Name "worker-$queue" -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod", "--queue", $queue)
+        for ($index = $workers.Count; $index -lt $plan.Count; $index++) {
+            $name = if ($queue -eq "discovery") { "worker-discovery-$($index + 1)" } else { "worker-$queue" }
+            Start-KDeskProductionProcess -Name $name -Arguments @("-m", "kdesk.worker.runner", "--profile", "prod", "--queue", $queue)
         }
     }
 }
 
 Start-Sleep -Seconds 2
+$healthScript = Join-Path $PSScriptRoot "health_check_prod.ps1"
+$healthArguments = @()
+if ($AccountOnly) { $healthArguments += "-AccountOnly" }
+$healthResults = @(& $healthScript @healthArguments)
+$failedHealth = @($healthResults | Where-Object {
+    $_.PSObject.Properties.Name -contains "Ready" -and -not $_.Ready
+})
+if ($failedHealth.Count -gt 0) {
+    $details = ($failedHealth | ForEach-Object { "$($_.Name): $($_.Status)" }) -join "; "
+    throw "Production startup health check failed: $details"
+}
 Write-Host "Account production: http://127.0.0.1:8777"
 if (-not $AccountOnly) {
     Write-Host "K-line production: http://127.0.0.1:8766"

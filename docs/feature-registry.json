@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "711808c8ad17",
+  "registryVersion": "c170ca12abcc",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -11,6 +11,7 @@
         "GET /account/{login}",
         "GET /api/accounts/by-login/{login}/detail",
         "GET /api/accounts/by-login/{login}/risk-panels",
+        "GET /api/accounts/by-login/{login}/historical-funds",
         "GET /api/accounts/by-login/{login}/relationship-network",
         "GET /api/accounts/by-login/{login}/orders"
       ],
@@ -28,6 +29,7 @@
       "depends_on": [
         "ACC-SEARCH-001",
         "FIN-COMP-001",
+        "FIN-HISTORY-001",
         "AUT-COPY-001",
         "AUT-FOLLOWER-001",
         "AUT-EA-001",
@@ -36,7 +38,7 @@
         "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-06",
+      "last_verified_date": "2026-08-07",
       "document": "docs/features/account/account-detail-legacy.md"
     },
     {
@@ -67,6 +69,33 @@
       "last_verified_version": "2.1.0",
       "last_verified_date": "2026-07-29",
       "document": "docs/features/account/relationship-network.md"
+    },
+    {
+      "feature_id": "ACC-REL-002",
+      "title": "Kuzu local relationship graph demo",
+      "module": "account",
+      "status": "active",
+      "apis": [
+        "GET /kuzu-demo",
+        "GET /api/kuzu-demo/graph"
+      ],
+      "code": [
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_demo_page.py",
+        "src/kdesk/infrastructure/kuzu_relationship_demo.py",
+        "src/kdesk/settings.py",
+        "pyproject.toml",
+        "requirements.lock"
+      ],
+      "tests": [
+        "tests/test_api.py"
+      ],
+      "depends_on": [
+        "ACC-REL-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-08-03",
+      "document": "docs/features/account/kuzu-relationship-demo.md"
     },
     {
       "feature_id": "ACC-SEARCH-001",
@@ -292,6 +321,34 @@
       "document": "docs/features/finance/hierarchy-net-deposit.md"
     },
     {
+      "feature_id": "FIN-HISTORY-001",
+      "title": "Historical funds backtrace",
+      "module": "finance",
+      "status": "active",
+      "apis": [
+        "GET /api/accounts/by-login/{login}/historical-funds"
+      ],
+      "code": [
+        "src/kdesk/domain/historical_funds.py",
+        "src/kdesk/application/historical_funds.py",
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py"
+      ],
+      "tests": [
+        "tests/test_historical_funds.py",
+        "tests/test_api.py",
+        "legacy/apps/problem_account_registry/test_app.py"
+      ],
+      "depends_on": [
+        "ACC-DETAIL-001",
+        "ACC-SEARCH-001",
+        "FIN-COMP-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-08-07",
+      "document": "docs/features/finance/historical-funds-backtrace.md"
+    },
+    {
       "feature_id": "FIN-REBATE-001",
       "title": "Rebate aggregation and display",
       "module": "finance",
@@ -443,7 +500,8 @@
         "frontend/src/components/PositionRiskDiscoveryPanel.vue",
         "scripts/start_dev.ps1",
         "scripts/start_prod.ps1",
-        "scripts/stop_prod.ps1"
+        "scripts/stop_prod.ps1",
+        "scripts/health_check_prod.ps1"
       ],
       "tests": [
         "tests/test_api.py",
@@ -457,7 +515,7 @@
       ],
       "depends_on": [],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-04",
+      "last_verified_date": "2026-08-07",
       "document": "docs/features/jobs/job-progress-recovery.md"
     },
     {
@@ -496,7 +554,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-23",
+      "last_verified_date": "2026-08-03",
       "document": "docs/features/kline/database-generation.md"
     },
     {
