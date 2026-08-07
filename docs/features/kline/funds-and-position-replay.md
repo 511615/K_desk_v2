@@ -104,7 +104,8 @@ invalid-local-cache recovery. Pure tests prove a selected window receives a know
 preserves unknown pre-anchor state, and retains the exact chronological opening and closing source
 events without changing the raw curve. HTML tests prove the artifact embeds the historical-funds
 layout, lower-panel funds switcher, clickable liquidation controls, order/Deal table, full-history
-virtual scrolling, raw event wording, and JavaScript parses.
+virtual scrolling, raw event wording, and JavaScript parsing plus activation of the actual funds
+panel hook.
 Historical-funds fixtures continue to cover MT4 cash/Credit/clear, MT5 Action 2/3 and liquidation
 markers. Manual acceptance checks both checkbox states, an MT4 and MT5 chart, USD and USC scaling,
 a cache reuse, explicit refresh, a chart with unavailable funds data, an event-table jump and an HTML
