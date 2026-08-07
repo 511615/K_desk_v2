@@ -309,12 +309,12 @@ export function copyReasonLabel(value: unknown): string {
     client_recovery_shadow: '客户恢复前影子观察',
     source_position_over_24h: '来源持仓超过24小时',
     zero_effective_weight: '当前有效权重为零',
-    below_minimum_risk_lot: '风险额度不足最小手',
-    execution_gate_blocked: '点差、延迟或外部仓位闸门阻止开仓',
+    below_minimum_risk_lot: '客户独立风险手数低于产品最小手',
+    event_detail_unavailable: '执行器未保存更细子原因',
     'execution_gate_blocked:external_position_conflict': '存在外部仓位冲突',
     'execution_gate_blocked:invalid_quote': '报价无效',
     'execution_gate_blocked:stale_quote': '报价过期',
-    'execution_gate_blocked:spread': '点差超限',
+    'execution_gate_blocked:spread': '点差超过开仓上限',
     'execution_gate_blocked:database_stale': '数据库数据过期',
     'execution_gate_blocked:operational_gates': '运行门控尚未通过',
     'execution_gate_blocked:manual_or_terminal': '终端或手动开关未就绪',
@@ -326,6 +326,7 @@ export function copyReasonLabel(value: unknown): string {
 
 export function eventExecutionLabel(row: Record<string, unknown>): string {
   const decision = String(row.decision || '').trim()
+  const reasonCode = String(row.reasonCode || '').trim()
   const phase = String(row.phase || '').trim()
   if (phase === 'pool_rebuild_failed') {
     return '未跟单：客户池重建失败，执行暂停，目标手数为 0'
@@ -342,13 +343,22 @@ export function eventExecutionLabel(row: Record<string, unknown>): string {
   if (decision === 'active' && Math.abs(Number(row.desiredTargetLots) || 0) > 1e-9) {
     return '跟单成功'
   }
+  if (reasonCode) {
+    return `未跟单：${copyReasonLabel(reasonCode)}`
+  }
   if (decision === 'risk_rejected'
     && Math.abs(Number(row.desiredTargetLots) || 0) <= 1e-9
     && Math.abs(Number(row.rawTargetLots) || 0) > 1e-9
     && Math.abs(Number(row.rawTargetLots) || 0) < 0.01) {
     return '未跟单：目标手数低于最小手'
   }
-  return `未跟单：${copyReasonLabel(decision || 'execution_gate_blocked')}`
+  if (decision === 'monitor') {
+    return '未跟单：当时仅监控；旧事件未保存具体子原因'
+  }
+  if (!decision) {
+    return '未跟单：旧事件未保存执行结果'
+  }
+  return `未跟单：${copyReasonLabel(decision)}`
 }
 
 export function eventPoolTier(row: Record<string, unknown>, currentTier: PoolTierTab): PoolTierTab {

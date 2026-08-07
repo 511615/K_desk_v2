@@ -244,6 +244,12 @@ restoration, byte-preserved timestamped archives and a newly headed current file
 `DictReader` fields cannot shift. Multi-source regressions require its schema override to survive
 base initialization, MT5 then MT4 event normalization without rotation, and independent then
 flatten order normalization without rotation.
+Event-reason regressions require each new MT4/MT5 entry to persist one bounded event-time
+`reason_code`, including minimum-risk-lot, signal-expired, restart-monitor and each supported
+execution-gate code. Dashboard tests assert separate `decision`/`reasonCode`, rejection of unknown
+free text and compatibility for old rows without the column. Frontend helper and mounted-page tests
+must display the exact localized code and must never fall back to the former combined
+point-spread/delay/external-position guess.
 Execution-quality dashboard tests additionally require an explicit deferred historical-delay state,
 cashflow-adjusted drawdown coverage, holding/overnight/weekend fields, factor gate-code filtering,
 pool-tier projection and scheduler/dynamic-sleeve state. A dynamic state row with an unmapped private

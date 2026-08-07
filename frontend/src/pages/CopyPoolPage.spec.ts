@@ -58,6 +58,7 @@ vi.mock('@tanstack/vue-query', () => ({
           { eventId: 1, time: '2026-08-05T01:30:00Z', accountLogin: '3054777', product: 'XAUUSD', sourceSide: 'BUY', sourceLots: 0.2, sourceEntry: 'IN', decision: '已更新独立来源仓', dbLatencySeconds: 0.4 },
           { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 1, decision: '仅监控', dbLatencySeconds: 0.5 },
           { eventId: 3, time: '2026-08-05T01:32:00Z', accountLogin: '7787507', product: 'XAUUSD', sourceSide: 'SELL', sourceLots: 0.01, sourceEntry: 0, phase: 'pool_rebuild_failed', desiredTargetLots: 0, dbLatencySeconds: 0.078 },
+          { eventId: 4, time: '2026-08-05T01:33:00Z', accountLogin: '628039', product: 'XAUUSD', sourceSide: 'SELL', sourceLots: 0.02, sourceEntry: 0, phase: 'live', decision: 'monitor', reasonCode: 'below_minimum_risk_lot', desiredTargetLots: 0, dbLatencySeconds: 0.08 },
         ],
         orders: [],
         copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],
@@ -175,6 +176,18 @@ describe('CopyPoolPage tier tabs', () => {
     const stream = wrapper.get('[data-testid="tier-event-stream"]')
     expect(stream.text()).toContain('7787507')
     expect(stream.text()).toContain('客户池重建失败，执行暂停，目标手数为 0')
+  })
+
+  it('shows the exact bounded reason captured when an entry was not copied', async () => {
+    const wrapper = mount(CopyPoolPage)
+    const monitor = wrapper.get('[data-testid="event-tier-tabs"]').findAll('button').find(button => button.text().includes('监控池'))!
+
+    await monitor.trigger('click')
+
+    const stream = wrapper.get('[data-testid="tier-event-stream"]')
+    expect(stream.text()).toContain('628039')
+    expect(stream.text()).toContain('客户独立风险手数低于产品最小手')
+    expect(stream.text()).not.toContain('点差、延迟或外部仓位')
   })
 
   it('shows current-copy ownership, quantities, and unavailable P/L explicitly', () => {

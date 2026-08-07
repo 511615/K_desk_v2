@@ -629,6 +629,7 @@ class MultiSourceTests(unittest.TestCase):
             "signal_expired": False,
             "phase": "shadow",
             "reason": "monitor",
+            "reason_code": "old_or_shadow_position",
         }
         row.update(overrides)
         return row
@@ -764,6 +765,7 @@ class MultiSourceTests(unittest.TestCase):
             self.assertEqual(tuple(rows[0]), MULTISOURCE_EVENT_PUBLIC_COLUMNS)
             self.assertEqual(rows[0]["latency_known"], "")
             self.assertEqual(rows[1]["latency_known"], "True")
+            self.assertEqual(rows[0]["reason_code"], "old_or_shadow_position")
             self.assertEqual(list(service.event_path.parent.glob("*.schema-mismatch-*.csv")), [])
 
     def test_multisource_event_rejects_unknown_field(self) -> None:

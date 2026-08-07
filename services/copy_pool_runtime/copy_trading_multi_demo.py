@@ -153,13 +153,63 @@ MULTISOURCE_EVENT_PUBLIC_COLUMNS = (
     "source_platform", "source_side", "source_entry", "source_lots", "product",
     "effective_weight", "raw_target_lots", "desired_target_lots", "actual_strategy_lots",
     "gross_long_lots", "gross_short_lots", "db_latency_seconds", "allowed_delay_seconds",
-    "signal_expired", "latency_known", "phase", "reason",
+    "signal_expired", "latency_known", "phase", "reason", "reason_code",
 )
 MULTISOURCE_ORDER_PUBLIC_COLUMNS = (
     "order_event", "time_beijing", "client_alias", "source_position_id", "product",
     "action", "before_lots", "target_lots", "after_lots", "demo_tickets", "bid", "ask",
     "spread_price", "quote_age_seconds", "retcode", "comment",
 )
+
+PUBLIC_EVENT_REASON_CODES = frozenset({
+    "risk_allowed",
+    "risk_allowed_demo_minimum",
+    "source_closed",
+    "client_not_in_current_pool",
+    "old_or_shadow_position",
+    "signal_expired_no_copy",
+    "client_loss_pause",
+    "client_recovery_shadow",
+    "source_position_over_24h",
+    "zero_effective_weight",
+    "below_minimum_risk_lot",
+    "restart_without_demo_ticket",
+    "legacy_monitor_only",
+    "event_detail_unavailable",
+    "execution_gate_blocked:external_position_conflict",
+    "execution_gate_blocked:invalid_quote",
+    "execution_gate_blocked:stale_quote",
+    "execution_gate_blocked:spread",
+    "execution_gate_blocked:database_stale",
+    "execution_gate_blocked:operational_gates",
+    "execution_gate_blocked:manual_or_terminal",
+})
+
+
+def event_reason_code(
+    copy_action: str,
+    copy_position: Any | None,
+    *,
+    signal_expired: bool,
+) -> str:
+    """Return a bounded event-time reason without leaking internal free text."""
+    if signal_expired or copy_action == "signal_expired_no_copy":
+        return "signal_expired_no_copy"
+    if copy_action == "legacy_monitor_only":
+        return "legacy_monitor_only"
+    if copy_position is None:
+        if copy_action in {"close", "batch_terminal_flat"}:
+            return "source_closed"
+        return "event_detail_unavailable"
+    detail = str(getattr(copy_position, "reject_reason", "") or "").strip()
+    if detail in PUBLIC_EVENT_REASON_CODES:
+        return detail
+    status = str(getattr(copy_position, "status", "") or "").strip().lower()
+    if status == "active":
+        return "risk_allowed"
+    if status == "closed":
+        return "source_closed"
+    return "event_detail_unavailable"
 
 
 def has_complete_hourly_evidence(pool: pd.DataFrame) -> bool:
@@ -2592,6 +2642,9 @@ class MultiSourceLiveService(LiveService):
                     + f"{copy_action}:"
                     f"{copy_position.status if copy_position is not None else 'monitor'}"
                 ),
+                "reason_code": event_reason_code(
+                    copy_action, copy_position, signal_expired=expired
+                ),
             },
         )
 
@@ -2757,6 +2810,9 @@ class MultiSourceLiveService(LiveService):
                     "reason": (
                         f"MT4:{copy_action}:"
                         f"{copy_position.status if copy_position is not None else 'monitor'}"
+                    ),
+                    "reason_code": event_reason_code(
+                        copy_action, copy_position, signal_expired=expired
                     ),
                 },
             )

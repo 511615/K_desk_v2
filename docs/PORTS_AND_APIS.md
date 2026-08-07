@@ -72,7 +72,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   product/client/base/effective weights and detail link. Additive `clientRisks`, `copyPositions`,
   `ticketMappings` and `exposures` project customer-owned Demo execution without returning private
   composite keys or comments. Status and timeline rows additively expose `accountLogin`, identifying
-  the Demo account that produced each equity sample. Source events and Demo order events remain compatible;
+  the Demo account that produced each equity sample. Source events additively expose coarse
+  `decision` plus bounded `reasonCode`; unknown producer text is dropped, and a legacy event without
+  `reasonCode` remains empty instead of being guessed as spread, delay or position conflict. Demo
+  order events remain compatible;
   additive `demoAccount` projects the pinned Login's account summary, actual open positions and a
   bounded recent MT5 Deal ledger. Position/Deal rows expose public Ticket, product, direction,
   volume, price, P/L and strategy-ownership fields, but never MT5 Comment, Magic or private source keys.

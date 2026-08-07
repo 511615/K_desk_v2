@@ -223,13 +223,17 @@ The scheduling event stream is an entry-signal view: it shows source opening eve
 reductions and closes remain in the API/event ledger and the position/history panels, but are omitted
 from this stream so an exit from a position that was never copied cannot look like a missed Demo
 order. Each visible source event includes a sanitized execution outcome such as active, monitor,
-signal_expired or risk_rejected. Event placement uses its event-time decision and phase rather than
+signal_expired or risk_rejected plus a bounded event-time `reasonCode`. New Producer events persist
+the exact accepted code (for example `below_minimum_risk_lot`, `signal_expired_no_copy` or a bounded
+`execution_gate_blocked:*` code) separately from the legacy composite reason. The dashboard never
+returns that raw reason or any unknown free text. Event placement uses its event-time decision and phase rather than
 the account-product sleeve's current tier. A monitor event recorded while the pool is rebuilding,
 rebuild has failed, shadow reconciliation is active or AutoTrading is unavailable is shown under
 the corresponding suspended/recovery tier with that concrete phase and a zero target, rather than
 the generic combined point-spread/latency/external-position wording. Event-time phase remains
 authoritative when a compatible older 8777 projection does not yet include the additive decision
-field.
+field. A legacy event without `reasonCode` is labelled explicitly as missing historical detail; the
+UI must not infer point spread, delay or external-position failure without event-time evidence.
 The `当前跟单` table contains only source Positions with actual owned Demo child Tickets. It shows
 the real source Login and detail link, server/platform, product/direction, source Position and lots,
 Demo Ticket and lots, both opening timestamps/prices, entry delay, holding age, exact current source
