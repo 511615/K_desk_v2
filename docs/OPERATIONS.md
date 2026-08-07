@@ -36,6 +36,14 @@ independent processes. A source age above five seconds is displayed as stale. Op
 the producer and file permissions separately; K_desk must not restart the copier or place a repair
 order. Keep `runtime_state_private.json` and `client_routes_private.json` local and out of logs.
 
+Live polling launches all selected physical sources in one platform wave and launches the MT5 and
+MT4 waves together. MT5 results are applied as soon as the MT5 wave completes; a slow MT4 snapshot
+cannot hold an already-read MT5 signal. Runtime source connections use two-second connect/read/write
+timeouts and reconnect after an isolated failure without advancing that source cursor. The longer
+database timeout is reserved for complete historical pool construction. If one source repeatedly
+times out, inspect its source-health error and age; do not increase the live timeout above the
+five-second signal budget or start another Producer.
+
 If `events_public.csv` continues advancing while `status.json` stops, inspect the Producer log for
 terminal identity changes or `AutoTrading disabled` errors. The Producer must remain the only copy
 process. After the heartbeat fix, a failed terminal/ledger sample preserves the last verified Demo

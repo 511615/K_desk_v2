@@ -364,6 +364,9 @@ class ReadOnlySource:
         self.platform = first.platform
         self.connection: pymysql.Connection | None = None
         self.lock = threading.Lock()
+        self.connect_timeout_seconds = 8
+        self.read_timeout_seconds = 30
+        self.write_timeout_seconds = 8
         self.health = SourceHealth(
             physical_key=self.key,
             connection=self.connection_name,
@@ -387,9 +390,9 @@ class ReadOnlySource:
             database=self.schema,
             charset="utf8mb4",
             autocommit=True,
-            connect_timeout=8,
-            read_timeout=30,
-            write_timeout=8,
+            connect_timeout=self.connect_timeout_seconds,
+            read_timeout=self.read_timeout_seconds,
+            write_timeout=self.write_timeout_seconds,
             cursorclass=pymysql.cursors.DictCursor,
         )
         with self.connection.cursor() as cursor:
@@ -404,6 +407,22 @@ class ReadOnlySource:
 
     def reset_connection(self) -> None:
         with self.lock:
+            self.close()
+
+    def configure_timeouts(
+        self,
+        *,
+        connect_seconds: int,
+        read_seconds: int,
+        write_seconds: int,
+    ) -> None:
+        values = (connect_seconds, read_seconds, write_seconds)
+        if any(int(value) <= 0 for value in values):
+            raise ValueError("Database timeouts must be positive whole seconds.")
+        with self.lock:
+            self.connect_timeout_seconds = int(connect_seconds)
+            self.read_timeout_seconds = int(read_seconds)
+            self.write_timeout_seconds = int(write_seconds)
             self.close()
 
     def query(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
@@ -943,6 +962,21 @@ class MultiSourceDatabase:
     def close(self) -> None:
         for source in self.sources.values():
             source.close()
+
+    def configure_realtime_timeouts(
+        self,
+        *,
+        connect_seconds: int,
+        read_seconds: int,
+        write_seconds: int,
+    ) -> None:
+        """Switch all sources from build timeouts to bounded live-poll timeouts."""
+        for source in self.sources.values():
+            source.configure_timeouts(
+                connect_seconds=connect_seconds,
+                read_seconds=read_seconds,
+                write_seconds=write_seconds,
+            )
 
     def set_clients(self, clients: Mapping[str, RoutedClient]) -> None:
         self.clients = dict(clients)
@@ -2436,7 +2470,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         ]
         events: list[RoutedEvent] = []
         errors: list[str] = []
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        if not keys:
+            return events, errors
+        with ThreadPoolExecutor(max_workers=len(keys)) as executor:
             futures = {
                 executor.submit(self.fetch_mt5_events, key, cursors.get(key, SourceCursor())): key
                 for key in keys
@@ -2456,7 +2492,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         ]
         snapshots: dict[str, list[dict[str, Any]]] = {}
         errors: list[str] = []
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        if not keys:
+            return snapshots, errors
+        with ThreadPoolExecutor(max_workers=len(keys)) as executor:
             futures = {executor.submit(self.positions_for_source, key): key for key in keys}
             for future in as_completed(futures):
                 key = futures[future]

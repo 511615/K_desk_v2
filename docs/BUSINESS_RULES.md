@@ -114,6 +114,11 @@
   Margin/equity at 15% blocks additions and 25% triggers a strategy hard stop. Three seconds of
   selected-source staleness blocks additions; thirty seconds flattens all strategy Tickets, including
   offsetting gross positions whose net is zero.
+- Live source polling starts every selected physical source in the same platform poll wave. MT5 and
+  MT4 poll concurrently, and a completed MT5 batch is applied before waiting for MT4 snapshots.
+  Runtime database connect/read/write operations use a two-second bound and reconnect on the next
+  cycle after failure; the longer build-time timeout remains limited to complete historical builds.
+  A failed source never advances its cursor or converts missing evidence to an empty result.
 - MT5 balance, credit and other non-trading ledger actions advance the per-source cursor so polling
   cannot stall, but they contribute no position change, intraday trading P/L, dynamic-weight change
   or executable signal. A duplicate or out-of-order cursor is ignored within that physical source.

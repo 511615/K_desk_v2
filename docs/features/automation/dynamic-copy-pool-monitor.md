@@ -133,7 +133,12 @@ clock. Initial entries, additions and reversal open legs all recheck this clock 
 risk-increase path and immediately before the broker request. Reductions and closes do not refresh
 the clock. An expired reversal may close the prior owned Ticket but cannot open the opposite leg.
 
-The producer processes source events every 500 ms, refreshes client and sleeve risk every 10
+The producer targets a 500 ms source-event cadence. Every selected physical source starts in the
+same platform poll wave, while the MT5 and MT4 waves start concurrently. The completed MT5 batch is
+applied before waiting for MT4 snapshots, so a slow MT4 source cannot delay an already-read MT5
+signal. After an accepted historical build, source connections switch from the complete-read profile
+to two-second connect/read/write timeouts; an isolated timeout closes only that source connection,
+preserves its cursor and reconnects on a later cycle. The producer refreshes client and sleeve risk every 10
 seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded one/four-hour
 accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. A newly ranked
 hard/activity/minimum-lot-qualified sleeve enters `ACTIVE` on its first qualified ranking and can

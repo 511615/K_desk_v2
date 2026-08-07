@@ -268,6 +268,11 @@ source cursors, MT4/MT5 position semantics, Cent money-only scaling, account-pro
 outage gates and current-day restart recovery. MT5 ledger-action tests require cursor progression
 without position, trading-P/L, weight or signal changes; simulations also cover duplicate/out-of-
 order isolation, MT4 snapshot reversal and rejection of incomplete accepted-pool coverage.
+Runtime-polling regressions require all five selected MT5 physical sources to start before any
+source finishes, require the accepted historical build timeout to switch to a two-second live
+connect/read/write profile, and prove that ready MT5 events are applied while an MT4 snapshot wave
+is still blocked. A timed-out source must retain its cursor and expose failure without discarding
+successful sibling-source results.
 Read-only preflight acceptance requires 11/11 route
 and 9/9 physical coverage, at least ten deployable clients, no ambiguous shared-source Login in the
 pool and no MT initialization or order. Dashboard contracts cover the source funnel, runtime health
