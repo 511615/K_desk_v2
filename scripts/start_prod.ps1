@@ -10,6 +10,36 @@ $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $Runtime = Join-Path $Root "runtime\prod"
 $LogDir = Join-Path $Runtime "logs"
 
+$branch = (& git -C $Root branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to read the production Git branch." }
+if ($branch -ne "main") {
+    throw "Production startup refused: $Root is on '$branch', expected 'main'."
+}
+$status = @(& git -C $Root status --porcelain)
+if ($LASTEXITCODE -ne 0) { throw "Unable to inspect the production Git worktree." }
+if ($status.Count -gt 0) {
+    throw "Production startup refused: the main worktree contains uncommitted changes."
+}
+$commit = (& git -C $Root rev-parse --verify HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $commit) { throw "Unable to resolve the production Git commit." }
+
+$FrontendSource = Join-Path $Root "frontend\dist"
+if (-not (Test-Path -LiteralPath (Join-Path $FrontendSource "index.html") -PathType Leaf)) {
+    throw "Production frontend build is missing: $FrontendSource"
+}
+$FrontendRelease = Join-Path $Runtime ("frontend-releases\" + $commit)
+if (-not (Test-Path -LiteralPath (Join-Path $FrontendRelease "index.html") -PathType Leaf)) {
+    $FrontendReleaseParent = Split-Path -Parent $FrontendRelease
+    New-Item -ItemType Directory -Force -Path $FrontendReleaseParent | Out-Null
+    $FrontendStaging = Join-Path $FrontendReleaseParent (".staging-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $FrontendStaging | Out-Null
+    Copy-Item -Path (Join-Path $FrontendSource "*") -Destination $FrontendStaging -Recurse -Force
+    if (-not (Test-Path -LiteralPath (Join-Path $FrontendStaging "index.html") -PathType Leaf)) {
+        throw "Versioned frontend staging is incomplete: $FrontendStaging"
+    }
+    Move-Item -LiteralPath $FrontendStaging -Destination $FrontendRelease
+}
+
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Production runtime is missing. Run scripts\bootstrap_dev.ps1 first."
 }
@@ -22,6 +52,7 @@ $env:KDESK_QUEUE_DATABASE = Join-Path $Runtime "jobs.sqlite"
 $env:KDESK_ARTIFACT_DIR = Join-Path $Runtime "artifacts"
 $env:KDESK_UPLOAD_DIR = Join-Path $Runtime "uploads"
 $env:KDESK_LOG_DIR = $LogDir
+$env:KDESK_FRONTEND_DIST = $FrontendRelease
 $env:KDESK_BOOTSTRAP_XLSX = Join-Path $Runtime "import\problematic_accounts.xlsx"
 $env:KDESK_LEGACY_TRADE_DATABASE = "D:\risk\output_data\account_trade_lookup\trades.sqlite"
 $env:KDESK_ACCOUNT_PORT = "8777"

@@ -57,6 +57,7 @@ vi.mock('@tanstack/vue-query', () => ({
         events: [
           { eventId: 1, time: '2026-08-05T01:30:00Z', accountLogin: '3054777', product: 'XAUUSD', sourceSide: 'BUY', sourceLots: 0.2, sourceEntry: 'IN', decision: '已更新独立来源仓', dbLatencySeconds: 0.4 },
           { eventId: 2, time: '2026-08-05T01:31:00Z', accountLogin: '5200101', product: 'EURUSD', sourceSide: 'SELL', sourceLots: 0.1, sourceEntry: 1, decision: '仅监控', dbLatencySeconds: 0.5 },
+          { eventId: 3, time: '2026-08-05T01:32:00Z', accountLogin: '7787507', product: 'XAUUSD', sourceSide: 'SELL', sourceLots: 0.01, sourceEntry: 0, decision: 'monitor', phase: 'pool_rebuild_failed', desiredTargetLots: 0, dbLatencySeconds: 0.078 },
         ],
         orders: [],
         copyPositions: [{ clientAlias: 'C001', accountLogin: '3054777', accountServer: 'DBG GB MT5 Live2', accountPlatform: 'MT5', product: 'XAUUSD', sourcePositionId: 135826468, sourceLots: 0.2, copiedLots: 0.01, copiedSignedLots: 0.01, sourceOpenedAt: '2026-07-31T15:12:07+08:00', status: 'active', detailPath: '/copy-pool/accounts/C001' }],
@@ -163,6 +164,17 @@ describe('CopyPoolPage tier tabs', () => {
     expect(wrapper.get('[data-testid="tier-event-stream"]').text()).not.toContain('5200101')
     expect(wrapper.get('[data-testid="tier-event-stream"]').text()).toContain('当前层级暂无事件')
     expect(wrapper.get('[aria-label="客户池层级"]').find('[aria-selected="true"]').text()).toContain('硬门拒绝')
+  })
+
+  it('shows the event-time execution failure instead of the account current tier', async () => {
+    const wrapper = mount(CopyPoolPage)
+    const suspended = wrapper.get('[data-testid="event-tier-tabs"]').findAll('button').find(button => button.text().includes('执行暂停'))!
+
+    await suspended.trigger('click')
+
+    const stream = wrapper.get('[data-testid="tier-event-stream"]')
+    expect(stream.text()).toContain('7787507')
+    expect(stream.text()).toContain('客户池重建失败，执行暂停，目标手数为 0')
   })
 
   it('shows current-copy ownership, quantities, and unavailable P/L explicitly', () => {

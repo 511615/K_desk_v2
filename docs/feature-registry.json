@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "8bcbb0dce044",
+  "registryVersion": "1f79dc0104b9",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -198,6 +198,7 @@
         "frontend/src/pages/CopyPoolPage.vue",
         "frontend/src/copyPool.ts",
         "frontend/src/beijingTime.ts",
+        "scripts/start_prod.ps1",
         "services/copy_pool_runtime/run_copy_demo_live.ps1",
         "services/copy_pool_runtime/copy_delay_replay_domain.py",
         "services/copy_pool_runtime/copy_dynamic_pool_domain.py",
@@ -219,6 +220,7 @@
       ],
       "tests": [
         "tests/test_copy_pool_monitor.py",
+        "tests/test_production_versioning.py",
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/src/copyPool.spec.ts",
         "frontend/src/beijingTime.spec.ts",
@@ -240,7 +242,7 @@
         "ACC-DETAIL-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-06",
+      "last_verified_date": "2026-08-07",
       "document": "docs/features/automation/dynamic-copy-pool-monitor.md"
     },
     {

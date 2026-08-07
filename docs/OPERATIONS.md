@@ -14,6 +14,13 @@ not contain credentials or sensitive account fields.
 `scripts/start_prod.ps1 -AccountOnly` starts only the main account service on 8777 and intentionally
 does not start 8766 or production workers; use it for the dedicated copy-pool deployment.
 
+Production startup is fail-closed before migrations or process creation: the checkout must be on
+`main`, `git status --porcelain` must be empty and `HEAD` must resolve. The launcher copies the
+already verified `frontend/dist` into `runtime/prod/frontend-releases/<full-git-sha>` through a
+unique staging directory, then sets `KDESK_FRONTEND_DIST` to that immutable release directory.
+The running 8777 process never serves a development worktree's mutable `frontend/dist`; rebuilding
+or switching a development branch therefore cannot replace the deployed UI.
+
 The Vue index is served with `no-store`. Open workbench pages compare the deployed hashed entry
 asset every 15 seconds and on focus, then reload when a deployment changes it; persistent jobs are
 restored from browser storage or the active-job API.
@@ -177,7 +184,9 @@ pre-push runs Full. Production remains checked out on `main`. Normal changes are
 `develop` worktree, verified there, merged into `main`, and deployed by a controlled restart. Do not
 edit feature or Producer code in the running production worktree.
 
-The production checkout is `D:\risk\K_desk_v2` on `main`; the development checkout is
+The production checkout must be the worktree currently on `main`; on this host that checkout is
+`D:\risk\K_desk_v2_main`. `D:\risk\K_desk_v2` is an older feature worktree and is not a valid
+production launcher while it remains off `main`. The development checkout is
 `D:\risk\K_desk_v2_dev` on `develop`. A normal promotion requires a clean development worktree,
 `verify_change.ps1 -Mode Full`, a committed and pushed `develop`, then a non-interactive merge into
 `main`, another Full verification from the production checkout and a pushed `main`. Only after the
