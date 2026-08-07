@@ -40,6 +40,8 @@ retaining exact break labels after zoom-in.
 Account and K-line endpoints submit jobs, poll by job ID, cancel and serve safe artifact names.
 Job results retain `chart`, `status` and `message` and add `partial`, `symbols[]`, `failures[]` and
 `quoteSources[]`. Failure rows contain symbol, stage, code, attempted sources, metrics and reason.
+Database charts additionally embed the `KLN-TIMELINE-001` account funds/position replay; no endpoint
+or chart URL changes.
 
 ## Data, routing and read-only constraints
 

@@ -224,6 +224,9 @@ gold and GBPUSD accepted while BTCUSD, XAGUSD and AUDCAD anomalies must reject o
 span 2,946 through 4,383 minutes and assert compressed boundary labels, elapsed-time blanks and no
 cross-gap aggregation. Browser checks cover standalone, iframe and task-center desktop/mobile layout,
 nonblank canvas pixels and both time modes.
+K-line funds/position replay tests require a selected account route, exact Balance/Credit carry-in
+or an explicit unknown state, separate funds/order event categories, no default 10,000/1:500 funding
+fallback, usable liquidation markers, paged event rows and standalone HTML JavaScript parsing.
 
 Dynamic copy-pool monitor regressions cover malformed or missing snapshot files, stale-source age,
 bounded event/timeline reads, account-product effective-weight projection, virtual-position contribution,

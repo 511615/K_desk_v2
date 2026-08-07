@@ -19,6 +19,9 @@
   Balance/Credit row, while historical and
   intraday equity/margin remain `unknown` unless an authoritative snapshot exists. The feature never
   decides an amount to deduct, clear or repay.
+  K-line funds replay reuses the same facts for Balance/Credit and liquidation display. It carries the
+  last known pre-window state into a filtered chart; a missing state is shown as unknown. Historical
+  margin, margin level and equity must not be inferred from a default opening balance or leverage.
 - MT5 USC detection uses a distinct `Cent` or `USC` users-group segment. Explicit currency segments
   are retained; standard groups use the configured source default USD. The resulting `0.01` USC
   scale applies to platform money only, not prices, lots, identifiers, timestamps or CRM rebates.

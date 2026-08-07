@@ -94,6 +94,10 @@ service composes only routed raw facts provided through LegacyBridge. FastAPI an
 provide the API and UI boundary. This respects `interfaces -> application -> domain`; only the
 LegacyBridge imports legacy data access.
 
+`KLN-TIMELINE-001` reuses this same pure replay in its Worker-owned K-line artifact path. It passes
+the selected account's normalized facts directly to the generator rather than calling this HTTP API,
+so the generated chart stays standalone and route-consistent.
+
 ## Tests and acceptance
 
 Unit fixtures cover MT4 external cash, internal transfer, Credit grant/removal, negative-balance

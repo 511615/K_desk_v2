@@ -164,7 +164,8 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /output/{name}`
 
 K-line job `result` keeps the existing `chart`, `status` and `message` fields and additively exposes
-`partial`, accepted `symbols`, structured `failures` and read-only `quoteSources`. Existing request
+`partial`, accepted `symbols`, structured `failures`, read-only `quoteSources` and an optional
+timeline coverage summary for generated database charts. Existing request
 parameters, output names, `8777/8766` ports, iframe previews and direct chart links are unchanged.
 
 ## Operations

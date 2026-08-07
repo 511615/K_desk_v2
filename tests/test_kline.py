@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
+import shutil
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -161,3 +164,46 @@ def test_production_launcher_uses_dedicated_quote_terminal_with_override() -> No
     assert "KDESK_KLINE_QUOTE_TERMINAL" in launcher
     assert r"D:\risk\mt5_backtest_terminal\terminal64.exe" in launcher
     assert "$env:TRADE_KLINE_TERMINAL" in launcher
+
+
+def test_timeline_feature_embeds_factual_balance_credit_replay_and_event_table() -> None:
+    root = Path(__file__).resolve().parents[1]
+    tool_root = root / "legacy" / "tools" / "trade_kline_tool"
+    spec = importlib.util.spec_from_file_location("account_timeline_features", tool_root / "account_timeline_features.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    html = '''<html><head><style></style></head><body>
+<button id="panelPosition">仓位</button>
+<div class="metric"><div class="k">占用保证金</div><div class="v" id="posMargin">-</div></div>
+<div class="tableWrap" data-role="trades"><table id="tradeTable"></table></div>
+<script>const DATA = {"account":"1"};
+const canvas = document.getElementById('chart');</script></body></html>'''
+    timeline = {
+        "version": 1,
+        "available": True,
+        "openingState": {"timestamp": "2026-01-01 09:00:00", "balance": 1000, "credit": 10, "known": True},
+        "summary": {"currency": "USD", "eventCount": 1, "allEventCount": 1},
+        "events": [{"timestamp": "2026-01-01 10:00:00", "kind": "deposit"}],
+        "curve": [{"timestamp": "2026-01-01 10:00:00", "balance": 1100, "credit": 10}],
+        "liquidationPoints": [],
+    }
+
+    result = module.inject_account_timeline(html, timeline)
+
+    assert '"accountTimeline"' in result
+    assert 'id="panelFunds"' in result
+    assert '资金与订单事件' in result
+    assert 'posFundingFact' in result
+    assert '历史保证金率没有平台盘中快照，未展示估算比例' in result
+    assert 'build_position_fused_trade_kline_demo' not in (tool_root / "fused_trade_kline_features.py").read_text(encoding="utf-8")
+    node = shutil.which("node")
+    if node:
+        scripts = __import__("re").findall(r"<script>([\s\S]*?)</script>", result)
+        check = subprocess.run(
+            [node, "-e", "new Function(process.argv[1]);", "\n".join(scripts)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert check.returncode == 0, check.stderr

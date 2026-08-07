@@ -580,6 +580,7 @@ def main() -> None:
     parser.add_argument("--quote-sources", default="", help="Optional local read-only quote-source registry JSON.")
     parser.add_argument("--platform", default="", help="Order platform used to select a same-source provider.")
     parser.add_argument("--server", default="", help="Order server used to select a same-source provider.")
+    parser.add_argument("--timeline-json", default="", help="Optional factual Balance/Credit replay payload for standalone chart display.")
     parser.add_argument("--mt5-timeout", type=int, default=10000, help="MT5 initialize timeout in milliseconds.")
     parser.add_argument("--symbols", default="", help="Comma/space separated report symbols to generate, for example XAUUSD.PRO,EURUSD.PRO.")
     parser.add_argument("--start", default="", help="Only include trades overlapping this report-time start, e.g. 2026-06-01 00:00.")
@@ -590,6 +591,13 @@ def main() -> None:
     TERMINAL = args.terminal
     statement = Path(args.statement) if args.statement else None
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    timeline = None
+    if args.timeline_json:
+        timeline_path = Path(args.timeline_json)
+        try:
+            timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(f"无法读取资金时间线: {timeline_path}: {exc}")
 
     if args.trades_csv:
         source_trades_path = Path(args.trades_csv)
@@ -761,7 +769,12 @@ def main() -> None:
     html_path = OUT_DIR / f"{stem}_trade_kline.html"
     if bars_by_symbol:
         chart_trades = trades[trades["Item"].isin(bars_by_symbol)].copy()
-        html = enhance_trade_kline_html(build_html(account, stem, chart_trades, bars_by_symbol, mapping_by_symbol), statement, chart_trades)
+        html = enhance_trade_kline_html(
+            build_html(account, stem, chart_trades, bars_by_symbol, mapping_by_symbol),
+            statement,
+            chart_trades,
+            timeline,
+        )
         html_path.write_text(html, encoding="utf-8")
 
     result = generation_result(

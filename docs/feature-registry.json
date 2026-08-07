@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "c170ca12abcc",
+  "registryVersion": "dfe21cca4204",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -556,6 +556,37 @@
       "last_verified_version": "2.1.0",
       "last_verified_date": "2026-08-03",
       "document": "docs/features/kline/database-generation.md"
+    },
+    {
+      "feature_id": "KLN-TIMELINE-001",
+      "title": "K-line funds and position replay",
+      "module": "kline",
+      "status": "active",
+      "apis": [
+        "POST /api/kline/generate-from-db",
+        "GET /api/kline/jobs/{job_id}",
+        "GET /output/{name}"
+      ],
+      "code": [
+        "src/kdesk/domain/kline_timeline.py",
+        "legacy/apps/problem_account_registry/app.py",
+        "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
+        "legacy/tools/trade_kline_tool/fused_trade_kline_features.py",
+        "legacy/tools/trade_kline_tool/account_timeline_features.py",
+        "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"
+      ],
+      "tests": [
+        "tests/test_kline_timeline.py",
+        "tests/test_kline.py",
+        "tests/test_historical_funds.py"
+      ],
+      "depends_on": [
+        "KLN-DB-001",
+        "FIN-HISTORY-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-08-07",
+      "document": "docs/features/kline/funds-and-position-replay.md"
     },
     {
       "feature_id": "LED-ACCOUNT-001",

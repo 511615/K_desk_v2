@@ -7714,6 +7714,64 @@ def parse_generated_html_path(output: str) -> Path | None:
     return None
 
 
+def build_db_kline_timeline(account: str, filters: dict) -> dict:
+    """Build a read-only Balance/Credit replay for the same routed K-line account."""
+    route_filters = {
+        "platform": normalize_text(filters.get("platform")),
+        "server": normalize_text(filters.get("server")),
+    }
+    try:
+        raw = account_historical_funds_source_payload(account, route_filters)
+        if not raw.get("available"):
+            return {
+                "version": 1,
+                "available": False,
+                "reason": normalize_text(raw.get("reason")) or "账户资金时间线不可用",
+                "events": [],
+                "curve": [],
+                "liquidationPoints": [],
+                "summary": {"currency": "USD", "eventCount": 0, "allEventCount": 0},
+                "openingState": {"timestamp": "", "balance": None, "credit": None, "known": False},
+            }
+        from kdesk.domain.historical_funds import build_historical_funds
+        from kdesk.domain.kline_timeline import build_kline_timeline
+
+        replay = build_historical_funds(
+            platform=raw.get("platform", ""),
+            currency=raw.get("currency", "USD"),
+            money_scale=numeric_value(raw.get("moneyScale")) or 1.0,
+            events=raw.get("events", []),
+            anchors=raw.get("anchors", []),
+            current_anchor=raw.get("currentAnchor"),
+        )
+        timeline = build_kline_timeline(
+            replay,
+            start=normalize_text(filters.get("start")),
+            end=normalize_text(filters.get("end")),
+        )
+        timeline.update({
+            "available": True,
+            "account": normalize_text(account),
+            "platform": raw.get("platform", ""),
+            "server": raw.get("server", ""),
+            "source": raw.get("source", ""),
+            "coverage": raw.get("coverage", {}),
+        })
+        return timeline
+    except Exception as exc:
+        logger.warning("K-line funds timeline unavailable for %s: %s", account, exc)
+        return {
+            "version": 1,
+            "available": False,
+            "reason": "账户资金时间线读取失败",
+            "events": [],
+            "curve": [],
+            "liquidationPoints": [],
+            "summary": {"currency": "USD", "eventCount": 0, "allEventCount": 0},
+            "openingState": {"timestamp": "", "balance": None, "credit": None, "known": False},
+        }
+
+
 def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
     started = time.time()
     update_kline_job(job_id, status="running", startedAt=now_text(), message="正在读取数据库订单", percent=8)
@@ -7729,6 +7787,10 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
         )
         update_kline_job(job_id, message=f"已读取 {len(rows)} 条订单，正在写入标准 CSV", percent=20)
         trades_path, stem = write_trades_csv_from_db(account, rows)
+        update_kline_job(job_id, message="正在读取账户资金与 Credit 时间线", percent=27)
+        timeline = build_db_kline_timeline(account, filters)
+        timeline_path = KLINE_OUT_DIR / f"{stem}_timeline.json"
+        timeline_path.write_text(json.dumps(timeline, ensure_ascii=False), encoding="utf-8")
         update_kline_job(job_id, stem=stem, tradesCsv=str(trades_path), message="正在调用 K 线生成脚本", percent=35)
         cmd = [
             str(K_DESK_PYTHON),
@@ -7745,6 +7807,8 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
             normalize_text(filters.get("platform")),
             "--server",
             normalize_text(filters.get("server")),
+            "--timeline-json",
+            str(timeline_path),
         ]
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -7797,6 +7861,13 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
                 symbols=generation.get("symbols") or [],
                 failures=generation.get("failures") or [],
                 quoteSources=generation.get("quoteSources") or [],
+                timeline={
+                    "available": bool(timeline.get("available")),
+                    "eventCount": timeline.get("summary", {}).get("eventCount", 0),
+                    "allEventCount": timeline.get("summary", {}).get("allEventCount", 0),
+                    "liquidationCount": timeline.get("summary", {}).get("liquidationCount", 0),
+                    "reason": timeline.get("reason", ""),
+                },
             )
         else:
             failures = generation.get("failures") or []
