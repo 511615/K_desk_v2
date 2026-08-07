@@ -218,11 +218,11 @@ def cluster_stress_limit(
     *,
     demo_minimum_override: bool,
 ) -> float:
-    """Keep the normal cluster cap but let Demo fit one executable minimum lot."""
+    """Return the product-direction cap; explicit Demo testing has no cluster cap."""
     normal_limit = max(0.0, cycle_budget) * PORTFOLIO_CLUSTER_RISK_FRACTION
     if not demo_minimum_override:
         return normal_limit
-    return max(normal_limit, max(0.0, minimum_lot_stress))
+    return math.inf
 
 
 def has_complete_hourly_evidence(pool: pd.DataFrame) -> bool:
@@ -1692,7 +1692,7 @@ class MultiSourceLiveService(LiveService):
         portfolio_cap = max(0.0, cycle_budget - total_stress) / stress_per_lot
         cluster_cap = max(
             0.0,
-            cycle_budget * PORTFOLIO_CLUSTER_RISK_FRACTION
+            cluster_limit
             - clusters.get((position.product, position.side), 0.0),
         ) / stress_per_lot
         client_cap = remaining_client / stress_per_lot

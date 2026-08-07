@@ -87,8 +87,8 @@
   independently open; combination risk may reject or shrink additions but never nets customer
   Tickets. Startup and shadow-observed source positions are monitor-only and never chased.
 - The explicit Demo minimum-lot exception has stable ownership. Once a qualifying source Position
-  owns the only minimum lot for a product/direction, later reconciliations preserve that Ticket while
-  eligibility remains true; a sibling source Position cannot alternate into the slot. Eight open
+  owns a minimum lot, later reconciliations preserve that Ticket while eligibility remains true.
+  Same-direction siblings may own independent Tickets in the explicit Demo mode. Eight open
   requests are permitted in a rolling 60-second window; the next request hard-stops execution and
   flattens strategy Tickets instead of allowing an order storm.
 - Independent Demo comments must fit the server's 16-character retained limit. Ownership state is
@@ -109,10 +109,8 @@
   client's loss allowance is floored at the existing 20% per-client share of the cycle budget. This
   exception aligns the indivisible 0.01-lot test exposure with its stop budget; it does not increase
   a zero-weight monitor client, apply on another server/mode or bypass whole-portfolio stress or
-  margin gates. The product-direction cluster limit is `max(40% of cycle stress, one product minimum
-  lot stress)` only in that Demo mode, so an empty cluster can hold one executable minimum lot even
-  when the ordinary 40% share is smaller. Additional same-direction lots consume that same bounded
-  cluster allowance.
+  margin gates. The product-direction cluster limit is disabled only in that explicit Demo mode;
+  same-direction minimum lots remain bounded by the 1.5% whole-portfolio stress budget and margin.
 - A 12-hour source position cannot add copied risk. At 24 hours all copies for that client close and
   the client pauses. Outside the explicit Demo minimum-lot exception, a product-direction cluster
   may use at most 40% of combination stress budget.
