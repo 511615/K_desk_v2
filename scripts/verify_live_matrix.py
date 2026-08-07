@@ -41,7 +41,8 @@ def main() -> None:
         if not route_ok:
             failures.append(f"{login}: expected server {sample['server']}, got {servers}")
         expected_finance = sample.get("finance") or {}
-        if expected_finance:
+        volatile_fields = sample.get("volatileFields", [])
+        if expected_finance or volatile_fields:
             finance = fetch(
                 args.base_url,
                 f"/api/accounts/by-login/{urllib.parse.quote(login, safe='')}/risk-panels",
@@ -51,10 +52,10 @@ def main() -> None:
                 key for key, expected in expected_finance.items() if not close_enough(finance.get(key), expected, tolerance)
             ]
             volatile_missing = [
-                key for key in sample.get("volatileFields", []) if not isinstance(finance.get(key), (int, float))
+                key for key in volatile_fields if not isinstance(finance.get(key), (int, float))
             ]
             item["financeMismatches"] = mismatches
-            item["volatileFields"] = sample.get("volatileFields", [])
+            item["volatileFields"] = volatile_fields
             failures.extend(f"{login}: finance mismatch {key}" for key in mismatches)
             failures.extend(f"{login}: volatile finance field is not numeric {key}" for key in volatile_missing)
         results.append(item)

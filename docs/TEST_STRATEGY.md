@@ -35,7 +35,9 @@ trade users, returns `unique_trade_user_fallback`, derives USC/USD metadata from
 and must remain unavailable if the same MT5 Login appears in another independent DBG physical source.
 Expected live values are maintained in an ignored local contract fixture because account data is
 not committed to GitHub. Active-account fields may be declared volatile: they must remain present
-and numeric, while stable routing and accounting fields retain exact/tolerance comparisons.
+and numeric. Only values that are operationally stable retain exact/tolerance comparisons; moving
+balances, net deposits, rebates and derived P/L are verified against deterministic offline fixtures
+instead of an aging online snapshot.
 Live3 account 241003365 is the no-daily-row USC regression sample: routing remains server code 3,
 the group fallback yields `moneyScale=0.01`, and CRM rebates remain unscaled USD values. Its CRM
 user 133018 also verifies cross-server same-name discovery: Live1 account 245856 and all four Live3

@@ -5,10 +5,10 @@ module: governance
 status: active
 apis: ["GET /api/meta"]
 code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
-tests: ["tests/test_governance.py", "tests/test_architecture.py"]
+tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_verify_live_matrix.py"]
 depends_on: []
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-17
+last_verified_date: 2026-08-07
 ---
 
 # Feature documentation lifecycle
@@ -49,8 +49,11 @@ The Python governance CLI is cross-platform; PowerShell composes local Windows v
 
 Tests validate parsing, registry determinism, change records, architecture boundaries and metadata.
 The shared verifier also compiles and safety-lints the versioned copy-pool Producer in Fast mode and
-runs its complete offline regression suite in Full mode. Production remains on `main`; changes are
-verified in the separate `develop` worktree and pass Full again after promotion before restart.
+runs its complete offline regression suite in Full mode. Release verification checks every configured
+live server route and requires each declared volatile finance field to be numeric. Exact finance
+formulas are verified with deterministic offline fixtures; moving live-account balances are never
+treated as an immutable release baseline. Production remains on `main`; changes are verified in the
+separate `develop` worktree and pass Full again after promotion before restart.
 
 ## Compatibility and deprecation
 
