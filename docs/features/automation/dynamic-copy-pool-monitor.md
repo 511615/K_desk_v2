@@ -342,7 +342,8 @@ fixed body `{ "action": "reconnect_and_sync" }`; additional fields and other act
 It atomically queues an idempotent request for the already running Producer and waits for at most ten
 seconds. It never starts, stops or kills a process. Responses expose only the bounded
 `queued|running|synchronized|failed` state, revision, timestamps and aggregate source/cursor/position
-counts. A stopped Producer leaves the request queued and is reported unavailable instead of causing
+counts. The successful-source count is derived from each physical source's verified health `state`.
+A stopped Producer leaves the request queued and is reported unavailable instead of causing
 8777 to launch a second copier.
 
 The 8777 handler writes only that local recovery request and has no direct database, Terminal or

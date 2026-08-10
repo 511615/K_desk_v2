@@ -1540,7 +1540,7 @@ class MultiSourceLiveService(LiveService):
             successful_sources = sum(
                 1
                 for source in getattr(getattr(self, "db", None), "sources", {}).values()
-                if str(getattr(getattr(source, "health", None), "status", "")) == "ok"
+                if str(getattr(getattr(source, "health", None), "state", "")) == "ok"
             )
         atomic_json(self.runtime_recovery_status_path, {
             "revision": revision,

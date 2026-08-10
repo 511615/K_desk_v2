@@ -30,8 +30,14 @@ def test_runtime_recovery_request_resets_every_source_once_and_preserves_cursors
     service.runtime_recovery_status_path = tmp_path / "runtime_recovery_status.json"
     service.runtime_recovery_requested_at = ""
     service.db = SimpleNamespace(sources={
-        "a": SimpleNamespace(reset_connection=lambda: reset_calls.append("a")),
-        "b": SimpleNamespace(reset_connection=lambda: reset_calls.append("b")),
+        "a": SimpleNamespace(
+            reset_connection=lambda: reset_calls.append("a"),
+            health=SimpleNamespace(state="ok"),
+        ),
+        "b": SimpleNamespace(
+            reset_connection=lambda: reset_calls.append("b"),
+            health=SimpleNamespace(state="error"),
+        ),
     })
     cursors = {"a": object(), "b": object()}
     service.portfolio = SimpleNamespace(cursors=cursors)
@@ -52,6 +58,14 @@ def test_runtime_recovery_request_resets_every_source_once_and_preserves_cursors
     assert status["state"] == "running"
     assert status["cursor_sources"] == 2
     assert status["position_count"] == 0
+
+    service._write_runtime_recovery_status(
+        "synchronized",
+        revision="recover-001",
+        requested_at=status["requested_at"],
+    )
+    completed = json.loads(service.runtime_recovery_status_path.read_text(encoding="utf-8"))
+    assert completed["successful_sources"] == 1
 
     assert service.consume_runtime_recovery_request() is False
     assert reset_calls == ["a", "b"]
