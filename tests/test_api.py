@@ -242,6 +242,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
     assert "combineEdges" in page.text
     assert "relationLabel" in page.text
+    assert "function nodeColor" in page.text
+    assert "canvas.addEventListener('wheel'" in page.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:
@@ -345,7 +347,7 @@ def test_kuzu_risk_graph_propagates_until_its_score_threshold(tmp_path: Path) ->
 
     assert page.status_code == 200
     assert "Kuzu 关联风险扩散" in page.text
-    assert "#ef4444" in page.text
+    assert "#ff2638" in page.text
     assert graph.status_code == 200
     payload = graph.json()
     assert payload["source"] == "kuzu-local-cache"

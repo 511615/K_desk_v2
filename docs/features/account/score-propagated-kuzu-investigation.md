@@ -23,11 +23,13 @@ trial.
 ## UI and behavior
 
 There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
-its aggregate reaches the threshold. Red (`>=60`), orange (`>=30`), yellow (above threshold) and
-grey (outer clue) make priority explicit. A relation-aware force layout spreads nearby nodes and
-combines multiple facts between a pair into one visibly labelled edge. Selection shows score, hop
-count, expansion status and evidence ledger. Scores are investigation priority, not a fraud or
-trading conclusion.
+its aggregate reaches the threshold. The seed account is bright red, expandable accounts progress
+from red to lighter orange as score falls, and a retained non-expandable clue is green. A
+relation-aware force layout uses wide node separation and combines multiple facts between a pair
+into one edge; the relation label is displayed when the graph is zoomed in. The graph initially fits
+the complete result, then supports pointer-centred mouse-wheel zoom and drag-to-pan. Selection shows
+score, hop count, expansion status and evidence ledger. Scores are investigation priority, not a
+fraud or trading conclusion.
 
 ## API contract
 

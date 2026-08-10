@@ -22,12 +22,14 @@ previous in-dialog fact graph is no longer the visible account relationship inte
 ## UI and behavior
 
 The Kuzu page renders a relation-aware force layout: connected nodes attract, non-connected nodes
-repel to a minimum readable spacing, and the subject remains central. Parallel facts between the
-same two nodes are combined into one line whose label names every relation type. The page retains
-the threshold control, optional Toxic checkbox and evidence ledger.
-Red means high-priority relationship, orange means priority, yellow remains eligible to expand and
-grey is a retained outer clue that does not expand. Scores are investigation priorities only; they
-are not a fraud conclusion or an automated action.
+repel to a deliberately wide readable spacing, and the subject remains central. Parallel facts
+between the same two nodes are combined into one line whose label names every relation type when
+zoomed in. The page retains the threshold control, optional Toxic checkbox and evidence ledger.
+The subject is bright red; other expandable accounts use a score-driven red-to-light-orange gradient.
+A node retained as a clue but stopped by the propagation threshold is green. Operators can use the
+mouse wheel to zoom around the pointer and drag the canvas to pan, so a large graph starts fitted but
+can be inspected without collapsing nodes. Scores are investigation priorities only; they are not a
+fraud conclusion or an automated action.
 
 ## API contract
 
