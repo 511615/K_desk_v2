@@ -89,6 +89,13 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   automatic new exposure, equity-floor, daily-loss and cycle-loss gates plus one-shot recovery
   shadow. The response and dashboard expose only switch state, revision and update metadata; the
   producer consumes the atomic local file and audit log without an MT Manager operation.
+- `POST /api/copy-pool/runtime/recovery` - loopback-only, same-origin recovery request whose only
+  valid body is `{ "action": "reconnect_and_sync" }`. 8777 atomically writes/reuses a local
+  request for the existing Producer and waits no more than 10 seconds for a bounded public result;
+  it cannot launch, stop or kill a Producer. The response exposes only `queued`, `running`,
+  `synchronized` or `failed`, revision/timestamps, aggregate source/cursor/position counts and
+  Producer-unavailable state. The existing Producer alone resets its read-only source connections,
+  retains cursor and Ticket ownership, catches up and completes three reconciliations before live.
 - The same dashboard additively exposes `currentCopies`, with one row per currently owned Demo
   Ticket. Each row contains the real source Login, server/platform, product/direction, source
   Position, source and Demo lots/open evidence, entry delay, exact source-position floating P/L,

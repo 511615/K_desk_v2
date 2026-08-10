@@ -37,6 +37,16 @@ MAX_CLIENTS_PER_ROUTE = 5
 MT4_STRESS_SPREAD_USD_PER_LOT = 60.0
 MAX_BUILD_FLOATING_LOSS_RATIO = 0.10
 MAX_BUILD_MARGIN_TO_EQUITY = 0.50
+RETRYABLE_MYSQL_CONNECTION_CODES = frozenset({2006, 2013, 2055})
+
+
+def is_retryable_mysql_connection_error(exc: Exception) -> bool:
+    """Classify transient connection loss without retrying SQL/data errors."""
+    code = exc.args[0] if getattr(exc, "args", ()) else None
+    if code in RETRYABLE_MYSQL_CONNECTION_CODES or isinstance(exc, TimeoutError):
+        return True
+    text = str(exc).lower()
+    return "timed out" in text or "lost connection to mysql" in text
 
 
 def require_nonempty_monitor_population(account_count: int, *, context: str) -> None:
@@ -381,6 +391,7 @@ class ReadOnlySource:
         self.connect_timeout_seconds = 8
         self.read_timeout_seconds = 30
         self.write_timeout_seconds = 8
+        self.build_reconnect_attempts = 0
         self.health = SourceHealth(
             physical_key=self.key,
             connection=self.connection_name,
@@ -439,29 +450,43 @@ class ReadOnlySource:
             self.write_timeout_seconds = int(write_seconds)
             self.close()
 
-    def query(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
+    def query(
+        self,
+        sql: str,
+        params: Sequence[Any] = (),
+        *,
+        reconnect_attempts: int | None = None,
+    ) -> list[dict[str, Any]]:
         if not sql.lstrip().upper().startswith("SELECT"):
             raise ValueError("Only SELECT statements are allowed.")
+        attempts = self.build_reconnect_attempts if reconnect_attempts is None else reconnect_attempts
+        if attempts < 0:
+            raise ValueError("reconnect_attempts cannot be negative.")
         started = time.monotonic()
         with self.lock:
-            try:
-                if self.connection is None:
-                    self.connect()
-                else:
-                    try:
-                        self.connection.ping(reconnect=False)
-                    except Exception:
+            for attempt in range(attempts + 1):
+                try:
+                    if self.connection is None:
                         self.connect()
-                assert self.connection is not None
-                with self.connection.cursor() as cursor:
-                    cursor.execute(sql, tuple(params))
-                    rows = list(cursor.fetchall())
-                self.health.success(time.monotonic() - started)
-                return rows
-            except Exception as exc:
-                self.health.failure(exc)
-                self.close()
-                raise
+                    else:
+                        try:
+                            self.connection.ping(reconnect=False)
+                        except Exception:
+                            self.connect()
+                    assert self.connection is not None
+                    with self.connection.cursor() as cursor:
+                        cursor.execute(sql, tuple(params))
+                        rows = list(cursor.fetchall())
+                    self.health.success(time.monotonic() - started)
+                    return rows
+                except Exception as exc:
+                    self.health.failure(exc)
+                    self.close()
+                    if (
+                        attempt >= attempts
+                        or not is_retryable_mysql_connection_error(exc)
+                    ):
+                        raise
 
 
 @dataclass(frozen=True, order=True)
@@ -1845,6 +1870,15 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         }
 
     def build_pool(self, as_of: datetime | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+        for source in self.sources.values():
+            source.build_reconnect_attempts = 2
+        try:
+            return self._build_pool(as_of)
+        finally:
+            for source in self.sources.values():
+                source.build_reconnect_attempts = 0
+
+    def _build_pool(self, as_of: datetime | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
         build_started = time.perf_counter()
         build_stage_seconds: dict[str, float] = {}
         as_of = as_of or datetime.now(timezone.utc)

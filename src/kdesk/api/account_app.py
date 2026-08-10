@@ -7,7 +7,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -50,6 +50,25 @@ class CopyPoolControlsRequest(BaseModel):
     dailyLossEnabled: bool
     cycleLossEnabled: bool
     resumeRequested: bool = False
+
+
+class CopyPoolRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+
+
+def _require_local_same_origin(request: Request) -> None:
+    client_host = request.client.host if request.client else ""
+    if client_host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(status_code=403, detail="运行恢复仅允许从本机操作")
+    host = request.headers.get("host", "").strip().lower()
+    host_name = (urlsplit(f"//{host}").hostname or "").lower()
+    if host_name not in {"127.0.0.1", "::1", "localhost", "testserver"}:
+        raise HTTPException(status_code=403, detail="运行恢复仅允许本机同源请求")
+    origin = request.headers.get("origin")
+    if origin and urlsplit(origin).netloc.lower() != host:
+        raise HTTPException(status_code=403, detail="运行恢复仅允许本机同源请求")
 
 
 def _xlsx_response(content: bytes, filename: str) -> Response:
@@ -244,6 +263,18 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             },
         )
         return {"ok": True, "controls": controls}
+
+    @app.post("/api/copy-pool/runtime/recovery")
+    async def request_copy_pool_recovery(request: Request, body: CopyPoolRecoveryRequest):
+        _require_local_same_origin(request)
+        if body.action != "reconnect_and_sync":
+            raise HTTPException(status_code=422, detail="不支持的恢复动作")
+        recovery = await run_in_threadpool(copy_pool.request_recovery, wait_seconds=10.0)
+        status_code = 200 if recovery["state"] in {"synchronized", "failed"} else 202
+        return JSONResponse(
+            status_code=status_code,
+            content={"ok": recovery["state"] == "synchronized", "recovery": recovery},
+        )
 
     @app.get("/copy-pool/accounts/{alias}")
     async def copy_pool_account(alias: str):

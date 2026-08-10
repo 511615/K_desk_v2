@@ -149,6 +149,19 @@ Manual risk controls are written only through the loopback 8777 endpoint and con
 `manual_controls_audit.jsonl`. Use the separate resume action after changing a gate; it starts
 recovery shadow and requires the normal operational gates before live execution. Deleting or
 hand-editing the file is not an approved reset procedure.
+When the copy-pool dashboard is stale, `POST /api/copy-pool/runtime/recovery` may write only the
+fixed local `reconnect_and_sync` request. It is not a start, stop, restart or kill control and must
+not be used to create a second Producer. A running Producer consumes the request in-process, resets
+its read-only source connections, preserves persisted source cursors and source-Position-to-Demo-
+Ticket ownership, catches up and requires three successful reconciliations without a pending source
+snapshot before its normal live gates may complete. Keep the stale warning visible until the
+Producer reports `synchronized`; a queued request with no recent Producer heartbeat is unavailable,
+not a reason to manipulate files or processes from 8777.
+For a complete pool rebuild, retry only classified connection loss or timeout and no more than two
+times per source. SQL, schema, coverage and eligibility failures require investigation rather than
+blind retry. During retry or failure, the heartbeat must explicitly retain
+`runtime_snapshot_stale=true` and `data_fresh=false`; do not accept its recent timestamp as fresh
+pool data.
 MT5 incremental polling coalesces every poll batch to the final source Position before execution. A
 `batch_terminal_flat` event means the source opened and fully closed before the Producer could act;
 no Demo Ticket is expected. If an open and immediate close order pair appears instead, stop the

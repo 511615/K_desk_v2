@@ -201,6 +201,42 @@
         }
       }
     },
+    "/api/copy-pool/runtime/recovery": {
+      "post": {
+        "summary": "Request Copy Pool Recovery",
+        "operationId": "request_copy_pool_recovery_api_copy_pool_runtime_recovery_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyPoolRecoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/copy-pool/accounts/{alias}": {
       "get": {
         "summary": "Copy Pool Account",
@@ -2314,6 +2350,20 @@
           "cycleLossEnabled"
         ],
         "title": "CopyPoolControlsRequest"
+      },
+      "CopyPoolRecoveryRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "CopyPoolRecoveryRequest"
       },
       "HTTPValidationError": {
         "properties": {

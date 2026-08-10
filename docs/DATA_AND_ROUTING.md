@@ -54,6 +54,13 @@ contacts or private route structures. Hourly score, one/four-hour P/L, current c
 also public snapshot fields. K_desk does not query them from MySQL. The producer obtains them from
 the accepted `pool_universe_private.csv` plus bounded current-session reads; the daily historical
 factor evidence remains immutable until the next complete build.
+The recovery endpoint is the only copy-pool monitor path permitted to write local runtime files:
+it atomically creates or reuses `runtime_recovery_request.json` and reads the bounded companion
+`runtime_recovery_status.json`. The request contains only the fixed action, revision and request
+time; it has no process command, database configuration, source cursor or Ticket mapping. The
+existing Producer is the only consumer. It resets read-only physical-source connections in-process
+while retaining source cursors and source-Position-to-Demo-Ticket ownership; 8777 does not open
+those connections or operate the Producer process.
 The additive carry-risk evidence contains its 0-100 score, 0-1 quality score, hard-gate state,
 bounded reason codes, maximum floating-loss ratio, maximum underwater seconds and maximum losing
 position count. Current MT4/MT5 product-position aggregates count losing positions directly in the
@@ -98,7 +105,11 @@ MT4 waves start together, and completed MT5 Deals are applied before the produce
 snapshot wave. Live connections use two-second connect, read and write timeouts. A timeout closes
 only that physical source connection, preserves its cursor and reconnects on a later cycle. Historical
 pool construction retains the longer complete-read timeout and switches to the bounded live profile
-only after an accepted pool has loaded.
+only after an accepted pool has loaded. A complete pool build gives a source at most two additional
+connection attempts, and only for classified MySQL connection loss or timeout; query, schema,
+data-quality and eligibility errors fail without retry. While retrying or after a rebuild failure,
+the Producer advances the heartbeat with `runtime_snapshot_stale=true` and `data_fresh=false`; a
+recent heartbeat is not fresh pool evidence.
 
 Raw MT4 `OPEN_TIME` is physical-server time, not MySQL session time. AC `mt4_export_syc` uses UTC;
 DBG `crm_cn_mt4_live1` and `crm_cn_mt4_live2` use UTC+3. DBG `crm_vn_mt4_live3` remains in the full
@@ -419,6 +430,7 @@ route plus credential-free configured-provider metadata.
 Remote adapters expose query/export only. Password, phone-password and API blob fields must never
 be selected or logged. MT4/MT5 Manager state changes are prohibited.
 
-The copy-pool monitor is also read-only with respect to its local source files. Missing, stale or
-malformed files produce unavailable/empty monitoring states and must never trigger copier recovery,
-account mutation or an MT order.
+Except for the bounded recovery-request/status handshake above, the copy-pool monitor is read-only
+with respect to its local source files. Missing, stale or malformed snapshots produce unavailable or
+empty monitoring states; they never cause 8777 to recover a copier directly, mutate an account or
+send an MT order. A queued request is inert until the already-running Producer consumes it.

@@ -11,6 +11,8 @@ class CopyPoolSnapshotRepository(Protocol):
 
     def update_controls(self, values: dict[str, bool]) -> dict[str, Any]: ...
 
+    def request_recovery(self, *, wait_seconds: float = 10.0) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class CopyPoolMonitorService:
@@ -28,3 +30,6 @@ class CopyPoolMonitorService:
 
     def update_controls(self, values: dict[str, bool]) -> dict[str, Any]:
         return self.repository.update_controls(values)
+
+    def request_recovery(self, *, wait_seconds: float = 10.0) -> dict[str, Any]:
+        return self.repository.request_recovery(wait_seconds=wait_seconds)

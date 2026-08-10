@@ -302,6 +302,19 @@ Read-only preflight acceptance requires 11/11 route
 and 9/9 physical coverage, at least ten deployable clients, no ambiguous shared-source Login in the
 pool and no MT initialization or order. Dashboard contracts cover the source funnel, runtime health
 and composite-key P/L/position joins without returning private state wholesale.
+Recovery contracts require `POST /api/copy-pool/runtime/recovery` to accept only the fixed local,
+same-origin `reconnect_and_sync` body, reject remote, cross-origin, unknown-action and extra-field
+requests, and atomically reuse a concurrent queued/running revision. API/repository tests must prove
+that the endpoint writes only the bounded local recovery request/status projection and never invokes
+a launcher, subprocess, process stop or Terminal/DB command. A stopped Producer leaves the request
+queued and reports unavailable. Producer recovery tests reset each read-only source connection once,
+retain the exact cursor object and source-Position-to-Demo-Ticket ownership, poll catch-up data and
+require three successful reconciliations with no pending snapshot before normal live gates can report
+`synchronized`; the dashboard stays stale while recovery is queued or running.
+Complete-build retry tests require no more than two retry attempts for classified MySQL connection
+loss/timeout, no retry for SQL, schema, data or eligibility errors, and a retry-exhausted rebuild
+heartbeat with `runtime_snapshot_stale=true` and `data_fresh=false`. A current heartbeat timestamp
+must not clear the dashboard stale flag under either explicit stale marker.
 Independent execution tests require startup and shadow positions to remain monitor-only; source
 open/add/reduce/close/reverse to affect only owned Demo Tickets; reversal to close and reconcile
 before opening the new direction; and A-client events never to modify B-client Tickets. Restart must

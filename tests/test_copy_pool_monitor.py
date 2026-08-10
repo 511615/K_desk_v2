@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -883,6 +885,181 @@ def test_copy_pool_manual_controls_are_local_only_and_audited(tmp_path: Path) ->
     assert forbidden.status_code == 403
 
 
+def test_runtime_recovery_request_is_atomic_and_concurrent_calls_reuse_revision(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _index: repository.request_recovery(wait_seconds=0), range(4)))
+
+    assert {item["revision"] for item in results} == {results[0]["revision"]}
+    assert {item["state"] for item in results} == {"queued"}
+    request = json.loads((output / "runtime_recovery_request.json").read_text(encoding="utf-8"))
+    status = json.loads((output / "runtime_recovery_status.json").read_text(encoding="utf-8"))
+    assert request == {
+        "action": "reconnect_and_sync",
+        "revision": results[0]["revision"],
+        "requested_at": results[0]["requestedAt"],
+        "source": "8777-local-ui",
+    }
+    assert status["revision"] == results[0]["revision"]
+    assert status["state"] == "queued"
+    assert "path" not in json.dumps(results)
+    assert "account" not in json.dumps(results)
+
+
+def test_runtime_recovery_returns_sanitized_matching_completion(tmp_path: Path, monkeypatch) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+
+    def complete(_seconds: float) -> None:
+        request = json.loads(repository.recovery_request_path.read_text(encoding="utf-8"))
+        repository._atomic_write_json(repository.recovery_status_path, {
+            "revision": request["revision"],
+            "state": "synchronized",
+            "completed_at": "2026-08-10T01:02:03+00:00",
+            "successful_sources": 8,
+            "cursor_sources": 8,
+            "position_count": 3,
+            "heartbeat_at": "2026-08-10T01:02:02+00:00",
+            "raw_error": "password=secret",
+            "account_login": "33304642",
+        })
+
+    monkeypatch.setattr("kdesk.infrastructure.copy_pool_monitor.time.sleep", complete)
+    result = repository.request_recovery(wait_seconds=0.1)
+
+    assert result == {
+        "revision": result["revision"],
+        "state": "synchronized",
+        "requestedAt": result["requestedAt"],
+        "completedAt": "2026-08-10T01:02:03+00:00",
+        "successfulSources": 8,
+        "cursorSources": 8,
+        "positionCount": 3,
+        "heartbeatAt": "2026-08-10T01:02:02+00:00",
+        "producerUnavailable": True,
+    }
+    serialized = json.dumps(result)
+    assert "password" not in serialized
+    assert "33304642" not in serialized
+
+
+def test_copy_pool_recovery_api_is_loopback_same_origin_and_strict(tmp_path: Path, monkeypatch) -> None:
+    output = make_snapshot(tmp_path)
+    settings = replace(make_test_settings(tmp_path), copy_pool_output_dir=output)
+    monkeypatch.setattr(
+        CopyPoolFileSnapshotRepository,
+        "request_recovery",
+        lambda self, *, wait_seconds=10.0: {
+            "revision": "safe-revision",
+            "state": "queued",
+            "requestedAt": "2026-08-10T01:02:03+00:00",
+            "completedAt": None,
+            "successfulSources": 0,
+            "cursorSources": 0,
+            "positionCount": 0,
+            "heartbeatAt": None,
+            "producerUnavailable": True,
+        },
+    )
+    app = create_account_app(settings)
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        accepted = client.post(
+            "/api/copy-pool/runtime/recovery",
+            headers={"Origin": "http://testserver", "Host": "testserver"},
+            json={"action": "reconnect_and_sync"},
+        )
+        extra = client.post(
+            "/api/copy-pool/runtime/recovery",
+            headers={"Origin": "http://testserver", "Host": "testserver"},
+            json={"action": "reconnect_and_sync", "command": "restart"},
+        )
+        cross_origin = client.post(
+            "/api/copy-pool/runtime/recovery",
+            headers={"Origin": "http://evil.invalid", "Host": "testserver"},
+            json={"action": "reconnect_and_sync"},
+        )
+        ipv6_loopback = client.post(
+            "/api/copy-pool/runtime/recovery",
+            headers={"Origin": "http://[::1]:8777", "Host": "[::1]:8777"},
+            json={"action": "reconnect_and_sync"},
+        )
+
+    assert accepted.status_code == 202
+    assert accepted.json()["recovery"]["producerUnavailable"] is True
+    assert extra.status_code == 422
+    assert cross_origin.status_code == 403
+    assert ipv6_loopback.status_code == 202
+
+    with TestClient(app, client=("10.1.2.3", 50000)) as remote_client:
+        remote = remote_client.post(
+            "/api/copy-pool/runtime/recovery",
+            headers={"Origin": "http://testserver", "Host": "testserver"},
+            json={"action": "reconnect_and_sync"},
+        )
+    assert remote.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("runtime_snapshot_stale", "data_fresh"),
+    [(True, True), (False, False)],
+)
+def test_dashboard_marks_declared_runtime_snapshot_stale_and_projects_recovery(
+    tmp_path: Path,
+    runtime_snapshot_stale: bool,
+    data_fresh: bool,
+) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+    status = json.loads(repository.status_path.read_text(encoding="utf-8"))
+    status["updated_at_beijing"] = datetime.now().astimezone().isoformat()
+    status["runtime_snapshot_stale"] = runtime_snapshot_stale
+    status["data_fresh"] = data_fresh
+    repository.status_path.write_text(json.dumps(status), encoding="utf-8")
+    repository.recovery_request_path.write_text(json.dumps({
+        "action": "reconnect_and_sync",
+        "revision": "recovery-1",
+        "requested_at": "2026-08-10T01:01:00+00:00",
+        "source": "8777-local-ui",
+    }), encoding="utf-8")
+    repository.recovery_status_path.write_text(json.dumps({
+        "revision": "recovery-1",
+        "state": "reconnecting",
+        "heartbeat_at": "2026-08-10T01:02:00+00:00",
+    }), encoding="utf-8")
+
+    payload = repository.dashboard(timeline_limit=30, event_limit=10, order_limit=10)
+
+    assert payload["stale"] is True
+    assert payload["sourceAgeSeconds"] < 5.0
+    assert payload["recovery"]["state"] == "running"
+    assert payload["recovery"]["revision"] == "recovery-1"
+
+
+def test_dashboard_recovery_maps_legacy_completion_to_contract_state(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+    repository.recovery_request_path.write_text(json.dumps({
+        "action": "reconnect_and_sync",
+        "revision": "recovery-2",
+        "requested_at": "2026-08-10T01:01:00+00:00",
+        "source": "8777-local-ui",
+    }), encoding="utf-8")
+    repository.recovery_status_path.write_text(json.dumps({
+        "revision": "recovery-2",
+        "state": "reconciled",
+        "completed_at": "2026-08-10T01:02:00+00:00",
+    }), encoding="utf-8")
+
+    recovery = repository.dashboard(
+        timeline_limit=30, event_limit=10, order_limit=10
+    )["recovery"]
+
+    assert recovery["state"] == "synchronized"
+
+
 def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
     payload = CopyPoolFileSnapshotRepository(tmp_path / "missing").dashboard(
         timeline_limit=30,
@@ -917,4 +1094,5 @@ def test_copy_pool_reader_has_explicit_empty_state(tmp_path: Path) -> None:
             "updatedAt": None,
             "source": "default",
         },
+        "recovery": None,
     }

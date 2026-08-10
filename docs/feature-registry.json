@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "7c0718b61c03",
+  "registryVersion": "debe93055f6d",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -213,6 +213,7 @@
         "GET /copy-pool",
         "GET /api/copy-pool/dashboard",
         "PUT /api/copy-pool/controls",
+        "POST /api/copy-pool/runtime/recovery",
         "GET /copy-pool/accounts/{alias}"
       ],
       "code": [
@@ -249,6 +250,7 @@
       ],
       "tests": [
         "tests/test_copy_pool_monitor.py",
+        "tests/test_copy_pool_runtime_recovery.py",
         "tests/test_production_versioning.py",
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/src/copyPool.spec.ts",

@@ -13,6 +13,8 @@ const selectedPoolTier = ref<PoolTierTab>('active')
 const controlsSaving = ref(false)
 const controlsMessage = ref('')
 const controlForm = ref({ autoTradingEnabled: true, equityFloorEnabled: true, dailyLossEnabled: true, cycleLossEnabled: true })
+const runtimeRecoverySubmitting = ref(false)
+const runtimeRecovery = ref<any>(null)
 const runtimeClockMs = ref(Date.now())
 let stopFrontendUpdateMonitor: () => void = () => undefined
 let runtimeClockTimer: ReturnType<typeof setInterval> | undefined
@@ -83,6 +85,24 @@ const productQuotes = computed<any[]>(() => status.value.products || [])
 const dynamicSleeves = computed<any[]>(() => payload.value.dynamicSleeves || status.value.dynamicSleeves || [])
 const scheduler = computed<any>(() => payload.value.scheduler || status.value.scheduler || {})
 const controls = computed<any>(() => payload.value.controls || status.value.manualControls || {})
+const dashboardRecovery = computed<any>(() => payload.value.recovery || status.value.recovery || null)
+const effectiveRecovery = computed<any>(() => runtimeRecovery.value || dashboardRecovery.value)
+const recoveryState = computed(() => String(effectiveRecovery.value?.state || '').toLowerCase())
+const recoveryPending = computed(() => ['queued', 'running'].includes(recoveryState.value))
+const recoveryStatusText = computed(() => {
+  const recovery = effectiveRecovery.value
+  if (!recovery) return ''
+  if (recovery.producerUnavailable === true || recovery.producer_unavailable === true) return 'Producer 未响应'
+  if (recoveryState.value === 'queued') return '已排队'
+  if (recoveryState.value === 'running') return '重连同步中'
+  if (recoveryState.value === 'synchronized') return '已完成'
+  if (recoveryState.value === 'failed') return '恢复失败'
+  return ''
+})
+const titleStatusText = computed(() => {
+  if (recoveryPending.value) return '正在恢复'
+  return payload.value.stale ? '数据已停滞' : phaseLabel(status.value.phase)
+})
 watch(controls, value => {
   controlForm.value = {
     autoTradingEnabled: value.autoTradingEnabled !== false,
@@ -102,6 +122,39 @@ async function saveControls(resumeRequested = false) {
     controlsMessage.value = `保存失败：${error?.message || '未知错误'}`
   } finally {
     controlsSaving.value = false
+  }
+}
+function setRuntimeRecovery(raw: any): void {
+  const recovery = raw?.recovery || raw
+  if (!recovery || typeof recovery !== 'object') {
+    runtimeRecovery.value = { state: 'failed', producerUnavailable: false }
+    return
+  }
+  runtimeRecovery.value = recovery
+}
+
+async function requestRuntimeRecovery(): Promise<void> {
+  if (runtimeRecoverySubmitting.value || recoveryPending.value) return
+  runtimeRecoverySubmitting.value = true
+  try {
+    const response = await api<any>('/api/copy-pool/runtime/recovery', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'reconnect_and_sync' }),
+    })
+    setRuntimeRecovery(response)
+  } catch (error: any) {
+    // The API intentionally returns 202/ok:false while queued, so preserve its
+    // structured recovery result instead of turning an accepted request into a
+    // generic failure. Network/parse errors still surface as a failed attempt.
+    if (error?.payload?.recovery) setRuntimeRecovery(error.payload)
+    else setRuntimeRecovery({ state: 'failed', producerUnavailable: false })
+  } finally {
+    runtimeRecoverySubmitting.value = false
+  }
+  try {
+    await dashboard.refetch?.()
+  } catch {
+    // The recovery result remains visible even when the optional snapshot refresh fails.
   }
 }
 const chartRows = computed(() => timeline.value.slice(-360))
@@ -361,7 +414,10 @@ onBeforeUnmount(() => {
     <section class="copy-titlebar">
       <div><h1>动态客户池独立跟单</h1><p>1 万美元资金方案 · 全产品横截面 · 客户仓位互不抵消 · {{ status.server || '模拟账户' }} · 11 条逻辑路由</p></div>
       <div class="copy-title-status">
-        <span class="status-live" :class="{ stale: payload.stale }"><i></i>{{ payload.stale ? '数据已停滞' : phaseLabel(status.phase) }}</span>
+        <span class="status-live" :class="{ stale: payload.stale, recovering: recoveryPending }"><i></i>{{ titleStatusText }}</span>
+        <span v-if="payload.stale && recoveryPending" class="runtime-recovery-stale-note">数据已停滞</span>
+        <button v-if="payload.stale || recoveryPending" type="button" class="runtime-recovery-button" data-testid="runtime-recovery-button" :disabled="runtimeRecoverySubmitting || recoveryPending" @click="requestRuntimeRecovery">{{ runtimeRecoverySubmitting ? '重连同步中…' : '恢复连接并同步数据' }}</button>
+        <span v-if="recoveryStatusText" data-testid="runtime-recovery-status" class="runtime-recovery-status" :class="{ negative: recoveryStatusText === '恢复失败', warning: recoveryStatusText === 'Producer 未响应' }">{{ recoveryStatusText }}</span>
         <span class="badge">只读监控</span>
         <span class="badge">{{ status.clients || pool.length || 0 }} 个客户</span>
         <span data-testid="runtime-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span>
@@ -604,6 +660,13 @@ onBeforeUnmount(() => {
 .status-live { display: inline-flex; align-items: center; gap: 7px; color: var(--kdesk-text); }
 .status-live i { width: 7px; height: 7px; background: var(--kdesk-success); border-radius: 50%; box-shadow: 0 0 0 3px #34c8901f; }
 .status-live.stale i { background: var(--kdesk-danger); box-shadow: 0 0 0 3px #f45c6b1f; }
+.status-live.recovering i { background: var(--kdesk-warning); box-shadow: 0 0 0 3px #d7a63b1f; }
+.runtime-recovery-button { padding: 5px 8px; border: 1px solid var(--kdesk-border-strong); border-radius: 4px; background: #0b5683; color: var(--kdesk-text); font-size: 11px; cursor: pointer; }
+.runtime-recovery-button:hover:not(:disabled) { background: #0d6b9f; }
+.runtime-recovery-button:disabled { cursor: wait; opacity: .65; }
+.runtime-recovery-status,.runtime-recovery-stale-note { color: var(--kdesk-muted); font-size: 10px; white-space: nowrap; }
+.runtime-recovery-status.warning { color: var(--kdesk-warning); }
+.runtime-recovery-status.negative { color: var(--kdesk-danger); }
 .demo-account-panel { margin-top: 11px; padding: 0; overflow: hidden; }
 .demo-account-head { margin: 0; padding: 11px 12px; border-bottom: 1px solid var(--kdesk-border); }
 .demo-account-summary { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-bottom: 1px solid var(--kdesk-border); }

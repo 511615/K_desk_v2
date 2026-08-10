@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import signal
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
@@ -306,6 +307,10 @@ class MultiSourceLiveService(LiveService):
         self.universe_path = self.output_dir / "pool_universe_private.csv"
         self.pool_snapshot_path = self.output_dir / "pool_snapshot_private.csv"
         self.pool_build_meta_path = self.output_dir / "pool_build_meta_private.json"
+        self.runtime_recovery_request_path = self.output_dir / "runtime_recovery_request.json"
+        self.runtime_recovery_status_path = self.output_dir / "runtime_recovery_status.json"
+        self.runtime_recovery_revision = ""
+        self.runtime_recovery_requested_at = ""
         self.last_intraday_refresh = 0.0
         self.last_rebuild_attempt = 0.0
         self.last_discovery_attempt = 0.0
@@ -512,6 +517,43 @@ class MultiSourceLiveService(LiveService):
         ]
         return pool.reset_index(drop=True), eligible.reset_index(drop=True), updated
 
+    def _write_runtime_heartbeat(self, state: str) -> None:
+        """Expose a rebuilding/reconnecting heartbeat without claiming source freshness."""
+        payload: dict[str, Any] = {}
+        if self.status_path.exists():
+            try:
+                raw = json.loads(self.status_path.read_text(encoding="utf-8"))
+                payload = dict(raw) if isinstance(raw, Mapping) else {}
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+        payload.update({
+            "updated_at_beijing": beijing_now().isoformat(),
+            "phase": state,
+            "runtime_snapshot_stale": True,
+            "data_fresh": False,
+        })
+        atomic_json(self.status_path, payload)
+        revision = getattr(self, "runtime_recovery_revision", "")
+        if revision:
+            self._write_runtime_recovery_status(
+                "running",
+                revision=revision,
+                requested_at=getattr(self, "runtime_recovery_requested_at", "")
+                or beijing_now().isoformat(),
+            )
+
+    def _start_rebuild_heartbeat(self) -> tuple[threading.Event, threading.Thread]:
+        stop = threading.Event()
+
+        def publish() -> None:
+            while not stop.is_set():
+                self._write_runtime_heartbeat("rebuilding")
+                stop.wait(1.0)
+
+        thread = threading.Thread(target=publish, name="copy-rebuild-heartbeat", daemon=True)
+        thread.start()
+        return stop, thread
+
     def load_pool(self, force_rebuild: bool = False) -> None:
         pool: pd.DataFrame
         coverage: dict[str, Any]
@@ -627,7 +669,12 @@ class MultiSourceLiveService(LiveService):
                 "Restored the current trading day's accepted all-source pool snapshot."
             )
         else:
-            pool, universe, coverage = self.db.build_pool()
+            heartbeat_stop, heartbeat_thread = self._start_rebuild_heartbeat()
+            try:
+                pool, universe, coverage = self.db.build_pool()
+            finally:
+                heartbeat_stop.set()
+                heartbeat_thread.join(timeout=2.0)
             self.pool_was_rebuilt = True
             self.pool_weights_rebuilt = True
             validate_complete_coverage(coverage, self.db.sources)
@@ -1475,6 +1522,83 @@ class MultiSourceLiveService(LiveService):
                 child.open_price = float(live.price_open)
                 copied += child.lots
             position.copied_lots = copied
+
+    @staticmethod
+    def is_runtime_recovery_phase(phase: str) -> bool:
+        return str(phase) in {"reconnecting", "rebuilding"}
+
+    def _write_runtime_recovery_status(
+        self, state: str, *, revision: str, requested_at: str, error_code: str = ""
+    ) -> None:
+        if state not in {"queued", "running", "synchronized", "failed"}:
+            raise ValueError("Invalid runtime recovery state.")
+        if error_code not in {"", "invalid_request", "connection_reset_failed"}:
+            error_code = "connection_reset_failed"
+        now = beijing_now().isoformat()
+        successful_sources = 0
+        if state == "synchronized":
+            successful_sources = sum(
+                1
+                for source in getattr(getattr(self, "db", None), "sources", {}).values()
+                if str(getattr(getattr(source, "health", None), "status", "")) == "ok"
+            )
+        atomic_json(self.runtime_recovery_status_path, {
+            "revision": revision,
+            "state": state,
+            "requested_at": requested_at,
+            "heartbeat_at": now,
+            "completed_at": now if state in {"synchronized", "failed"} else None,
+            "successful_sources": successful_sources,
+            "cursor_sources": len(getattr(self.portfolio, "cursors", {})),
+            "position_count": len(getattr(self.portfolio, "positions", {})),
+            "error_code": error_code or None,
+        })
+
+    def consume_runtime_recovery_request(self) -> bool:
+        """Reset only source connections; cursors and ticket ownership remain untouched."""
+        if not self.runtime_recovery_request_path.exists():
+            return False
+        try:
+            request = json.loads(
+                self.runtime_recovery_request_path.read_text(encoding="utf-8")
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.log(f"Ignored invalid runtime recovery request: {type(exc).__name__}")
+            return False
+        revision = str(request.get("revision") or "").strip() if isinstance(request, Mapping) else ""
+        action = str(request.get("action") or "") if isinstance(request, Mapping) else ""
+        requested_at = str(request.get("requested_at") or beijing_now().isoformat()) if isinstance(request, Mapping) else beijing_now().isoformat()
+        previous: Mapping[str, Any] = {}
+        if self.runtime_recovery_status_path.exists():
+            try:
+                raw = json.loads(self.runtime_recovery_status_path.read_text(encoding="utf-8"))
+                previous = raw if isinstance(raw, Mapping) else {}
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                previous = {}
+        if str(previous.get("revision") or "") == revision and previous.get("state") == "synchronized":
+            self.runtime_recovery_revision = revision
+            self.runtime_recovery_requested_at = str(previous.get("requested_at") or requested_at)
+            return False
+        if not revision or action != "reconnect_and_sync":
+            if revision:
+                self._write_runtime_recovery_status("failed", revision=revision, requested_at=requested_at, error_code="invalid_request")
+            return False
+        if revision == getattr(self, "runtime_recovery_revision", ""):
+            return False
+        try:
+            for source in self.db.sources.values():
+                source.reset_connection()
+        except Exception:
+            self._write_runtime_recovery_status("failed", revision=revision, requested_at=requested_at, error_code="connection_reset_failed")
+            return False
+        self.runtime_recovery_revision = revision
+        self.runtime_recovery_requested_at = requested_at
+        self.phase = "reconnecting"
+        self.operational_ready_once = False
+        self.reconcile_streak = 0
+        self._write_runtime_recovery_status("running", revision=revision, requested_at=requested_at)
+        self.log("Runtime recovery requested: reset all physical source connections.")
+        return True
 
     def _live_positions(self) -> tuple[Any, ...]:
         reader = getattr(self.mt, "all_strategy_positions", None)
@@ -2563,6 +2687,21 @@ class MultiSourceLiveService(LiveService):
                 self.log("Persistent multi-source position drift corrected after three matching snapshots.")
         self.last_reconcile = time.monotonic()
         self.last_db_success = time.monotonic()
+        if (
+            getattr(self, "phase", "") == "reconnecting"
+            and self.reconcile_streak >= 3
+            and self.pending_source_snapshot_count == 0
+        ):
+            self.phase = "shadow"
+            self.shadow_started = time.monotonic()
+            self.operational_ready_once = False
+            self._write_runtime_recovery_status(
+                "running",
+                revision=getattr(self, "runtime_recovery_revision", ""),
+                requested_at=getattr(self, "runtime_recovery_requested_at", "")
+                or beijing_now().isoformat(),
+            )
+            self.log("Runtime recovery reconciled; normal live gates are warming up.")
 
     @staticmethod
     def _floor_to_step(value: float, step: float) -> float:
@@ -3476,6 +3615,13 @@ class MultiSourceLiveService(LiveService):
             return
         if (ready or armed) and self.args.enable_live_trading and terminal_trade_allowed:
             self.phase = "live"
+            if getattr(self, "runtime_recovery_revision", ""):
+                self._write_runtime_recovery_status(
+                    "synchronized",
+                    revision=self.runtime_recovery_revision,
+                    requested_at=getattr(self, "runtime_recovery_requested_at", "")
+                    or beijing_now().isoformat(),
+                )
             self.cycle_baseline_pnl = self.mt.marked_pnl(trading_day_start_utc(utc_now()))
             self.cycle_reference_equity = float(self.mt.account().equity)
             self.log("Shadow gates passed; independent customer-position Demo execution is active.")
@@ -3593,6 +3739,7 @@ class MultiSourceLiveService(LiveService):
                     try:
                         assert self.portfolio is not None
                         self.refresh_manual_controls()
+                        self.consume_runtime_recovery_request()
                         mt5_errors, mt4_errors = self._poll_source_cycle(poll_executor)
                         self.poll_latencies.append(time.monotonic() - loop_started)
                         if not mt5_errors and not mt4_errors:

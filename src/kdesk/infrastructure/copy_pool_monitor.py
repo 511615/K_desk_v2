@@ -5,6 +5,8 @@ import json
 import math
 import os
 import re
+import threading
+import time
 from collections import deque
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -168,6 +170,124 @@ class CopyPoolFileSnapshotRepository:
         self.coverage_path = self.output_dir / "source_coverage.json"
         self.controls_path = self.output_dir / "manual_controls.json"
         self.controls_audit_path = self.output_dir / "manual_controls_audit.jsonl"
+        self.recovery_request_path = self.output_dir / "runtime_recovery_request.json"
+        self.recovery_status_path = self.output_dir / "runtime_recovery_status.json"
+        self._recovery_lock = threading.Lock()
+
+    @staticmethod
+    def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _producer_unavailable(self) -> bool:
+        status = _read_json(self.status_path)
+        heartbeat = _iso_datetime(
+            status.get("updated_at") or status.get("updated_at_beijing")
+        )
+        if heartbeat is None:
+            return True
+        return (datetime.now(UTC) - heartbeat.astimezone(UTC)).total_seconds() > 15.0
+
+    @staticmethod
+    def _recovery_state(value: object) -> str:
+        state = str(value or "queued").strip().lower()
+        return {
+            "reconnecting": "running",
+            "rebuilding": "running",
+            "reconciled": "synchronized",
+            "completed": "synchronized",
+        }.get(state, state if state in {"queued", "running", "synchronized", "failed"} else "queued")
+
+    def _public_recovery(self, raw: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+        state = self._recovery_state(raw.get("state"))
+        revision = str(request.get("revision") or "")
+        public = {
+            "revision": revision,
+            "state": state,
+            "requestedAt": _nullable_timestamp(request.get("requested_at")),
+            "completedAt": _nullable_timestamp(raw.get("completed_at")),
+            "successfulSources": max(0, _int(raw.get("successful_sources"))),
+            "cursorSources": max(0, _int(raw.get("cursor_sources"))),
+            "positionCount": max(0, _int(raw.get("position_count"))),
+            "heartbeatAt": _nullable_timestamp(raw.get("heartbeat_at")),
+            "producerUnavailable": self._producer_unavailable(),
+        }
+        error_code = str(raw.get("error_code") or "")
+        if state == "failed" and REASON_CODE_RE.fullmatch(error_code):
+            public["errorCode"] = error_code
+        return public
+
+    def recovery(self) -> dict[str, Any] | None:
+        request = _read_json(self.recovery_request_path)
+        status = _read_json(self.recovery_status_path)
+        request_revision = str(request.get("revision") or "")
+        status_revision = str(status.get("revision") or "")
+        if not request_revision and not status_revision:
+            return None
+        if not request_revision:
+            request = {
+                "revision": status_revision,
+                "requested_at": status.get("requested_at"),
+            }
+        elif status_revision != request_revision:
+            status = {"revision": request_revision, "state": "queued"}
+        return self._public_recovery(status, request)
+
+    def request_recovery(self, *, wait_seconds: float = 10.0) -> dict[str, Any]:
+        """Queue an in-process Producer recovery; never controls an OS process."""
+        with self._recovery_lock:
+            current_request = _read_json(self.recovery_request_path)
+            current_status = _read_json(self.recovery_status_path)
+            active_revision = str(current_request.get("revision") or "")
+            active_state = self._recovery_state(current_status.get("state"))
+            reusable = (
+                current_request.get("action") == "reconnect_and_sync"
+                and bool(active_revision)
+                and active_state in {"queued", "running"}
+                and (
+                    not current_status.get("revision")
+                    or str(current_status.get("revision")) == active_revision
+                )
+            )
+            if reusable:
+                request = current_request
+            else:
+                request = {
+                    "action": "reconnect_and_sync",
+                    "revision": uuid4().hex,
+                    "requested_at": datetime.now(UTC).isoformat(),
+                    "source": "8777-local-ui",
+                }
+                current_status = {
+                    "revision": request["revision"],
+                    "state": "queued",
+                    "requested_at": request["requested_at"],
+                }
+                self.output_dir.mkdir(parents=True, exist_ok=True)
+                self._atomic_write_json(self.recovery_status_path, current_status)
+                self._atomic_write_json(self.recovery_request_path, request)
+
+        deadline = time.monotonic() + max(0.0, min(float(wait_seconds), 10.0))
+        while True:
+            status = _read_json(self.recovery_status_path)
+            if str(status.get("revision") or "") == request["revision"]:
+                state = self._recovery_state(status.get("state"))
+                if state in {"synchronized", "failed"}:
+                    return self._public_recovery(status, request)
+            if time.monotonic() >= deadline:
+                return self._public_recovery(status, request)
+            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
     @staticmethod
     def _control_defaults() -> dict[str, bool]:
@@ -267,6 +387,7 @@ class CopyPoolFileSnapshotRepository:
                 "dynamicSleeves": [],
                 "scheduler": {},
                 "controls": self.controls(),
+                "recovery": self.recovery(),
             }
 
         all_events = _read_csv(self.events_path)
@@ -563,10 +684,13 @@ class CopyPoolFileSnapshotRepository:
             _read_json(self.demo_account_path), status, limit=order_limit
         )
 
+        declared_stale = _bool(status.get("runtime_snapshot_stale")) or (
+            "data_fresh" in status and not _bool(status.get("data_fresh"))
+        )
         return {
             "ok": True,
             "available": True,
-            "stale": age_seconds is None or age_seconds > 5.0,
+            "stale": declared_stale or age_seconds is None or age_seconds > 5.0,
             "sourceAgeSeconds": age_seconds,
             "updatedAt": str(status.get("updated_at_beijing") or ""),
             "uptimeSeconds": max(0.0, (updated_at - first_time).total_seconds()) if updated_at and first_time else 0.0,
@@ -595,6 +719,7 @@ class CopyPoolFileSnapshotRepository:
             "dynamicSleeves": dynamic_sleeves,
             "scheduler": self._scheduler(status.get("scheduler")),
             "controls": self.controls(),
+            "recovery": self.recovery(),
         }
 
     @staticmethod

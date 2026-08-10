@@ -2,12 +2,18 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const { staleState, recoveryStateMock } = vi.hoisted(() => ({
+  staleState: { value: false },
+  recoveryStateMock: { value: undefined as unknown },
+}))
+
 vi.mock('@tanstack/vue-query', () => ({
   useQuery: () => ({
     data: {
       value: {
         available: true,
-        stale: false,
+        stale: staleState.value,
+        recovery: recoveryStateMock.value,
         status: {},
         demoAccount: {
           updatedAt: '2026-08-05T10:05:00+08:00',
@@ -78,6 +84,9 @@ import CopyPoolPage from './CopyPoolPage.vue'
 
 afterEach(() => {
   vi.useRealTimers()
+  staleState.value = false
+  recoveryStateMock.value = undefined
+  apiMock.mockReset()
 })
 
 describe('CopyPoolPage tier tabs', () => {
@@ -214,5 +223,64 @@ describe('CopyPoolPage tier tabs', () => {
       method: 'PUT',
       body: expect.stringContaining('"equityFloorEnabled":false'),
     }))
+  })
+
+  it('shows the recovery button beside a stale status and prevents duplicate requests while syncing', async () => {
+    staleState.value = true
+    let resolveRequest: (value: unknown) => void = () => undefined
+    apiMock.mockReturnValueOnce(new Promise(resolve => { resolveRequest = resolve }))
+    const wrapper = mount(CopyPoolPage)
+
+    const button = wrapper.get('[data-testid="runtime-recovery-button"]')
+    expect(wrapper.get('.copy-title-status').text()).toContain('数据已停滞')
+    expect(button.text()).toContain('恢复连接并同步数据')
+
+    await button.trigger('click')
+    expect(apiMock).toHaveBeenCalledTimes(1)
+    expect(apiMock).toHaveBeenCalledWith('/api/copy-pool/runtime/recovery', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'reconnect_and_sync' }),
+    })
+    expect(button.attributes('disabled')).toBeDefined()
+
+    resolveRequest({ ok: true, recovery: { state: 'synchronized', producerUnavailable: false } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(wrapper.get('[data-testid="runtime-recovery-status"]').text()).toContain('已完成')
+    wrapper.unmount()
+  })
+
+  it('renders queued Producer-unavailable and failed recovery outcomes without retrying automatically', async () => {
+    staleState.value = true
+    const queuedError = Object.assign(new Error('accepted'), {
+      payload: { recovery: { state: 'queued', producerUnavailable: true } },
+    })
+    apiMock.mockRejectedValueOnce(queuedError)
+    const queued = mount(CopyPoolPage)
+    await queued.get('[data-testid="runtime-recovery-button"]').trigger('click')
+    await Promise.resolve()
+    expect(queued.get('[data-testid="runtime-recovery-status"]').text()).toContain('Producer 未响应')
+    expect(apiMock).toHaveBeenCalledTimes(1)
+    queued.unmount()
+
+    apiMock.mockRejectedValueOnce(new Error('network down'))
+    const failed = mount(CopyPoolPage)
+    await failed.get('[data-testid="runtime-recovery-button"]').trigger('click')
+    await Promise.resolve()
+    expect(failed.get('[data-testid="runtime-recovery-status"]').text()).toContain('恢复失败')
+    expect(apiMock).toHaveBeenCalledTimes(2)
+    failed.unmount()
+  })
+
+  it('keeps the stale snapshot warning while a dashboard recovery is running', () => {
+    staleState.value = true
+    recoveryStateMock.value = { state: 'running', producerUnavailable: false }
+    const wrapper = mount(CopyPoolPage)
+
+    expect(wrapper.get('.copy-title-status').text()).toContain('正在恢复')
+    expect(wrapper.get('.copy-title-status').text()).toContain('数据已停滞')
+    expect(wrapper.get('[data-testid="runtime-recovery-status"]').text()).toContain('重连同步中')
+    expect(wrapper.get('[data-testid="runtime-recovery-button"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
   })
 })

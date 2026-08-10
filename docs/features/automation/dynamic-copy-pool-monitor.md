@@ -3,9 +3,9 @@ feature_id: AUT-POOL-001
 title: Dynamic copy-pool monitor
 module: automation
 status: active
-apis: ["GET /copy-pool", "GET /api/copy-pool/dashboard", "PUT /api/copy-pool/controls", "GET /copy-pool/accounts/{alias}"]
+apis: ["GET /copy-pool", "GET /api/copy-pool/dashboard", "PUT /api/copy-pool/controls", "POST /api/copy-pool/runtime/recovery", "GET /copy-pool/accounts/{alias}"]
 code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool_monitor.py", "src/kdesk/infrastructure/copy_pool_monitor.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts", "frontend/src/pages/WorkbenchPage.vue", "frontend/src/pages/CopyPoolPage.vue", "frontend/src/copyPool.ts", "frontend/src/beijingTime.ts", "scripts/start_prod.ps1", "services/copy_pool_runtime/run_copy_demo_live.ps1", "services/copy_pool_runtime/copy_delay_replay_domain.py", "services/copy_pool_runtime/copy_dynamic_pool_domain.py", "services/copy_pool_runtime/copy_independent_execution.py", "services/copy_pool_runtime/copy_manual_controls.py", "services/copy_pool_runtime/copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/copy_pool_factor_domain.py", "services/copy_pool_runtime/copy_pool_factor_service.py", "services/copy_pool_runtime/copy_pool_history_adapter.py", "services/copy_pool_runtime/copy_pool_history_repository.py", "services/copy_pool_runtime/copy_pool_multisource.py", "services/copy_pool_runtime/copy_product_catalog.py", "services/copy_pool_runtime/copy_quote_replay_cache.py", "services/copy_pool_runtime/copy_trading_demo.py", "services/copy_pool_runtime/copy_trading_live_core.py", "services/copy_pool_runtime/copy_trading_live_demo.py", "services/copy_pool_runtime/copy_trading_multi_demo.py", "services/copy_pool_runtime/mt5_quote_partition_provider.py"]
-tests: ["tests/test_copy_pool_monitor.py", "tests/test_production_versioning.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/beijingTime.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_manual_controls.py", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
+tests: ["tests/test_copy_pool_monitor.py", "tests/test_copy_pool_runtime_recovery.py", "tests/test_production_versioning.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/beijingTime.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_manual_controls.py", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
 last_verified_date: 2026-08-07
@@ -145,9 +145,13 @@ same platform poll wave, while the MT5 and MT4 waves start concurrently. The com
 applied before waiting for MT4 snapshots, so a slow MT4 source cannot delay an already-read MT5
 signal. After an accepted historical build, source connections switch from the complete-read profile
 to two-second connect/read/write timeouts; an isolated timeout closes only that source connection,
-preserves its cursor and reconnects on a later cycle. The producer refreshes client and sleeve risk every 10
-seconds, re-ranks the monitor/reserve range every 15 minutes, performs a bounded one/four-hour
-accepted-universe discovery every hour and completely rebuilds at 05:15 Beijing. A newly ranked
+preserves its cursor and reconnects on a later cycle. During a complete pool build, only a
+classified MySQL connection loss or timeout is retried, and at most twice; SQL, data and business-rule
+failures are not retried. A retry-exhausted build keeps publishing a heartbeat marked
+`runtime_snapshot_stale=true` and `data_fresh=false`, so a fresh timestamp cannot be mistaken for
+fresh pool evidence. The producer refreshes client and sleeve risk every 10 seconds, re-ranks the
+monitor/reserve range every 15 minutes, performs a bounded one/four-hour accepted-universe discovery
+every hour and completely rebuilds at 05:15 Beijing. A newly ranked
 hard/activity/minimum-lot-qualified sleeve enters `ACTIVE` on its first qualified ranking and can
 copy subsequent new source positions immediately. The old `ENTRY_SHADOW` tier remains readable for
 legacy snapshots but is promoted on its next qualified ranking; no new normal entry shadow is
@@ -221,6 +225,10 @@ and stale-state labels remain tied to Producer evidence. It uses
 the K_desk dark operations theme, Chinese labels and responsive desktop/mobile layouts. Every visible account label, event, mapping and
 filter uses the actual trading Login; the private `C001` alias remains an internal mapping and redirect
 identifier only. Platform/server context remains a secondary line.
+When the runtime snapshot is stale, the header exposes one `恢复连接并同步数据` action beside the
+status. The action is disabled while a request is queued or running and shows queued, reconnecting,
+synchronized, Producer-unavailable and failed outcomes explicitly. A running recovery does not hide
+the stale-data warning or make the last snapshot look current.
 The displayed operational clock is normalized to Beijing time. Current Demo account state, Ticket
 ownership, strategy P/L, source/risk events and execution gates are shown in separate bounded
 panels so an operator can distinguish live account facts from historical event rows.
@@ -327,6 +335,22 @@ visible without exposing private routing state.
 mapping server-side and returns a 307 redirect to the compatible
 `/account/{login}?platform=...&server=...` detail route. Unknown or invalid aliases return 404.
 
+`POST /api/copy-pool/runtime/recovery` is a loopback-only, same-origin operator action with the
+fixed body `{ "action": "reconnect_and_sync" }`; additional fields and other actions are rejected.
+It atomically queues an idempotent request for the already running Producer and waits for at most ten
+seconds. It never starts, stops or kills a process. Responses expose only the bounded
+`queued|running|synchronized|failed` state, revision, timestamps and aggregate source/cursor/position
+counts. A stopped Producer leaves the request queued and is reported unavailable instead of causing
+8777 to launch a second copier.
+
+The 8777 handler writes only that local recovery request and has no direct database, Terminal or
+Producer-process control path. The already-running Producer consumes it in-process: it resets its
+read-only physical-source connections, retains persisted source cursors and source-Position-to-Demo-
+Ticket ownership, polls to catch up, then requires three successful reconciliations with no pending
+source snapshot before it can re-enter its normal live gates. The recovery remains `running` and the
+dashboard remains stale until those gates finish; `synchronized` means the Producer has actually
+returned to live, not merely that 8777 accepted the request.
+
 ## Data, routing and read-only constraints
 
 The monitor reads local files from `KDESK_COPY_POOL_OUTPUT_DIR`, defaulting to
@@ -405,8 +429,9 @@ order, name, header count or row count is atomically renamed in place to
 Archived rows remain byte-preserved for investigation and are intentionally not mixed into the
 current dashboard feed.
 
-The page does not query MySQL or MT terminals and does not start, stop or modify the copier. It has
-no order, balance, permission or MT Manager write action.
+The page does not query MySQL or MT terminals and does not start, stop or modify a process. Its one
+explicit recovery action writes a bounded local request consumed by the existing Producer; it has no
+order, balance, permission or MT Manager write action.
 
 ## Business rules and units
 
@@ -422,8 +447,10 @@ event closed another customer's Ticket.
 ## Loading, empty and failure behavior
 
 The page has explicit loading, unavailable, request-failure and empty-filter states. A status file
-older than five seconds is marked stale. Missing or malformed optional CSV/JSON files degrade to
-empty sections; they never expose raw parse exceptions or synthesize account identities.
+older than five seconds is marked stale. A fresh rebuild heartbeat with
+`runtime_snapshot_stale=true` or `data_fresh=false` also remains stale while separately showing that
+recovery work is active. Missing or malformed optional CSV/JSON files degrade to empty sections;
+they never expose raw parse exceptions or synthesize account identities.
 
 Runtime heartbeat recovery is best effort. A terminal identity/IPC failure or a Demo ledger refresh
 failure no longer prevents `status.json` from advancing: the last verified account fields are kept,
