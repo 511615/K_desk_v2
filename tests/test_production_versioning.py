@@ -21,3 +21,11 @@ def test_production_launcher_requires_main_clean_and_versioned_frontend() -> Non
     assert "git -C $Root status --porcelain" in launcher
     assert "frontend-releases" in launcher
     assert "$env:KDESK_FRONTEND_DIST" in launcher
+
+
+def test_account_only_health_check_is_passed_as_a_named_switch() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+
+    assert "@(& $healthScript -AccountOnly)" in launcher
+    assert '$healthArguments += "-AccountOnly"' not in launcher

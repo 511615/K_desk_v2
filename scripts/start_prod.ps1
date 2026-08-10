@@ -139,9 +139,11 @@ if (-not $AccountOnly) {
 
 Start-Sleep -Seconds 2
 $healthScript = Join-Path $PSScriptRoot "health_check_prod.ps1"
-$healthArguments = @()
-if ($AccountOnly) { $healthArguments += "-AccountOnly" }
-$healthResults = @(& $healthScript @healthArguments)
+$healthResults = if ($AccountOnly) {
+    @(& $healthScript -AccountOnly)
+} else {
+    @(& $healthScript)
+}
 $failedHealth = @($healthResults | Where-Object {
     $_.PSObject.Properties.Name -contains "Ready" -and -not $_.Ready
 })

@@ -30,6 +30,8 @@ Operators can request a bounded reconnect-and-sync without creating a second cop
 process state from port 8777. Existing runtime state remains the ownership and cursor authority.
 Stale evidence cannot become apparently current solely because a rebuild heartbeat advances.
 Remote data access remains read-only; no MT Manager operation is involved.
+The production `-AccountOnly` launcher path also passes its health-check switch by name, so deploying
+only port 8777 no longer fails after startup or touches the unrelated 8766/workers.
 
 ## Documentation updated
 

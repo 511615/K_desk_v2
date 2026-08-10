@@ -229,6 +229,8 @@ When the runtime snapshot is stale, the header exposes one `恢复连接并同�
 status. The action is disabled while a request is queued or running and shows queued, reconnecting,
 synchronized, Producer-unavailable and failed outcomes explicitly. A running recovery does not hide
 the stale-data warning or make the last snapshot look current.
+Production UI-only deployment uses the named `-AccountOnly` health-check switch, keeping port 8766
+and background workers outside the deployment scope.
 The displayed operational clock is normalized to Beijing time. Current Demo account state, Ticket
 ownership, strategy P/L, source/risk events and execution gates are shown in separate bounded
 panels so an operator can distinguish live account facts from historical event rows.
