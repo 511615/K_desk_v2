@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
         <div class="risk-control-actions"><button class="primary" data-testid="apply-risk-controls" :disabled="controlsSaving" @click="saveControls(false)">保存风控开关</button><button :disabled="controlsSaving || !status.dailyHardStop" @click="saveControls(true)">解除硬停并恢复影子</button><small>{{ controlsMessage || `当前阶段：${phaseLabel(status.phase)}` }}</small></div>
       </section>
       <section class="copy-summary-grid">
-        <article><span>模拟账户权益</span><strong>{{ money(status.equityUsd) }} USD</strong><small :class="Number(status.strategyMarkedPnlUsd) >= 0 ? 'positive' : 'negative'">今日 {{ Number(status.strategyMarkedPnlUsd) >= 0 ? '+' : '' }}{{ money(status.strategyMarkedPnlUsd) }} USD</small></article>
+        <article><span>Demo 账户实际权益</span><strong>{{ money(status.equityUsd) }} USD</strong><small :class="Number(status.strategyMarkedPnlUsd) >= 0 ? 'positive' : 'negative'">本模型今日 {{ Number(status.strategyMarkedPnlUsd) >= 0 ? '+' : '' }}{{ money(status.strategyMarkedPnlUsd) }} USD</small></article>
         <article><span>Demo 多仓 / 空仓</span><strong class="positive">+{{ number(demoExposure.long) }}</strong><small class="negative">空仓 -{{ number(demoExposure.short) }} · 双边 {{ number(demoExposure.gross) }} 手</small></article>
         <article><span>独立来源仓 / Demo Ticket</span><strong>{{ status.independentSourcePositions || copyPositions.length }} / {{ status.independentDemoTickets || ticketMappings.length }}</strong><small>组合净敞口 {{ signedLots(demoExposure.net) }} · 对锁 {{ number(demoExposure.locked) }} 手</small></article>
         <article><span>本周期损益</span><strong :class="Number(status.cyclePnlUsd) >= 0 ? 'positive' : 'negative'">{{ Number(status.cyclePnlUsd) >= 0 ? '+' : '' }}{{ money(status.cyclePnlUsd) }} USD</strong><small>周期止损额度 {{ money(status.cycleLossLimitUsd) }} USD</small></article>
@@ -489,7 +489,7 @@ onBeforeUnmount(() => {
 
       <section class="copy-panel demo-account-panel" data-testid="demo-account-panel">
         <div class="copy-panel-head demo-account-head">
-          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · <span data-testid="demo-account-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span></small></div>
+          <div><h2>当前 Demo 账户</h2><small>{{ demoAccountSummary.login || status.accountLogin || '-' }} · {{ demoAccountSummary.server || status.server || '-' }} · 余额/权益为账户事实，订单与盈亏明细仅本模型 · <span data-testid="demo-account-clock">北京时间 {{ dateTime(runtimeClockMs) }}</span></small></div>
           <span :class="status.terminalTradeAllowed ? 'positive' : 'warning'">{{ status.terminalTradeAllowed ? '自动交易已开启' : '自动交易已关闭' }}</span>
         </div>
         <div class="demo-account-summary">
@@ -498,15 +498,15 @@ onBeforeUnmount(() => {
           <div><span>权益</span><b>{{ money(demoAccountSummary.equityUsd ?? status.equityUsd) }} USD</b></div>
           <div><span>已用 / 可用保证金</span><b>{{ money(demoAccountSummary.marginUsd) }} / {{ money(demoAccountSummary.freeMarginUsd) }}</b></div>
           <div><span>保证金率</span><b>{{ number(demoAccountSummary.marginLevelPercent, 2) }}%</b></div>
-          <div><span>当前持仓盈亏</span><b :class="demoAccountFloatingPnl >= 0 ? 'positive' : 'negative'">{{ demoAccountFloatingPnl >= 0 ? '+' : '' }}{{ money(demoAccountFloatingPnl) }} USD</b></div>
+          <div><span>本模型持仓盈亏</span><b :class="demoAccountFloatingPnl >= 0 ? 'positive' : 'negative'">{{ demoAccountFloatingPnl >= 0 ? '+' : '' }}{{ money(demoAccountFloatingPnl) }} USD</b></div>
         </div>
         <div class="demo-account-ledgers">
           <div class="demo-ledger">
-            <div class="demo-ledger-title"><h3>当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
+            <div class="demo-ledger-title"><h3>本模型当前持仓</h3><span>{{ demoAccountPositions.length }} 笔</span></div>
             <div class="table-wrap demo-account-table"><table><thead><tr><th>Ticket</th><th>产品 / 方向</th><th>手数</th><th>开仓价 / 现价</th><th>浮盈亏 / 隔夜费</th><th>开仓时间（北京时间）/ 持仓</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountPositions" :key="row.ticket"><td><b>{{ row.ticket }}</b><small class="cell-note">Position {{ row.positionId }}</small></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ lots(row.lots) }}</b></td><td><b>{{ number(row.openPrice, 5) }}</b><small class="cell-note">现 {{ number(row.currentPrice, 5) }}</small></td><td :class="Number(row.floatingPnlUsd) + Number(row.swapUsd) >= 0 ? 'positive' : 'negative'"><b>{{ money(Number(row.floatingPnlUsd) + Number(row.swapUsd)) }}</b><small class="cell-note">浮 {{ money(row.floatingPnlUsd) }} · 隔夜 {{ money(row.swapUsd) }}</small></td><td><b>{{ dateTime(row.openedAt) }}</b><small class="cell-note">{{ positionHolding(row.openedAt) }}</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountPositions.length"><td colspan="7" class="empty-cell">当前账户没有持仓</td></tr></tbody></table></div>
           </div>
           <div class="demo-ledger">
-            <div class="demo-ledger-title"><h3>历史成交</h3><span>近 30 日 · 已结束 Position {{ demoAccountHistoryRows.length }} 个</span></div>
+            <div class="demo-ledger-title"><h3>本模型历史成交</h3><span>近 30 日 · 已结束 Position {{ demoAccountHistoryRows.length }} 个</span></div>
             <div class="table-wrap demo-account-table"><table data-testid="demo-deals-table"><thead><tr><th>平仓时间（北京时间）</th><th>Position</th><th>产品 / 方向</th><th>开仓 → 平仓</th><th>手数</th><th>最终已实现盈亏（USD）</th><th>归属</th></tr></thead><tbody><tr v-for="row in demoAccountHistoryRows" :key="row.positionId"><td><b>{{ dateTime(row.closedAt) }}</b></td><td><b>{{ row.positionId }}</b></td><td><b>{{ row.product || '-' }}</b><small class="cell-note" :class="row.side === 'BUY' ? 'positive' : 'negative'">{{ sourceSideLabel(row.side) }}</small></td><td><b>{{ number(row.openPrice, 5) }} → {{ number(row.closePrice, 5) }}</b><small class="cell-note">开仓 {{ dateTime(row.openedAt) }}</small></td><td><b>{{ lots(row.lots) }} 手</b></td><td :class="Number(row.netPnlUsd) >= 0 ? 'positive' : 'negative'"><b>{{ Number(row.netPnlUsd) >= 0 ? '+' : '' }}{{ money(row.netPnlUsd) }}</b><small class="cell-note">Position 最终结果</small></td><td><span class="ownership-badge" :class="{ external: !row.strategyOwned }">{{ ownershipLabel(row.strategyOwned) }}</span></td></tr><tr v-if="!demoAccountHistoryRows.length"><td colspan="7" class="empty-cell">近 30 日没有已结束 Position</td></tr></tbody></table></div>
           </div>
         </div>

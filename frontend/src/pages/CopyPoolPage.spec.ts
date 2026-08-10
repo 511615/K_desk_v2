@@ -153,6 +153,8 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).not.toContain('99901')
     expect(accountPanel.text()).not.toContain('99900')
     expect(accountPanel.text()).not.toContain('500.00')
+    expect(accountPanel.text()).toContain('余额/权益为账户事实，订单与盈亏明细仅本模型')
+    expect(accountPanel.text()).toContain('本模型持仓盈亏')
   })
 
   it('switches account lists by current tier without exposing aliases or source-only closes', async () => {

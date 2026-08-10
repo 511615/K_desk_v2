@@ -33,6 +33,9 @@ The 8777 adapter and Vue page repeat the ownership filter defensively for older 
 Account balance/equity/margin remain clearly account-level facts, while strategy order tables,
 position totals, floating P/L and historical Position P/L exclude other account activity. MT5
 comments, Magic values, private source keys and credentials are never exposed.
+The UI labels the account equity as `Demo 账户实际权益`, the daily result as `本模型今日`, and the
+two order sections as `本模型当前持仓` and `本模型历史成交` so account facts cannot be mistaken for
+strategy-only results.
 
 ## Independent execution model
 
