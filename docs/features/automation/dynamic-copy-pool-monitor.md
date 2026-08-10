@@ -23,11 +23,16 @@ budgets, execution decisions, account equity and safety gates.
 Immediately below the scheduling cadence and entry-event panel is the pinned Demo account ledger.
 It identifies the current Login and server, shows balance, equity, used/free margin and margin
 level, then lists every actual MT5 open position and the most recent 30-day trading Deals. The
-independent current-copy mapping follows directly after it, keeping source Position to Demo Ticket
-ownership adjacent to the account ledger. Rows distinguish copier-owned activity from other account
-activity. The Producer writes this account-scoped projection atomically every five seconds and
+position and Deal lists are restricted to this copy model's `Magic=26072801` plus its fixed or
+independent-position Comment namespace; manual orders and other EAs are omitted rather than merely
+labelled. The independent current-copy mapping follows directly after it, keeping source Position to
+Demo Ticket ownership adjacent to the account ledger. The Producer writes this strategy-scoped
+projection atomically every five seconds and
 caches the bounded history query for ten seconds; the 8777 monitor only reads the local projection.
-MT5 comments, Magic values, private source keys and credentials are never exposed.
+The 8777 adapter and Vue page repeat the ownership filter defensively for older snapshot files.
+Account balance/equity/margin remain clearly account-level facts, while strategy order tables,
+position totals, floating P/L and historical Position P/L exclude other account activity. MT5
+comments, Magic values, private source keys and credentials are never exposed.
 
 ## Independent execution model
 

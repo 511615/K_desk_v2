@@ -268,11 +268,37 @@ class Mt5AccountIdentityTests(unittest.TestCase):
             magic=26_072_801,
             comment="CPV2:C001:SECRET",
         )
+        external_position = SimpleNamespace(
+            **{
+                **vars(position),
+                "ticket": 70002,
+                "identifier": 70002,
+                "profit": 999.0,
+                "magic": 12345,
+                "comment": "MANUAL",
+            }
+        )
+        external_deal = SimpleNamespace(
+            **{
+                **vars(deal),
+                "ticket": 80002,
+                "position_id": 69002,
+                "profit": 999.0,
+                "magic": 12345,
+                "comment": "MANUAL",
+            }
+        )
 
         with (
             patch("copy_trading_live_demo.mt5.account_info", return_value=account),
-            patch("copy_trading_live_demo.mt5.positions_get", return_value=(position,)),
-            patch("copy_trading_live_demo.mt5.history_deals_get", return_value=(deal,)) as history,
+            patch(
+                "copy_trading_live_demo.mt5.positions_get",
+                return_value=(position, external_position),
+            ),
+            patch(
+                "copy_trading_live_demo.mt5.history_deals_get",
+                return_value=(deal, external_deal),
+            ) as history,
         ):
             first = executor.demo_account_snapshot(history_days=30, history_limit=50)
             second = executor.demo_account_snapshot(history_days=30, history_limit=50)
@@ -282,6 +308,10 @@ class Mt5AccountIdentityTests(unittest.TestCase):
         self.assertTrue(first["positions"][0]["strategy_owned"])
         self.assertEqual(first["deals"][0]["deal_ticket"], 80001)
         self.assertAlmostEqual(first["deals"][0]["net_pnl_usd"], 11.45)
+        self.assertEqual(len(first["positions"]), 1)
+        self.assertEqual(len(first["deals"]), 1)
+        self.assertNotIn(70002, {row["ticket"] for row in first["positions"]})
+        self.assertNotIn(80002, {row["deal_ticket"] for row in first["deals"]})
         self.assertEqual(second["deals"], first["deals"])
         self.assertEqual(history.call_count, 1)
         self.assertNotIn("SECRET", json.dumps(first))

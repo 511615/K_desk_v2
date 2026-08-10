@@ -738,7 +738,7 @@ class CopyPoolFileSnapshotRepository:
 
         positions = []
         for item in row.get("positions") or []:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or not _bool(item.get("strategy_owned")):
                 continue
             positions.append({
                 "ticket": _int(item.get("ticket")),
@@ -757,9 +757,12 @@ class CopyPoolFileSnapshotRepository:
             })
 
         deals = []
-        for item in (row.get("deals") or [])[:max(0, limit)]:
-            if not isinstance(item, dict):
-                continue
+        owned_deals = [
+            item
+            for item in row.get("deals") or []
+            if isinstance(item, dict) and _bool(item.get("strategy_owned"))
+        ]
+        for item in owned_deals[:max(0, limit)]:
             deals.append({
                 "dealTicket": _int(item.get("deal_ticket")),
                 "orderTicket": _int(item.get("order_ticket")),

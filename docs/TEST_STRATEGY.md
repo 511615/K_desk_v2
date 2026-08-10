@@ -249,6 +249,8 @@ Dynamic copy-pool monitor regressions cover malformed or missing snapshot files,
 bounded event/timeline reads, account-product effective-weight projection, virtual-position contribution,
 client Demo loss budgets, sanitized source Position/Demo Ticket mappings and per-product
 long/short/net/locked exposure,
+dense mixed-account fixtures where non-model Magic/Comment positions and Deals must be absent from
+the Producer snapshot, 8777 response, Vue position count, floating P/L and Position-level history,
 detailed Login/platform/server projection without raw private-state structures and strict `C001`
 alias redirects to the compatible platform/server-aware account page. Frontend tests cover detailed
 account labels, Chinese operational labels and chart geometry. Browser acceptance uses an isolated

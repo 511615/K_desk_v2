@@ -31,8 +31,12 @@ const payload = computed<any>(() => dashboard.data.value || {})
 const status = computed<any>(() => payload.value.status || {})
 const demoAccount = computed<any>(() => payload.value.demoAccount || {})
 const demoAccountSummary = computed<any>(() => demoAccount.value.account || {})
-const demoAccountPositions = computed<any[]>(() => demoAccount.value.positions || [])
-const demoAccountDeals = computed<any[]>(() => demoAccount.value.deals || [])
+const demoAccountPositions = computed<any[]>(() => (demoAccount.value.positions || []).filter(
+  (row: any) => row.strategyOwned === true,
+))
+const demoAccountDeals = computed<any[]>(() => (demoAccount.value.deals || []).filter(
+  (row: any) => row.strategyOwned === true,
+))
 const demoAccountHistoryRows = computed<any[]>(() => {
   const activeIds = new Set(demoAccountPositions.value.map(position => String(position.positionId ?? position.ticket ?? '')))
   const groups = new Map<string, any[]>()

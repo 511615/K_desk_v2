@@ -681,6 +681,37 @@ def test_copy_pool_projects_only_current_child_tickets_with_exact_pnl_evidence(t
     assert "must-not-leak" not in serialized
 
 
+def test_demo_account_projection_filters_external_rows_from_legacy_snapshot(tmp_path: Path) -> None:
+    output = make_snapshot(tmp_path)
+    path = output / "demo_account_public.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot["positions"].append({
+        **snapshot["positions"][0],
+        "ticket": 99002,
+        "position_id": 99002,
+        "floating_pnl_usd": 999.0,
+        "strategy_owned": False,
+    })
+    external_deal = {
+        **snapshot["deals"][0],
+        "deal_ticket": 88002,
+        "position_id": 98002,
+        "net_pnl_usd": 999.0,
+        "strategy_owned": False,
+    }
+    snapshot["deals"] = [external_deal, *snapshot["deals"]]
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    demo = CopyPoolFileSnapshotRepository(output).dashboard(
+        timeline_limit=30, event_limit=10, order_limit=1
+    )["demoAccount"]
+
+    assert [row["ticket"] for row in demo["positions"]] == [90001]
+    assert [row["dealTicket"] for row in demo["deals"]] == [80001]
+    assert demo["account"]["balanceUsd"] == pytest.approx(9978.35)
+    assert demo["account"]["equityUsd"] == pytest.approx(10003.62)
+
+
 def test_copy_pool_current_copies_keep_legacy_snapshot_values_unknown(tmp_path: Path) -> None:
     output = make_snapshot(tmp_path)
 

@@ -596,7 +596,10 @@ class Mt5Executor:
                 "strategy_owned": self._is_strategy_row(position),
             }
             for position in positions_raw
-            if str(getattr(position, "symbol", "") or "")
+            if (
+                str(getattr(position, "symbol", "") or "")
+                and self._is_strategy_row(position)
+            )
         ]
         positions.sort(key=lambda row: (row["opened_at"], row["ticket"]), reverse=True)
 
@@ -615,6 +618,7 @@ class Mt5Executor:
                 if (
                     int(getattr(deal, "type", -1)) not in trade_types
                     or not str(getattr(deal, "symbol", "") or "")
+                    or not self._is_strategy_row(deal)
                 ):
                     continue
                 profit = float(getattr(deal, "profit", 0.0) or 0.0)

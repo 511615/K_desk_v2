@@ -39,6 +39,10 @@ overlays per-source freshness and errors. The localhost dashboard JSON and UI in
 only those identity fields; private structures, credentials and contact data never enter responses
 or logs. The API sanitizes independent state into `clientRisks`, `copyPositions`, `ticketMappings`
 and per-product `exposures`; internal composite keys and order comments do not enter those projections.
+`demo_account_public.json` retains account-level balance/equity/margin facts but publishes only
+open positions and trading Deals owned by copy-model Magic `26072801` and its approved Comment
+namespace. The 8777 adapter rejects any legacy row without explicit `strategy_owned=true`, so manual
+orders and other EAs cannot enter the model position count, floating P/L or Position history.
 The public pool retains delay compatibility columns but V0.1 marks them
 `historical_delay_enabled=false` and `delay_factor_status=deferred_v0_1`; the producer does not read
 historical Tick partitions during its complete build. Cashflow-adjusted drawdown and holding-quality

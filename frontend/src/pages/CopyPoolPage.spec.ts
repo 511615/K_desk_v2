@@ -21,6 +21,7 @@ vi.mock('@tanstack/vue-query', () => ({
           positions: [
             { ticket: 90001, product: 'XAUUSD', side: 'BUY', lots: 0.01, openPrice: 4080.5, currentPrice: 4083.1, floatingPnlUsd: 2.6, swapUsd: -0.1, openedAt: '2026-08-05T09:10:00+08:00', strategyOwned: true, positionId: 89005 },
             { ticket: 90002, product: 'EURUSD', side: 'BUY', lots: 0.02, openPrice: 1.1, currentPrice: 1.102, floatingPnlUsd: 3.4, swapUsd: -0.2, openedAt: '2026-08-05T09:20:00+08:00', strategyOwned: true, positionId: 89002 },
+            { ticket: 99901, product: 'GBPUSD', side: 'SELL', lots: 0.5, openPrice: 1.3, currentPrice: 1.29, floatingPnlUsd: 500, swapUsd: 0, openedAt: '2026-08-05T09:30:00+08:00', strategyOwned: false, positionId: 99901 },
           ],
           deals: [
             { dealTicket: 80001, positionId: 89001, time: '2026-08-05T00:40:00Z', product: 'XAUUSD', entry: 'OUT', side: 'SELL', lots: 0.01, price: 4082, netPnlUsd: 2.1, strategyOwned: true },
@@ -29,6 +30,8 @@ vi.mock('@tanstack/vue-query', () => ({
             { dealTicket: 80002, positionId: 89002, time: '2026-08-05T01:00:00Z', product: 'EURUSD', entry: 'IN', side: 'BUY', lots: 0.02, price: 1.1, netPnlUsd: 0, strategyOwned: true },
             { dealTicket: 80003, positionId: 89003, time: '2026-08-05T01:10:00Z', product: 'GBPUSD', entry: 'IN', side: 'BUY', lots: 0.03, price: 1.3, netPnlUsd: 0, strategyOwned: true },
             { dealTicket: 80004, positionId: 89004, time: '2026-08-05T01:20:00Z', product: 'USDJPY', entry: 'OUT', side: 'SELL', lots: 0.04, price: 150, netPnlUsd: 4.5, strategyOwned: true },
+            { dealTicket: 89990, positionId: 99900, time: '2026-08-05T01:25:00Z', product: 'GBPUSD', entry: 'IN', side: 'SELL', lots: 0.5, price: 1.3, netPnlUsd: 0, strategyOwned: false },
+            { dealTicket: 89991, positionId: 99900, time: '2026-08-05T01:30:00Z', product: 'GBPUSD', entry: 'OUT', side: 'BUY', lots: 0.5, price: 1.29, netPnlUsd: 500, strategyOwned: false },
           ],
         },
         pool: [
@@ -141,6 +144,15 @@ describe('CopyPoolPage tier tabs', () => {
     expect(table.text()).not.toContain('80000')
     expect(table.text()).not.toContain('89002')
     expect(table.text()).not.toContain('89003')
+  })
+
+  it('never displays or totals positions and deals not owned by this copy model', () => {
+    const wrapper = mount(CopyPoolPage)
+    const accountPanel = wrapper.get('[data-testid="demo-account-panel"]')
+
+    expect(accountPanel.text()).not.toContain('99901')
+    expect(accountPanel.text()).not.toContain('99900')
+    expect(accountPanel.text()).not.toContain('500.00')
   })
 
   it('switches account lists by current tier without exposing aliases or source-only closes', async () => {
