@@ -2241,15 +2241,15 @@ class OrderListTests(unittest.TestCase):
         self.assertNotIn("copyExperimentStatusLabel", html)
         self.assertNotIn("loadCopyExperiment", html)
 
-    def test_account_detail_caches_automation_and_relationship_results_until_explicit_refresh(self):
+    def test_account_detail_caches_automation_and_navigates_relationship_investigation(self):
         html = app.ACCOUNT_DETAIL_HTML
         self.assertIn("dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()}", html)
         self.assertIn("state.dialogCache.copy.get(cacheKey)", html)
         self.assertIn("state.dialogCache.copy.set(cacheKey,request)", html)
         self.assertIn("state.dialogCache.ea.get(cacheKey)", html)
         self.assertIn("state.dialogCache.ea.set(cacheKey,request)", html)
-        self.assertIn("state.dialogCache.relationship.get(cacheKey)", html)
-        self.assertIn("state.dialogCache.relationship.set(cacheKey,request)", html)
+        self.assertIn("query.set('account',LOGIN)", html)
+        self.assertIn("location.assign(`/kuzu-risk?${query.toString()}`)", html)
         self.assertIn("function clearAutomationDialogCache(){state.dialogCache.copy.clear();state.dialogCache.ea.clear();state.dialogCache.relationship.clear();state.relationshipNetwork=null;}", html)
         self.assertIn("clearAutomationDialogCache();load(true)", html)
 

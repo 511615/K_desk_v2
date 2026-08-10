@@ -87,10 +87,11 @@ current-account-calibrated balance/Credit replay, return HTTP 200 with `dailyAnc
 unavailable. A total account-history failure remains HTTP 503 but returns a sanitized application
 error rather than exposing raw database detail or `HTTP 503` as the only user-facing explanation.
 Relationship-network regressions require the legacy entry button to remain after EA and before Toxic,
-with working open, reset and close handlers. API fixtures must retain typed evidence from every
-available source when another source fails, preserve selected filters, expose no risk score or
-relationship-strength label, and allow EA/Copy aggregate members to expand locally without another
-request. Every visible relation edge must retain a readable type label. The graph surface uses one native
+with working navigation preserving filters. API and application fixtures must retain typed evidence
+from every available source when another source fails, preserve selected filters, recursively request
+only score-eligible accounts, retain same-IP/Toxic order evidence ledgers, expose score/colour/threshold
+state without an automated risk conclusion, and flag safety truncation. Every visible relation edge
+must retain a readable type label. The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,
 and avoid re-drawing static nodes, edges and text during gestures. A node drag may draw only its active
@@ -103,6 +104,13 @@ Kuzu-demo regressions create and close a temporary local graph file, then verify
 page and a reopened two-hop API response preserve typed nodes, evidence edges and source counts while
 depth outside the fixed `1..3` range is rejected. The test has no remote provider call and does not
 assert a risk score or conclusion.
+Kuzu-risk regressions cover score propagation and request-scoped Kuzu materialization/readback.
+The replaced relationship-network endpoint must retain partial read-only source coverage, return
+score/colour/ledger data, and account detail must preserve filters while navigating to `/kuzu-risk`.
+Kuzu-risk regressions create and close a separate temporary direct-account evidence file, then verify
+that score-based propagation is not limited by depth, retains low-score outer clues without expanding
+them, combines independent evidence only once per family, terminates a cycle, uses the visible urgent
+risk colour, rejects threshold zero and never makes a remote provider call.
 Automation-report regressions open each generated `.xlsx` and verify sheet order, table ranges,
 account IDs stored as text, numeric profit formats, reconciliation formulas, valid empty-result
 workbooks and download content-disposition headers. Copy reports must contain only `单主汇总` plus

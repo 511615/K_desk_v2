@@ -849,6 +849,28 @@
               "type": "string",
               "title": "Login"
             }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 12,
+              "title": "Threshold"
+            }
+          },
+          {
+            "name": "include_toxic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Toxic"
+            }
           }
         ],
         "responses": {
@@ -918,6 +940,68 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Kuzu Demo Graph Api Kuzu Demo Graph Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kuzu-risk": {
+      "get": {
+        "summary": "Kuzu Risk Page",
+        "operationId": "kuzu_risk_page_kuzu_risk_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/kuzu-risk/graph": {
+      "get": {
+        "summary": "Kuzu Risk Graph",
+        "operationId": "kuzu_risk_graph_api_kuzu_risk_graph_get",
+        "parameters": [
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 12,
+              "title": "Threshold"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Kuzu Risk Graph Api Kuzu Risk Graph Get"
                 }
               }
             }

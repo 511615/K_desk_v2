@@ -18,12 +18,15 @@ from pydantic import BaseModel, ConfigDict
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
 from kdesk.api.kuzu_demo_page import render_kuzu_demo_page
+from kdesk.api.kuzu_risk_page import render_kuzu_risk_page
 from kdesk.application.bonus_arbitrage_scan import normalize_bonus_scan_options
 from kdesk.application.copy_pool_monitor import CopyPoolMonitorService
 from kdesk.application.historical_funds import HistoricalFundsService
 from kdesk.application.ledger_service import LedgerService
+from kdesk.application.position_risk import PositionRiskService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
+from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.build_info import build_metadata
 from kdesk.domain.rebate_churning import normalize_scan_options
 from kdesk.infrastructure.automation_reports import (
@@ -35,7 +38,9 @@ from kdesk.infrastructure.copy_pool_monitor import CopyPoolFileSnapshotRepositor
 from kdesk.infrastructure.database import Database
 from kdesk.infrastructure.excel_io import export_audit_json
 from kdesk.infrastructure.kuzu_relationship_demo import KuzuRelationshipDemoRepository
+from kdesk.infrastructure.kuzu_risk_graph import KuzuRiskGraphRepository
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
+from kdesk.infrastructure.position_risk import LegacyPositionRiskRepository
 from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
 
@@ -87,6 +92,32 @@ def _safe_login(login: str) -> str:
     if not login or len(login) > 64 or not re.fullmatch(r"[0-9A-Za-z_.-]+", login):
         raise HTTPException(status_code=400, detail="账号格式无效")
     return login
+
+
+def _toxic_sync_payload(legacy: LegacyBridge, login: str, filters: dict[str, str]) -> dict:
+    """Return only fully-verified synchronized open/close matches for graph evidence."""
+    position_risk = PositionRiskService(LegacyPositionRiskRepository(legacy))
+    analysis = position_risk.analyze(login, filters, stage="deep")
+    best = analysis.get("bestResult") or {}
+    event = (best.get("evidence") or {}).get("bestEvent") or {}
+    matches = [
+        *list(event.get("sameDirectionMatches") or []),
+        *list(event.get("oppositeDirectionMatches") or []),
+    ]
+    peer_coverage = dict(event.get("peerSearchCoverage") or {})
+    status = str(peer_coverage.get("status") or ("available" if matches else "unavailable"))
+    return {
+        "matches": matches,
+        "coverage": [{
+            "source": "toxicSync",
+            "status": "available" if status == "完成" else status,
+            "reason": "" if status == "完成" else str(peer_coverage.get("reason") or status),
+            "scope": peer_coverage.get("scope") or "AC/DBG 全平台 MT4 + MT5",
+            "matchCount": len(matches),
+            "eventStart": event.get("start") or "",
+            "eventEnd": event.get("end") or "",
+        }],
+    }
 
 
 def _payload_bool(payload: dict, key: str, default: bool) -> bool:
@@ -170,6 +201,13 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     relationship_network = AccountRelationshipNetworkService(legacy.call)
     historical_funds = HistoricalFundsService(legacy.call)
     kuzu_demo = KuzuRelationshipDemoRepository(config.kuzu_demo_path) if config.kuzu_demo_path else None
+    kuzu_risk = KuzuRiskGraphRepository(config.kuzu_risk_path or config.runtime_dir / "relationship_risk_graph.kuzu")
+    relationship_risk = AccountRelationshipRiskService(
+        relationship_network,
+        kuzu_risk.score_projection,
+        lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
+        lambda login, filters: _toxic_sync_payload(legacy, login, filters),
+    )
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
             config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
@@ -191,8 +229,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.ledger = ledger
     app.state.legacy = legacy
     app.state.relationship_network = relationship_network
+    app.state.relationship_risk = relationship_risk
     app.state.historical_funds = historical_funds
     app.state.kuzu_demo = kuzu_demo
+    app.state.kuzu_risk = kuzu_risk
     app.state.copy_pool = copy_pool
 
     assets = config.frontend_dist / "assets"
@@ -402,11 +442,18 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         return await run_in_threadpool(legacy.call, "account_automation_payload", _safe_login(login), legacy_filters(request.query_params))
 
     @app.get("/api/accounts/by-login/{login}/relationship-network")
-    async def relationship_network_payload(login: str, request: Request):
+    async def relationship_network_payload(
+        login: str,
+        request: Request,
+        threshold: float = Query(12, ge=1, le=100),
+        include_toxic: bool = Query(False),
+    ):
         return await run_in_threadpool(
-            relationship_network.build,
+            relationship_risk.build,
             _safe_login(login),
             legacy_filters(request.query_params),
+            threshold,
+            include_toxic=include_toxic,
         )
 
     @app.get("/kuzu-demo", response_class=HTMLResponse)
@@ -424,6 +471,22 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         except (RuntimeError, ValueError):
             logger.exception("Kuzu demo graph read failed")
             raise HTTPException(status_code=503, detail="Kuzu 图谱暂时不可用") from None
+
+    @app.get("/kuzu-risk", response_class=HTMLResponse)
+    async def kuzu_risk_page() -> HTMLResponse:
+        return HTMLResponse(render_kuzu_risk_page(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/kuzu-risk/graph")
+    async def kuzu_risk_graph(threshold: float = Query(12, ge=1, le=100)) -> dict:
+        if kuzu_risk is None:
+            raise HTTPException(status_code=404, detail="Kuzu 风险图谱未配置")
+        try:
+            return await run_in_threadpool(kuzu_risk.graph, threshold)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Kuzu 风险图谱数据不存在") from exc
+        except (RuntimeError, ValueError):
+            logger.exception("Kuzu risk graph read failed")
+            raise HTTPException(status_code=503, detail="Kuzu 风险图谱暂时不可用") from None
 
     @app.get("/api/accounts/by-login/{login}/copy-origins")
     async def copy_origins(login: str, request: Request):

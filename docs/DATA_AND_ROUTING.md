@@ -6,9 +6,9 @@ Production state is under `runtime/prod`; development and tests use `runtime/dev
 `runtime/test`. SQLite WAL, foreign keys and busy timeout are enabled. Core local entities are
 accounts, account history, quick actions, login-IP observations, job runs, job events and Alembic
 revision state. Excel files are import/export snapshots only.
-The account relationship network has no independent store or remote query protocol. It composes the
-already routed read-only account-risk, login-IP, Copy, EA and CRM-rebate response payloads and never
-writes an inferred cross-account relationship.
+The account relationship network has no independent authoritative store. It recursively composes
+routed read-only account-risk, same-server MT5 current-LastIP, Copy, EA, CRM-rebate and selected
+high-priority Toxic synchronisation payloads, and never writes an inferred cross-account relationship.
 Historical funds backtrace has no independent store. For one selected account route it reads the
 complete platform ledger/trade facts and daily account anchors through LegacyBridge. MT4 sources are
 `mt4_trades` plus `mt4_daily`; MT5 sources are the indexed `mt5_deals` and current `mt5_accounts`.
@@ -27,6 +27,17 @@ The separate `ACC-REL-002` Kuzu demo reads an operator-created local file at
 non-authoritative evidence projection for one bounded demo subject: it does not refresh from, write
 to or replace any remote source or local authority. Missing data remains missing rather than
 triggering an on-demand remote multi-hop scan.
+The account-detail `ACC-REL-001` relationship entry uses a different request-scoped Kuzu projection:
+it reads governed account/IP/EA/Copy/rebate payloads for each score-eligible account, serializes the
+aggregated response to a temporary local Kuzu graph, reads it and deletes it before response. MT5
+same-IP peers are same-server `LastIP` matches only. `include_toxic=true` enables the existing
+all-platform five-second open-and-close sync matcher for up to eight high-score accounts. It never
+writes AC, DBG, MT4, MT5, CRM or authoritative K_desk SQLite data.
+`ACC-REL-003` separately reads an operator-created direct-account evidence file at
+`KDESK_KUZU_RISK_DB` (default `runtime/<profile>/relationship_risk_graph.kuzu`). It is likewise a
+non-authoritative read-only projection. Runtime scoring reads only local Kuzu `Entity` and
+`Evidence` rows; missing data never falls back to AC/DBG/MySQL/MT/CRM scanning. The projection must
+exclude authentication fields and unnecessary contact/KYC fields.
 
 The dynamic copy-pool dashboard reads the copier's local snapshot directory. Public inputs are
 `status.json`, `pool_public.csv`, `events_public.csv`, `orders_public.csv` and

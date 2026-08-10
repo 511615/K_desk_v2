@@ -4548,6 +4548,39 @@ def account_login_ips_payload(login: str) -> dict:
     }
 
 
+def account_shared_last_ip_payload(login: str, filters: dict | None = None) -> dict:
+    """Read-only same-server current-LastIP relation for graph expansion."""
+    filters = filters or {}
+    login = normalize_text(login)
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    if not login.isdigit() or platform != "MT5" or not server:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedLastIp", "status": "skipped", "reason": "仅支持已路由 MT5 账户"}]}
+    source = next((item for item in MYSQL_SOURCES if source_allowed(item, platform=platform, server=server) and item.get("kind") == "mt5_deals"), None)
+    if not source:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedLastIp", "status": "skipped", "reason": "当前服务器没有 MT5 LastIP 数据源"}]}
+    try:
+        with mysql_trade_connect(source) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT LastIP FROM `{source['schema']}`.mt5_users_view WHERE Login = %s LIMIT 1", (int(login),))
+                target = cur.fetchone() or {}
+                ip, _kind = normalize_ip_address(target.get("LastIP"))
+                if not ip:
+                    return {"ok": True, "peers": [], "coverage": [{"source": "sharedLastIp", "status": "available", "reason": "当前账号没有 LastIP"}]}
+                cur.execute(
+                    f"SELECT Login, LastIP, LastAccess FROM `{source['schema']}`.mt5_users_view WHERE LastIP = %s AND Login <> %s LIMIT 200",
+                    (ip, int(login)),
+                )
+                rows = cur.fetchall() or []
+    except Exception as exc:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedLastIp", "status": "failed", "reason": str(exc)}]}
+    return {
+        "ok": True,
+        "peers": [{"account": str(row.get("Login")), "platform": "MT5", "server": server, "ip": ip, "lastAccessAt": normalize_text(row.get("LastAccess"))} for row in rows if row.get("Login")],
+        "coverage": [{"source": "sharedLastIp", "status": "available", "reason": ""}],
+    }
+
+
 def public_trade_order(row: dict) -> dict:
     profit = numeric_value(row.get("profit"))
     commission = numeric_value(row.get("commission")) + numeric_value(row.get("fee"))
@@ -11884,8 +11917,9 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       const summary=data.summary||{},failed=(data.coverage||[]).filter(item=>item.status==='failed');$('relationshipNetworkStatus').textContent=`实体 ${num(summary.entityCount,0)} 个 · 关系 ${num(summary.relationshipCount,0)} 条 · 证据 ${num(summary.evidenceCount,0)} 条${failed.length?` · ${failed.length} 个数据源未完成`:''}`;
       relationRenderFilters(state.relationshipNetwork);relationRenderGraph();
     }
-    async function openRelationshipNetwork(){
-      $('relationshipNetworkDialog').showModal();$('relationshipNetworkStatus').textContent='正在读取账户、登录 IP、EA、跟单和返佣事实...';const query=automationDialogQuery(),cacheKey=query.toString();let request=state.dialogCache.relationship.get(cacheKey);if(!request){request=json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/relationship-network?${query}`);state.dialogCache.relationship.set(cacheKey,request);}try{renderRelationshipNetwork(await request);}catch(err){state.dialogCache.relationship.delete(cacheKey);state.relationshipNetwork=null;$('relationshipNetworkStatus').textContent=err.message||'关系网络生成失败';relationClearCanvas();$('relationshipDetailTitle').textContent='未能生成关系网络';$('relationshipEvidence').innerHTML=`<div class="relationship-evidence-row">${esc(err.message||'请求失败')}</div>`;}}
+    function openRelationshipNetwork(){
+      const query=automationDialogQuery();query.set('account',LOGIN);location.assign(`/kuzu-risk?${query.toString()}`);
+    }
     function resetRelationshipNetwork(){const network=state.relationshipNetwork;if(!network)return;network.visibleTypes=new Set((network.data.relationTypes||[]).map(item=>item.id));network.expanded.clear();network.positions.clear();network.dragNodeId=null;network.selected={kind:'node',id:network.subjectId};network.scale=1;network.tx=0;network.ty=0;relationRenderFilters(network);relationRenderGraph();}
     relationBindGraph();
     function renderCopyOrigins(data){

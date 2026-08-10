@@ -45,10 +45,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   not query the unindexed daily view; it returns a current-account-calibrated balance/Credit replay with explicit snapshot
   coverage rather than failing the complete ledger response; intraday equity is not fabricated
 - `GET /api/accounts/by-login/{login}/automation-analysis`
-- `GET /api/accounts/by-login/{login}/relationship-network` - additive evidence-only relationship
-  graph for same-CRM-user accounts, current-account IP observations, EA/route features, Copy and
-  rebate facts; supports existing platform/server/symbol/time filters and returns partial coverage
-  without risk scores or relationship-strength classifications
+- `GET /api/accounts/by-login/{login}/relationship-network` - score-propagated relationship graph
+  for same-CRM-user, same-server MT5 current LastIP, EA/route, Copy and rebate facts; supports
+  existing filters, `threshold=1..100` and optional `include_toxic=true`, and returns partial
+  coverage plus evidence ledgers without an automated risk conclusion
 - `GET /api/accounts/by-login/{login}/copy-origins` - accepts optional `platform`, `server`,
   `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
 - `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the
@@ -123,6 +123,12 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   history for every routed account in the displayed tree and sets `query.fullHistory=true`
 - `GET /api/rebate-churning/ibs/{environment}/{ib_id}` - complete expandable recipient-IB tree
 - `GET /api/trades/summary`
+- `GET /kuzu-risk` - standalone local Kuzu risk-propagation Canvas page
+- `GET /api/kuzu-risk/graph?threshold=1..100` - local-only direct-account evidence projection;
+  returns score propagation, evidence ledger and truncation state without a remote graph scan
+- `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100&include_toxic=true` -
+  the primary Kuzu request-projection interface opened from account detail; returns recursively
+  discovered scored entities, relationships, evidence ledger, source coverage and truncation
 - `GET /api/hierarchy-products` - products from every configured route-backed physical source,
   including the independent DBG MT5 Live2 schema
 - `GET /api/hierarchy-net-deposit` - hierarchy finance by exact CRM/server route; supports existing

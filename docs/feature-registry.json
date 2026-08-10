@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "debe93055f6d",
+  "registryVersion": "663401511fbe",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -51,11 +51,13 @@
       ],
       "code": [
         "src/kdesk/application/relationship_network.py",
+        "src/kdesk/application/relationship_risk.py",
         "src/kdesk/api/account_app.py",
         "legacy/apps/problem_account_registry/app.py"
       ],
       "tests": [
         "tests/test_api.py",
+        "tests/test_kuzu_risk_graph.py",
         "legacy/apps/problem_account_registry/test_app.py"
       ],
       "depends_on": [
@@ -64,10 +66,11 @@
         "AUT-COPY-001",
         "AUT-EA-001",
         "AUT-FOLLOWER-001",
-        "FIN-REBATE-001"
+        "FIN-REBATE-001",
+        "ACC-REL-003"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-07-29",
+      "last_verified_date": "2026-08-10",
       "document": "docs/features/account/relationship-network.md"
     },
     {
@@ -96,6 +99,39 @@
       "last_verified_version": "2.1.0",
       "last_verified_date": "2026-08-03",
       "document": "docs/features/account/kuzu-relationship-demo.md"
+    },
+    {
+      "feature_id": "ACC-REL-003",
+      "title": "Score-propagated Kuzu relationship investigation",
+      "module": "account",
+      "status": "active",
+      "apis": [
+        "GET /kuzu-risk",
+        "GET /api/kuzu-risk/graph",
+        "GET /api/accounts/by-login/{login}/relationship-network"
+      ],
+      "code": [
+        "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_risk_page.py",
+        "src/kdesk/application/relationship_risk.py",
+        "src/kdesk/domain/relationship_propagation.py",
+        "src/kdesk/infrastructure/kuzu_risk_graph.py",
+        "src/kdesk/settings.py"
+      ],
+      "tests": [
+        "tests/test_api.py",
+        "tests/test_kuzu_risk_graph.py",
+        "tests/test_relationship_propagation.py",
+        "tests/test_relationship_risk.py"
+      ],
+      "depends_on": [
+        "ACC-REL-001",
+        "ACC-REL-002",
+        "TOX-POSITION-001"
+      ],
+      "last_verified_version": "2.1.0",
+      "last_verified_date": "2026-08-10",
+      "document": "docs/features/account/score-propagated-kuzu-investigation.md"
     },
     {
       "feature_id": "ACC-SEARCH-001",

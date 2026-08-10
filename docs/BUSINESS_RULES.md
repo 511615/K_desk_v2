@@ -237,10 +237,10 @@
   matches a numeric prefix. At least five complete non-zero ExpertIDs, 80% overlap in both directions,
   matching symbol/direction within two seconds, three distinct times and a 60-second span are required.
   Qualifying groups remain `可能是跟单路由`, have `countedAsEa=false` and do not change EA KPIs.
-- Relationship-network presentation is evidence-only: same-CRM-user, current-account login-IP,
-  EA/route, Copy and CRM-rebate facts can be displayed or hidden by type, but no fact contributes to
-  a relationship score, strong/weak label or risk conclusion. Aggregate EA/Copy nodes reveal their
-  already-returned members only when the operator expands them.
+- Relationship-network scoring is an investigation-priority rule: same-CRM-user, current `LastIP`,
+  EA/route, Copy, CRM-rebate and qualified Toxic sync facts contribute through the ACC-REL-003
+  strength table, but never produce an automated fraud conclusion or trading action. A current
+  `LastIP` is an observation of shared current login IP, not proof of shared device ownership.
 
 ## Toxic and market-pushing
 
@@ -357,3 +357,21 @@ physical source completed; partial coverage or no closed target order is data-in
 - Quote gaps over five minutes split aggregation. Gaps over sixty minutes are closed/no-quote spans.
   Compressed mode labels boundaries; elapsed-time mode leaves blank time. Missing-minute trades use
   warning markers at their real timestamps.
+
+# Score-propagated Kuzu relationship investigation
+
+`ACC-REL-003` uses a local direct-account evidence projection. The seed starts at 100 and each
+residual score forwards through one relation as `residual × fixed relation strength × 0.96`. A node
+is visible once it has a contribution; it only forwards when its combined noisy-OR score meets the
+operator threshold. Duplicate evidence within one relation family retains the maximum contribution;
+different families combine as `100 × (1 - product(1 - contribution/100))`. The displayed score is
+an investigation priority, not a fraud decision. `login_ip` is current `LastIP` only. Toxic sync
+uses only governed main/heavy orders with the complete open/close synchronization and opposite-lot
+requirements owned by `TOX-POSITION-001`. The implementation has 2,000-node and 10,000-expansion
+safety caps and reports truncation rather than implying complete coverage.
+The replaced account relationship endpoint applies this scorer to a request-scoped temporary Kuzu
+projection and reads the next account only if its score remains at least the operator threshold.
+It obtains cross-account MT5 peers from same-server current `LastIP` and, when requested, Toxic
+sync evidence from completed same-symbol orders whose opening and closing timestamps are both within
+five seconds; opposite directions additionally require at least 80% lot similarity. The implementation
+limits account discovery to 100 and Toxic checks to eight high-score accounts, and marks truncation.

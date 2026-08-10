@@ -157,7 +157,7 @@ def test_historical_funds_api_returns_a_readable_failure_without_database_detail
     assert "timeout" not in payload["error"]
 
 
-def test_relationship_network_returns_facts_with_partial_source_coverage(tmp_path: Path, monkeypatch) -> None:
+def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_coverage(tmp_path: Path, monkeypatch) -> None:
     calls: list[tuple[str, tuple]] = []
 
     def fake_call(_self, name, *args):
@@ -179,6 +179,8 @@ def test_relationship_network_returns_facts_with_partial_source_coverage(tmp_pat
                 "lastAccessAt": "2026-07-29 10:00:00", "firstSeenAt": "2026-07-01 10:00:00",
                 "lastSeenAt": "2026-07-29 10:00:00", "geo": {"country": "CN"},
             }]}
+        if name == "account_shared_last_ip_payload":
+            return {"peers": [{"account": "302365", "platform": "MT5", "server": "DBG MT5", "ip": "203.0.113.42", "lastAccessAt": "2026-07-29 10:00:00"}], "coverage": [{"source": "sharedLastIp", "status": "available", "reason": ""}]}
         if name == "account_ea_comment_profit_payload":
             return {"groups": [{
                 "comment": "GoldBot", "platform": "MT5", "server": "DBG MT5",
@@ -208,20 +210,35 @@ def test_relationship_network_returns_facts_with_partial_source_coverage(tmp_pat
     assert response.status_code == 200
     payload = response.json()
     assert payload["account"] == "302360"
+    assert payload["source"] == "kuzu-request-projection"
+    assert payload["threshold"] == 12
     assert {item["id"] for item in payload["relationTypes"]} == {
         "same_crm_user", "login_ip", "ea_feature", "copy_order", "copy_group", "rebate",
+        "toxic_sync_same", "toxic_sync_opposite",
     }
     assert {item["type"] for item in payload["relationships"]} == {
         "same_crm_user", "login_ip", "ea_feature", "copy_order", "rebate",
     }
     assert payload["summary"]["entityCount"] >= 7
     assert any(item["source"] == "copyGroups" and item["status"] == "failed" for item in payload["coverage"])
-    assert "风险评分" in payload["limitations"][0]
-    assert "score" not in payload
+    assert "调查优先级" in payload["limitations"][0]
+    assert all("score" in item and "riskColor" in item for item in payload["entities"])
     assert {name for name, _args in calls} == {
         "account_risk_panels_payload", "account_login_ips_payload", "account_copy_origins_payload",
-        "account_copy_group_profit_payload", "account_ea_comment_profit_payload",
+        "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_shared_last_ip_payload",
     }
+
+
+def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5")
+
+    assert page.status_code == 200
+    assert "/api/accounts/by-login/" in page.text
+    assert "relationship-network" in page.text
+    assert "include_toxic" in page.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:
@@ -281,6 +298,58 @@ def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> Non
     assert {entity['label'] for entity in payload['entities']} == {'2013674', 'Demo EA', '2013675'}
     assert payload['relationships'][0]['evidence']
     assert invalid_depth.status_code == 422
+
+
+def test_kuzu_risk_graph_propagates_until_its_score_threshold(tmp_path: Path) -> None:
+    graph_path = tmp_path / "relationship_risk_graph.kuzu"
+    database = kuzu.Database(str(graph_path))
+    connection = kuzu.Connection(database)
+    connection.execute(
+        "CREATE NODE TABLE Entity("
+        "id STRING, kind STRING, label STRING, platform STRING, server STRING, "
+        "detail STRING, subject BOOL, PRIMARY KEY(id))"
+    )
+    connection.execute(
+        "CREATE REL TABLE Evidence("
+        "FROM Entity TO Entity, id STRING, kind STRING, label STRING, evidence STRING)"
+    )
+    for account, subject in (("639549", "true"), ("639550", "false"), ("639551", "false"), ("639552", "false")):
+        connection.execute(
+            "CREATE (:Entity {id: 'account:" + account + "', kind: 'account', label: '" + account + "', "
+            "platform: 'MT5', server: 'AC CN', detail: '', subject: " + subject + "})"
+        )
+    for edge_id, source, target, kind in (
+        ("ip-1", "639549", "639550", "login_ip"),
+        ("toxic-1", "639550", "639551", "toxic_sync_same"),
+        ("name-1", "639551", "639552", "same_name"),
+    ):
+        connection.execute(
+            "MATCH (source:Entity), (target:Entity) WHERE source.id = 'account:" + source
+            + "' AND target.id = 'account:" + target + "' CREATE (source)-[:Evidence {id: '" + edge_id
+            + "', kind: '" + kind + "', label: '" + kind + "', evidence: '[]'}]->(target)"
+        )
+    connection.close()
+    del connection
+    del database
+    gc.collect()
+
+    settings = replace(make_test_settings(tmp_path), kuzu_risk_path=graph_path)
+    app = create_account_app(settings)
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk")
+        graph = client.get("/api/kuzu-risk/graph?threshold=30")
+        invalid_threshold = client.get("/api/kuzu-risk/graph?threshold=0")
+
+    assert page.status_code == 200
+    assert "Kuzu 关联风险扩散" in page.text
+    assert "#ef4444" in page.text
+    assert graph.status_code == 200
+    payload = graph.json()
+    assert payload["source"] == "kuzu-local-cache"
+    assert payload["threshold"] == 30
+    assert payload["summary"]["entityCount"] == 4
+    assert next(node for node in payload["entities"] if node["label"] == "639552")["expandable"] is False
+    assert invalid_threshold.status_code == 422
 
 
 def test_vue_workbench_forces_account_links_through_the_server() -> None:

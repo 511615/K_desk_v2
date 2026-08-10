@@ -37,6 +37,7 @@ class Settings:
     ui_mode: str
     copy_pool_output_dir: Path | None = None
     kuzu_demo_path: Path | None = None
+    kuzu_risk_path: Path | None = None
 
     @classmethod
     def load(cls) -> Settings:
@@ -74,6 +75,10 @@ class Settings:
             kuzu_demo_path=_env_path(
                 "KDESK_KUZU_DEMO_DB",
                 runtime_dir / "relationship_graph_demo.kuzu",
+            ).resolve(),
+            kuzu_risk_path=_env_path(
+                "KDESK_KUZU_RISK_DB",
+                runtime_dir / "relationship_risk_graph.kuzu",
             ).resolve(),
         )
 

@@ -4,90 +4,73 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
-tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py"]
-depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
+tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
+depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-07-29
+last_verified_date: 2026-08-10
 ---
 
 # Account relationship network
 
 ## Purpose and user entry
 
-The legacy account detail page exposes `关系网络` beside Copy and EA queries once the selected
-account has database orders. It is generated only after the operator clicks the button.
+The `关系网络` button on the legacy account-detail page now opens
+`/kuzu-risk?account={login}` while retaining the current platform, server and symbol filters. The
+previous in-dialog fact graph is no longer the visible account relationship interface.
 
 ## UI and behavior
 
-The dialog shows an interactive evidence graph for same-CRM-user accounts, current-account login
-IP observations, EA or route features, Copy origins/followers, Signal Copy groups and the current
-account's CRM rebate record. Checkboxes hide an entire relation type without deleting data. Clicking
-an aggregate EA or Copy node expands or collapses its members; clicking an edge or node presents its
-source evidence. Every visible edge also carries a persistent, high-contrast relation-type label so
-the graph remains readable without opening the detail pane. Nodes can be dragged, the canvas can be
-panned/zoomed, and `恢复视图` resets the local layout and filters. One high-DPI native Canvas redraws on
-`requestAnimationFrame`; pan and wheel zoom update its camera/layout state rather than applying a CSS
-`translate3d`/`scale` transform to a Canvas texture. The stable graph is first drawn to a detached 3x
-raster scene cache. Gesture frames copy that cache once with `drawImage`; a node drag overlays only the
-active node and its incident lines/labels, then rebuilds the stable cache on release. Static invalidation
-occurs only for filters, aggregate expansion, selection, reset or finished node movement. Label widths are
-cached and visible-content culling remains available for dynamic overlays. Movement of four or more screen
-pixels is treated as a drag and does not activate
-a node or edge on release. Wheel deltas are coalesced, use continuous exponential scaling rather than
-fixed zoom steps, and retain the world point under the cursor while zooming. Canvas hit testing preserves
-node selection, edge selection, panning, relation-type filtering,
-aggregate expansion and reset. The dialog intentionally provides no score, no strong/weak classification
-and no risk conclusion. Successful results are cached in the current page memory per selected
-platform/server/symbol/time filter and cleared only by detail refresh, filter change or reload.
-Nonvisual Canvas `data-*` attributes expose latest frame, cache-build and input-to-paint timing for
-diagnostic acceptance; they do not alter page data or the visible evidence interface.
+The Kuzu page renders the routed account facts with a threshold control and an evidence ledger.
+Red means high-priority relationship, orange means priority, yellow remains eligible to expand and
+grey is a retained outer clue that does not expand. Scores are investigation priorities only; they
+are not a fraud conclusion or an automated action.
 
 ## API contract
 
-`GET /api/accounts/by-login/{login}/relationship-network` accepts the existing account filters.
-It additively returns `entities`, `relationships`, `relationTypes`, `summary`, source `coverage`
-and human-readable `limitations`. Each relationship carries its type label and evidence strings.
-Individual source failure is reported in coverage and limitations while the available graph remains
-usable.
+`GET /api/accounts/by-login/{login}/relationship-network` accepts existing account filters and
+`threshold=1..100` and optional `include_toxic=true`. It returns scored `entities`,
+`relationships`, `relationTypes`, `summary`, source `coverage` and limitations. Each entity includes
+score, colour, hop count, expansion state and score ledger. The former evidence-only response is
+replaced by this contract.
 
 ## Data, routing and read-only constraints
 
-The application composes existing read-only account-risk, login-IP, Copy and EA payloads. It writes
-no local or remote data. Same-CRM-user and rebate facts preserve the source-routing and currency
-rules owned by their existing features; login IP facts are only current-account database/local
-observations and are not inferred as cross-account IP ownership.
+The service first reads the selected account's bounded CRM, EA, Copy, rebate and login-IP evidence,
+then reads each account whose propagated score still meets the threshold. For MT5 it also reads
+same-server peers sharing the current `LastIP`. When the Kuzu page asks for it, high-priority nodes
+are additionally checked through the existing all-platform Toxic synchronised open/close matcher.
+It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
+through Kuzu and removes it before returning. It never writes AC, DBG, MT4, MT5, CRM or K_desk SQLite.
 
 ## Business rules and units
 
-The graph only presents evidence already returned by governed features. Money labels retain the
-source payload currency and its established USD/USC normalization. The graph must not derive a risk
-score, relationship strength or trading conclusion.
+The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-duplication. Returned
+money labels retain source currency and existing USD/USC normalization. The request scope has a
+100-account discovery safety budget and reports `discoveryTruncated` when that budget is exhausted.
+Toxic checks are restricted to nodes scored at least 30 and to eight cross-platform checks per
+request. A current `LastIP` is a shared-login clue, not proof of shared device ownership or
+historical IP use.
 
 ## Loading, empty and failure behavior
 
-The dialog opens with a loading message. Independent evidence sources are fetched concurrently.
-Failures do not hide successful evidence and appear as source coverage; an all-empty graph retains
-the current account and explains the empty result. A failed request is removed from the page cache
-so a later click retries it.
+The destination page shows a Kuzu loading state. Independent source failure does not hide available
+facts and remains in source coverage. A Kuzu failure returns a sanitized unavailable response.
 
 ## Code and dependencies
 
-`AccountRelationshipNetworkService` is application-layer composition over the LegacyBridge
-compatibility boundary. The legacy page owns only graph rendering and interaction. No application
-or domain code imports the copied legacy page module.
+`AccountRelationshipNetworkService` retains evidence composition.
+`AccountRelationshipRiskService` passes that evidence to the request-scoped
+`KuzuRiskGraphRepository`, while the pure domain scorer owns propagation. The legacy page only
+navigates to the Kuzu page.
 
 ## Tests and acceptance
 
-API tests pin entity/relationship typing, evidence-only output and nonfatal partial coverage. Legacy
-HTML tests pin button placement, handlers, one native Canvas, the 3x raster scene cache, dynamic drag
-overlay, frame sampling, viewport culling, label-width caching, persistent drawn edge labels, canvas hit
-testing, drag-click suppression, cursor-centred continuous zoom and animation-frame-limited redraws without
-a CSS-composited stage.
-Account detail retains its legacy
-route and all selected platform/server filters when opening the graph.
+API and application tests pin recursive expansion, threshold stopping, same-IP and Toxic evidence
+ledgers, score/colour output, typed evidence and partial coverage. Repository tests prove temporary
+Kuzu materialization/readback. Legacy HTML tests pin button placement and navigation preserving filters.
 
 ## Compatibility and deprecation
 
-The feature is additive to the legacy account detail page. Existing account URLs, APIs, Copy, EA
-and Toxic interactions are unchanged.
+The button remains at its existing location, but its view and endpoint contract are intentionally
+replaced. Copy, EA and Toxic interactions are unchanged.

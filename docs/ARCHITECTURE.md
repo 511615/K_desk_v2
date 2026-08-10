@@ -41,6 +41,12 @@ calculates relationship risk, strength or a conclusion.
 isolated local graph-file trial. It is not a remote-data provider or a replacement for the legacy
 relationship service; the standalone API validates its bounded traversal depth before the adapter
 opens the local file.
+`KuzuRiskGraphRepository` owns both the static local trial and the account-detail request-scoped
+projection. The latter serializes only read-only source evidence into a temporary local Kuzu graph,
+reads it back, then removes it. `AccountRelationshipRiskService` recursively obtains the next
+account's source facts only while its propagated score meets the threshold; pure score propagation
+remains in domain code. It has explicit 100-account discovery, 2,000-node and 10,000-score-expansion
+safety caps. Cross-platform Toxic checks are a separate, bounded high-priority source adapter.
 
 ## Compatibility boundary
 
