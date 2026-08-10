@@ -24,8 +24,10 @@ trial.
 
 There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
 its aggregate reaches the threshold. Red (`>=60`), orange (`>=30`), yellow (above threshold) and
-grey (outer clue) make priority explicit. Selection shows score, hop count, expansion status and
-evidence ledger. Scores are investigation priority, not a fraud or trading conclusion.
+grey (outer clue) make priority explicit. A relation-aware force layout spreads nearby nodes and
+combines multiple facts between a pair into one visibly labelled edge. Selection shows score, hop
+count, expansion status and evidence ledger. Scores are investigation priority, not a fraud or
+trading conclusion.
 
 ## API contract
 
