@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from typing import Any
 
@@ -21,8 +21,11 @@ RELATION_TYPES = {
 class AccountRelationshipNetworkService:
     """Compose existing account evidence into a graph without judging risk."""
 
-    def __init__(self, legacy_call: LegacyCall) -> None:
+    def __init__(self, legacy_call: LegacyCall, *, source_timeout_seconds: float = 6.0) -> None:
+        if source_timeout_seconds <= 0:
+            raise ValueError("source_timeout_seconds must be positive")
         self._legacy_call = legacy_call
+        self._source_timeout_seconds = source_timeout_seconds
 
     def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
         requests = {
@@ -34,12 +37,14 @@ class AccountRelationshipNetworkService:
         }
         payloads: dict[str, dict[str, Any]] = {}
         coverage: list[dict[str, str]] = []
-        with ThreadPoolExecutor(max_workers=len(requests), thread_name_prefix="relation-network") as executor:
+        executor = ThreadPoolExecutor(max_workers=len(requests), thread_name_prefix="relation-network")
+        try:
             futures = {
                 executor.submit(self._legacy_call, *args): source
                 for source, args in requests.items()
             }
-            for future in as_completed(futures):
+            completed, pending = wait(futures, timeout=self._source_timeout_seconds)
+            for future in completed:
                 source = futures[future]
                 try:
                     payload = future.result()
@@ -48,6 +53,18 @@ class AccountRelationshipNetworkService:
                 except Exception as exc:
                     payloads[source] = {}
                     coverage.append({"source": source, "status": "failed", "reason": str(exc)})
+            for future in pending:
+                source = futures[future]
+                future.cancel()
+                payloads[source] = {}
+                coverage.append({
+                    "source": source, "status": "timeout",
+                    "reason": f"来源查询超过 {self._source_timeout_seconds:g} 秒预算",
+                })
+        finally:
+            # Do not wait for a slow legacy database call. It is read-only and can complete in its
+            # own thread, while this account request returns its verified partial evidence promptly.
+            executor.shutdown(wait=False, cancel_futures=True)
 
         builder = _EvidenceGraphBuilder(login, filters)
         builder.add_same_name(payloads.get("sameName", {}))

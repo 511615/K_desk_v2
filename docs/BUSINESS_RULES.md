@@ -368,10 +368,11 @@ different families combine as `100 × (1 - product(1 - contribution/100))`. The 
 an investigation priority, not a fraud decision. `login_ip` is current `LastIP` only. Toxic sync
 uses only governed main/heavy orders with the complete open/close synchronization and opposite-lot
 requirements owned by `TOX-POSITION-001`. The implementation has 2,000-node and 10,000-expansion
-safety caps and reports truncation rather than implying complete coverage.
+safety caps, a 12-second discovery budget and reports truncation rather than implying complete coverage.
 The replaced account relationship endpoint applies this scorer to a request-scoped temporary Kuzu
 projection and reads the next account only if its score remains at least the operator threshold.
 It obtains cross-account MT5 peers from same-server current `LastIP` and, when requested, Toxic
 sync evidence from completed same-symbol orders whose opening and closing timestamps are both within
 five seconds; opposite directions additionally require at least 80% lot similarity. The implementation
-limits account discovery to 100 and Toxic checks to eight high-score accounts, and marks truncation.
+limits account discovery to 100 and 12 seconds, limits each evidence source wait to six seconds, and
+limits opt-in Toxic checks to two high-score accounts. It marks truncation or query-budget exhaustion.

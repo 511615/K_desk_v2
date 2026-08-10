@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
+from kdesk.domain.relationship_propagation import propagate_scores
 
 ProjectionScorer = Callable[[list[dict[str, Any]], list[dict[str, Any]], float], dict[str, Any]]
 SharedIpLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 ToxicLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 
 MAX_ACCOUNT_EXPANSIONS = 100
-MAX_TOXIC_CHECKS = 8
+MAX_DISCOVERY_SECONDS = 12.0
+MAX_TOXIC_CHECKS = 2
 BUILTIN_RELATION_TYPES = [
     {"id": "toxic_sync_same", "label": "Toxic 同向同步开平仓"},
     {"id": "toxic_sync_opposite", "label": "Toxic 反向同步开平仓"},
@@ -41,8 +44,17 @@ class AccountRelationshipRiskService:
         relation_types: list[dict[str, str]] = []
         latest_scored: dict[str, Any] | None = None
         toxic_checks = 0
+        query_budget_exhausted = False
         root_key = self._account_key(login, filters)
+        deadline = time.monotonic() + MAX_DISCOVERY_SECONDS
         while pending and len(visited) < MAX_ACCOUNT_EXPANSIONS:
+            if time.monotonic() >= deadline:
+                query_budget_exhausted = True
+                coverage.append({
+                    "source": "relationshipDiscovery", "status": "partial",
+                    "reason": f"已达到 {MAX_DISCOVERY_SECONDS:g} 秒查询预算", "account": "",
+                })
+                break
             account_key, account_filters = next(iter(pending.items()))
             pending.pop(account_key)
             if account_key in visited:
@@ -74,7 +86,9 @@ class AccountRelationshipRiskService:
                     coverage.append({"source": "toxicSync", "status": "failed", "reason": str(exc), "account": account_login})
             if root_key not in entities:
                 raise RuntimeError("问题账户未能写入关系投影")
-            latest_scored = self._projection_scorer(list(entities.values()), list(relationships.values()), threshold)
+            # Kuzu is deliberately materialized once, after discovery. Rebuilding an on-disk
+            # graph after every hop turns a broad account cluster into a memory/CPU amplifier.
+            latest_scored = propagate_scores(list(entities.values()), list(relationships.values()), threshold=threshold)
             for entity in latest_scored["entities"]:
                 if entity.get("type") != "account" or not entity.get("expandable"):
                     continue
@@ -89,7 +103,7 @@ class AccountRelationshipRiskService:
                     }
         if latest_scored is None:
             raise RuntimeError("关系图没有可用的账户证据")
-        scored = latest_scored
+        scored = self._projection_scorer(list(entities.values()), list(relationships.values()), threshold)
         discovery_truncated = bool(pending)
         scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated
         scored["summary"]["discoveryAccountCount"] = len(visited)
@@ -108,6 +122,7 @@ class AccountRelationshipRiskService:
                 "关系图按调查优先级扩散；分数用于排序和决定是否继续读取下一层，不是违规或欺诈结论。",
                 f"已实际扩展 {len(visited)} 个达到阈值的账户；队列剩余 {len(pending)} 个。当前已接入 CRM、同服务器 LastIP、EA、跟单、返佣和 Toxic 同步订单边。",
                 f"Toxic 全平台同步订单检查已执行 {toxic_checks} 次；仅检查调查分数不低于 30 的账户，单次请求最多 {MAX_TOXIC_CHECKS} 次，避免对低分外围节点进行无界全库扫描。",
+                f"本次关系发现查询预算为 {MAX_DISCOVERY_SECONDS:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "本次关系发现查询在预算内完成。",
                 *[
                     f"{item['source']} 查询失败：{item['reason']}"
                     for item in failed
@@ -115,6 +130,7 @@ class AccountRelationshipRiskService:
                 ],
             ],
             "discoveryTruncated": discovery_truncated,
+            "queryBudgetExhausted": query_budget_exhausted,
             **scored,
         }
 

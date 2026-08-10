@@ -21,7 +21,9 @@ previous in-dialog fact graph is no longer the visible account relationship inte
 
 ## UI and behavior
 
-The Kuzu page renders the routed account facts with a threshold control and an evidence ledger.
+The Kuzu page renders the routed account facts with a threshold control, an explicit optional Toxic
+checkbox, and an evidence ledger. Basic relationship discovery is the default; Toxic is never run
+silently on first load because it requires all-platform order matching.
 Red means high-priority relationship, orange means priority, yellow remains eligible to expand and
 grey is a retained outer clue that does not expand. Scores are investigation priorities only; they
 are not a fraud conclusion or an automated action.
@@ -47,15 +49,18 @@ through Kuzu and removes it before returning. It never writes AC, DBG, MT4, MT5,
 
 The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-duplication. Returned
 money labels retain source currency and existing USD/USC normalization. The request scope has a
-100-account discovery safety budget and reports `discoveryTruncated` when that budget is exhausted.
-Toxic checks are restricted to nodes scored at least 30 and to eight cross-platform checks per
-request. A current `LastIP` is a shared-login clue, not proof of shared device ownership or
-historical IP use.
+100-account and 12-second discovery safety budget. Each parallel source has a six-second budget;
+late sources are returned as explicit partial coverage rather than blocking the page.
+`discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Toxic checks are
+restricted to nodes scored at least 30 and two cross-platform checks per request. A current `LastIP`
+is a shared-login clue, not proof of shared device ownership or historical IP use.
 
 ## Loading, empty and failure behavior
 
-The destination page shows a Kuzu loading state. Independent source failure does not hide available
-facts and remains in source coverage. A Kuzu failure returns a sanitized unavailable response.
+The destination page shows a Kuzu loading state and has a 45-second browser wait limit. It renders
+the verified partial graph when the server query budget is reached. Independent source failure or
+timeout does not hide available facts and remains in source coverage. A Kuzu failure returns a
+sanitized unavailable response.
 
 ## Code and dependencies
 

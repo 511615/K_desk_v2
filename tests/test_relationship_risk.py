@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from threading import Event
 from typing import Any
 
+from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.domain.relationship_propagation import propagate_scores
 
@@ -58,6 +60,36 @@ def test_relationship_risk_expands_real_evidence_until_score_falls_below_thresho
     assert {node["label"] for node in result["entities"]} == {"100", "200", "300"}
     assert result["summary"]["relationshipCount"] == 2
     assert "已实际扩展 3 个" in result["limitations"][1]
+
+
+def test_relationship_risk_materializes_kuzu_only_once_after_recursive_discovery() -> None:
+    evidence = _EvidenceNetwork()
+    projections: list[tuple[int, int]] = []
+
+    def final_projection(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+        projections.append((len(entities), len(relationships)))
+        return _projection(entities, relationships, threshold)
+
+    service = AccountRelationshipRiskService(evidence, final_projection, lambda _login, _filters: {"peers": [], "coverage": []})
+    service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert projections == [(3, 2)]
+
+
+def test_relationship_evidence_returns_partial_coverage_when_one_source_exceeds_its_budget() -> None:
+    release = Event()
+
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        if name == "account_copy_group_profit_payload":
+            release.wait(1)
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call, source_timeout_seconds=0.01)
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"})
+    release.set()
+
+    timed_out = next(item for item in result["coverage"] if item["source"] == "copyGroups")
+    assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
 
 
 def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None:

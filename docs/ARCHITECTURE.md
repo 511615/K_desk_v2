@@ -45,8 +45,10 @@ opens the local file.
 projection. The latter serializes only read-only source evidence into a temporary local Kuzu graph,
 reads it back, then removes it. `AccountRelationshipRiskService` recursively obtains the next
 account's source facts only while its propagated score meets the threshold; pure score propagation
-remains in domain code. It has explicit 100-account discovery, 2,000-node and 10,000-score-expansion
-safety caps. Cross-platform Toxic checks are a separate, bounded high-priority source adapter.
+remains in domain code. Discovery is bounded by 100 accounts and 12 seconds; every parallel source
+has a six-second wait budget. Kuzu is materialized only once after discovery, avoiding per-hop local
+graph allocation. It also has 2,000-node and 10,000-score-expansion safety caps. Cross-platform Toxic
+checks are an explicit, bounded high-priority source adapter.
 
 ## Compatibility boundary
 

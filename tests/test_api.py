@@ -238,7 +238,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert page.status_code == 200
     assert "/api/accounts/by-login/" in page.text
     assert "relationship-network" in page.text
-    assert "include_toxic" in page.text
+    assert 'id="includeToxic"' in page.text
+    assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:

@@ -88,9 +88,10 @@ unavailable. A total account-history failure remains HTTP 503 but returns a sani
 error rather than exposing raw database detail or `HTTP 503` as the only user-facing explanation.
 Relationship-network regressions require the legacy entry button to remain after EA and before Toxic,
 with working navigation preserving filters. API and application fixtures must retain typed evidence
-from every available source when another source fails, preserve selected filters, recursively request
-only score-eligible accounts, retain same-IP/Toxic order evidence ledgers, expose score/colour/threshold
-state without an automated risk conclusion, and flag safety truncation. Every visible relation edge
+from every available source when another source fails or reaches its source wait budget, preserve
+selected filters, recursively request only score-eligible accounts, materialize Kuzu once after
+discovery, retain same-IP/Toxic order evidence ledgers, expose score/colour/threshold state without
+an automated risk conclusion, and flag safety truncation or query-budget exhaustion. Every visible relation edge
 must retain a readable type label. The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,

@@ -29,8 +29,9 @@ evidence ledger. Scores are investigation priority, not a fraud or trading concl
 
 ## API contract
 
-The primary path is `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100`
-with `include_toxic=true` for the full relationship screen. It returns entities with `score`,
+The primary path is `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100`.
+The screen defaults to `include_toxic=false`; operators explicitly select the checkbox before the
+high-cost cross-platform order match. It returns entities with `score`,
 `hops`, `expandable`, `riskLevel`, `riskColor`, and
 `scoreLedger`, alongside coverage and truncation. `GET /api/kuzu-risk/graph?threshold=1..100`
 remains a static local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
@@ -50,15 +51,16 @@ family retains its maximum, while independent families combine with noisy-OR. Sa
 current LastIP `0.90`, EA and Copy order `0.80`, Copy group `0.75`, rebate `0.70`, Toxic same/open
 close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`. The live path
 recursively reads relations while a node remains at or above the selected threshold. It is limited
-to 100 discovered accounts; Toxic runs only for nodes at least 30 and has an eight-check budget.
-The fixed 2,000-node and 10,000-score-expansion caps, or discovery budget, set `truncated=true`
-rather than claiming complete coverage.
+to 100 discovered accounts and 12 seconds; each account evidence source has a six-second budget.
+Toxic runs only for nodes at least 30 and has a two-check budget. The fixed 2,000-node and
+10,000-score-expansion caps, source timeout or discovery budget set `truncated=true` rather than
+claiming complete coverage.
 
 ## Loading, empty and failure behavior
 
-The page shows Kuzu loading status. Low-score nodes remain inspectable but do not expand. Missing
-static trial data does not trigger a remote scan. Invalid graph shape and Kuzu failures do not expose
-internal paths or exceptions.
+The page shows Kuzu loading status and aborts browser waiting after 45 seconds with actionable retry
+guidance. Low-score nodes remain inspectable but do not expand. Missing static trial data does not
+trigger a remote scan. Invalid graph shape and Kuzu failures do not expose internal paths or exceptions.
 
 ## Code and dependencies
 
@@ -68,10 +70,11 @@ and never injects evidence as HTML.
 
 ## Tests and acceptance
 
-Unit tests cover recursive source expansion, threshold stopping, noisy-OR, de-duplication, cycles,
-same-IP and Toxic evidence ledger construction, and risk colour. Repository tests cover request-scoped
-Kuzu materialization/readback. API tests cover account-route replacement, page request targeting and
-invalid thresholds. Source tests use mocks; they make no live writes.
+Unit tests cover recursive source expansion, one final Kuzu materialization, source timeout handling,
+threshold stopping, noisy-OR, de-duplication, cycles, same-IP and Toxic evidence ledger construction,
+and risk colour. Repository tests cover request-scoped Kuzu materialization/readback. API tests cover
+account-route replacement, page request targeting and invalid thresholds. Source tests use mocks; they
+make no live writes.
 
 ## Compatibility and deprecation
 

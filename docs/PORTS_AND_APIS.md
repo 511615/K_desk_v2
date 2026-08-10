@@ -127,8 +127,9 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /api/kuzu-risk/graph?threshold=1..100` - local-only direct-account evidence projection;
   returns score propagation, evidence ledger and truncation state without a remote graph scan
 - `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100&include_toxic=true` -
-  the primary Kuzu request-projection interface opened from account detail; returns recursively
-  discovered scored entities, relationships, evidence ledger, source coverage and truncation
+  the primary Kuzu request-projection interface opened from account detail; Toxic is opt-in and the
+  response returns recursively discovered scored entities, evidence ledger, source timeout coverage,
+  truncation and query-budget state
 - `GET /api/hierarchy-products` - products from every configured route-backed physical source,
   including the independent DBG MT5 Live2 schema
 - `GET /api/hierarchy-net-deposit` - hierarchy finance by exact CRM/server route; supports existing
