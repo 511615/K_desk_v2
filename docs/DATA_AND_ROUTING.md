@@ -455,6 +455,14 @@ stricter fallback validation threshold rather than inferred to be same-source. W
 registry is configured, missing database routes fail before quote access and expose the requested
 route plus credential-free configured-provider metadata.
 
+## Relationship-expansion source profile
+
+Same-CRM-user graph evidence uses the read-only legacy
+`account_relationship_core_payload`. It resolves the selected platform/server and returns only
+mapped trading-account identity, platform and server. Graph expansion must not call dashboard
+`risk-panels` or retain order history merely to discover this CRM relationship; the full dashboard
+continues to use its existing endpoint independently.
+
 ## Safety
 
 Remote adapters expose query/export only. Password, phone-password and API blob fields must never

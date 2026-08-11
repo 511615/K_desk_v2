@@ -93,8 +93,9 @@ selected filters, recursively request only score-eligible accounts, materialize 
 discovery, retain same-IP/Toxic order evidence ledgers, expose score/colour/threshold state without
 an automated risk conclusion, and flag safety truncation. Equivalent requests must join one active
 background expansion, return pollable in-progress state, continue through score-eligible nodes,
-skip duplicate same-current-LastIP cohort lookups, and limit a timed-out evidence family to one
-running local call. Every visible relation edge
+skip duplicate same-current-LastIP cohort lookups, limit a timed-out evidence family to one
+running local call, and obtain same-CRM edges through the mapping-only source rather than the full
+trade-history dashboard payload. Every visible relation edge
 must retain a readable type label. The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,

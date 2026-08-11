@@ -4290,6 +4290,45 @@ def account_risk_panels_payload(login: str, filters: dict | None = None) -> dict
     return {"ok": True, "riskPanels": panels}
 
 
+def account_relationship_core_payload(login: str, filters: dict | None = None) -> dict:
+    """Return only CRM account mapping facts needed by relationship expansion.
+
+    This deliberately avoids ``account_trade_analysis`` and its full order-history cache.
+    The full dashboard keeps using ``account_risk_panels_payload``; graph expansion only
+    needs account identifiers, platform, and server for a same-CRM-user edge.
+    """
+    filters = filters or {}
+    login = normalize_text(login)
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    if not login or not re.fullmatch(r"\d+", login):
+        raise ValueError("账号格式无效")
+    source = next((
+        item for item in MYSQL_SOURCES
+        if source_allowed(item, platform=platform, server=server)
+    ), None)
+    if not source:
+        return {"ok": True, "riskPanels": {"available": False, "reason": "当前服务器尚未配置 CRM 关系数据源"}}
+    rows = []
+    for item in query_same_name_accounts(source, login):
+        item_source = item.get("source") or {}
+        account = normalize_text(item.get("account"))
+        if not account:
+            continue
+        rows.append({
+            "account": account,
+            "platform": normalize_text(item_source.get("platform")),
+            "server": normalize_text(item_source.get("server")),
+        })
+    return {
+        "ok": True,
+        "riskPanels": {
+            "available": True,
+            "sameName": rows,
+        },
+    }
+
+
 def account_lookup_finance_payload(login: str, platform: str = "", server: str = "") -> dict:
     login = normalize_text(login)
     platform = normalize_text(platform).upper()

@@ -54,7 +54,10 @@ class AccountRelationshipNetworkService:
         """Read one account's evidence without exceeding the caller's remaining deadline."""
         source_timeout_seconds = min(self._source_timeout_seconds, max(float(remaining_seconds), 0.001))
         requests = {
-            "sameName": ("account_risk_panels_payload", login, filters),
+            # The account dashboard payload includes full trade history and is intentionally
+            # not suitable for every node in an unbounded graph expansion.  This relationship
+            # path needs only the CRM account mapping, which the dedicated source returns.
+            "sameName": ("account_relationship_core_payload", login, filters),
             "copyOrigins": ("account_copy_origins_payload", login, filters),
             "copyGroups": ("account_copy_group_profit_payload", login, filters),
             "eaGroups": ("account_ea_comment_profit_payload", login, filters),

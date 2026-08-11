@@ -163,15 +163,13 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
 
     def fake_call(_self, name, *args):
         calls.append((name, args))
-        if name == "account_risk_panels_payload":
+        if name == "account_relationship_core_payload":
             return {
                 "riskPanels": {
                     "available": True,
                     "sameName": [{
                         "account": "302361", "platform": "MT5", "server": "DBG MT5",
-                        "comprehensiveProfit": 120.5, "rebate": 15, "currency": "USD",
                     }],
-                    "finance": {"rebate": 18.75, "rebateRows": 2, "displayCurrency": "USD"},
                 }
             }
         if name == "account_login_ips_payload":
@@ -226,14 +224,14 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
         "toxic_sync_same", "toxic_sync_opposite",
     }
     assert {item["type"] for item in payload["relationships"]} == {
-        "same_crm_user", "login_ip", "ea_feature", "copy_order", "rebate",
+        "same_crm_user", "login_ip", "ea_feature", "copy_order",
     }
     assert payload["summary"]["entityCount"] >= 7
     assert any(item["source"] == "copyGroups" and item["status"] == "failed" for item in payload["coverage"])
     assert "调查优先级" in payload["limitations"][0]
     assert all("score" in item and "riskColor" in item for item in payload["entities"])
     assert {name for name, _args in calls} == {
-        "account_risk_panels_payload", "account_copy_origins_payload",
+        "account_relationship_core_payload", "account_copy_origins_payload",
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
         "account_shared_last_ip_payload",
     }

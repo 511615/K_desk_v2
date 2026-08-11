@@ -60,8 +60,9 @@ Seed score is 100. An edge forwards `residual × relation strength × 0.96`; dup
 family retains its maximum, while independent families combine with noisy-OR. Same CRM is `0.95`,
 current LastIP `0.90`, EA and Copy order `0.80`, Copy group `0.75`, rebate `0.70`, Toxic same/open
 close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`. The live path
-recursively reads relations while a node remains at or above the selected threshold. It is limited
-to 100 discovered accounts and 12 seconds; each account evidence source has a six-second budget.
+recursively reads relations while a node remains at or above the selected threshold. It has no
+request-wide timer or shallow-hop limit; the 2,000-node and 10,000-score-expansion safety caps are
+the only graph-wide stops. Each account evidence source has a six-second wait budget.
 Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read has its own
 six-second source timeout; a source failure is retained in coverage but does not stop later eligible
 accounts. A started same-server `LastIP` follow-up has a separate three-second maximum wait. The
@@ -95,7 +96,8 @@ trigger a remote scan. Invalid graph shape and Kuzu failures do not expose inter
 `KuzuRiskGraphRepository` owns temporary/static Kuzu reads. Canvas uses DOM `textContent` for data
 and never injects evidence as HTML.
 `AccountRelationshipNetworkService` obtains the routed CRM hierarchy payload through the existing
-read-only legacy boundary. Its aggregate query runs only for the seed account in one request.
+read-only legacy boundary. Same-CRM edges use its mapping-only legacy payload instead of a full
+trade-history dashboard read, and its aggregate query runs only for the seed account in one request.
 
 ## Tests and acceptance
 
