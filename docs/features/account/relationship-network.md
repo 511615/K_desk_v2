@@ -27,10 +27,12 @@ evidence family in one angular sector. It shows only the selected account's path
 edge web. Selecting an overview account updates the detailed account-to-evidence-to-peer view below.
 The caption explicitly states whether the selected account is the problem-account start or which
 relationship layer separates it from that account, then narrates the evidence-family route in business
-terms. Each detail relationship card names the actual account logic rather than generic `附加线索`;
-for example, the direct-IB group says that it contains the direct superior IB's own trading accounts,
-not that IB's downstream customer accounts. Peer cards likewise state their layer relative to the
-problem account rather than showing an unexplained hop count.
+terms. When an account has a direct relationship with the problem account, the displayed path uses that
+direct evidence rather than an incidental longer ledger route. Each detail relationship card names the
+actual account logic rather than generic `附加线索`; for example, the direct-IB group contains only
+accounts connected directly to the selected account by the `ib_direct_account` evidence. It never
+places another client there merely because both clients share that IB. Peer cards likewise state their
+layer relative to the problem account rather than showing an unexplained hop count.
 The subject is bright red; other expandable accounts use a score-and-depth red-to-light-orange
 gradient. A node retained as a clue but stopped by the propagation threshold is green. Operators can
 use the mouse wheel to zoom around the pointer and drag the overview to pan. Scores are investigation

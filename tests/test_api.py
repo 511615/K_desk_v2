@@ -243,6 +243,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "/api/accounts/by-login/" in page.text
     assert "关系路径说明" in page.text
     assert "问题账户的直属上级 IB 本人名下交易账户" in page.text
+    assert "directSubjectEdge" in page.text
+    assert "type === 'ib_direct_account'" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
