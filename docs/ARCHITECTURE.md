@@ -45,9 +45,13 @@ opens the local file.
 projection. The latter serializes only read-only source evidence into a temporary local Kuzu graph,
 reads it back, then removes it. `AccountRelationshipRiskService` recursively obtains the next
 account's source facts only while its propagated score meets the threshold; pure score propagation
-remains in domain code. Discovery is bounded by 100 accounts and 12 seconds; every parallel source
-has a six-second wait budget and the MT5 shared-LastIP follow-up has a separately clamped three-second
-budget. Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, but
+remains in domain code. `AccountRelationshipExpansionCoordinator` owns one bounded background
+expansion at a time and returns an in-progress snapshot for polling, so remote evidence discovery
+does not occupy an account HTTP request. Discovery continues until the propagated threshold is met
+or the existing 2,000-node/10,000-score-expansion safety limits apply; every parallel source has a
+six-second wait budget and the MT5 shared-LastIP follow-up has a separately clamped three-second
+budget. Accounts already proven to belong to the same current-LastIP cohort do not repeat that
+lookup. Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, but
 native Kuzu execution runs in a short-lived, single-concurrency child process rather than 8777. The
 parent terminates that child after four seconds and falls back to the same capped pure propagation
 projection when it is busy or unavailable. Its request projection is capped at 400 entities / 1,200

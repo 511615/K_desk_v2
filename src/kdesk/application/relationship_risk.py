@@ -11,9 +11,9 @@ from kdesk.domain.relationship_propagation import propagate_scores
 ProjectionScorer = Callable[[list[dict[str, Any]], list[dict[str, Any]], float], dict[str, Any]]
 SharedIpLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 ToxicLookup = Callable[[str, dict[str, str]], dict[str, Any]]
+ProgressCallback = Callable[[dict[str, Any]], None]
 
-MAX_ACCOUNT_EXPANSIONS = 100
-MAX_DISCOVERY_SECONDS = 12.0
+MAX_ACCOUNT_EXPANSIONS = 2_000
 MAX_TOXIC_CHECKS = 2
 MAX_SHARED_IP_SECONDS = 3.0
 MAX_KUZU_PROJECTION_ENTITIES = 400
@@ -34,10 +34,10 @@ class AccountRelationshipRiskService:
         shared_ip_lookup: SharedIpLookup,
         toxic_lookup: ToxicLookup | None = None,
         *,
-        discovery_timeout_seconds: float = MAX_DISCOVERY_SECONDS,
+        discovery_timeout_seconds: float | None = None,
         shared_ip_timeout_seconds: float = MAX_SHARED_IP_SECONDS,
     ) -> None:
-        if discovery_timeout_seconds <= 0 or shared_ip_timeout_seconds <= 0:
+        if (discovery_timeout_seconds is not None and discovery_timeout_seconds <= 0) or shared_ip_timeout_seconds <= 0:
             raise ValueError("relationship query timeouts must be positive")
         self._evidence_network = evidence_network
         self._projection_scorer = projection_scorer
@@ -46,7 +46,15 @@ class AccountRelationshipRiskService:
         self._discovery_timeout_seconds = discovery_timeout_seconds
         self._shared_ip_timeout_seconds = shared_ip_timeout_seconds
 
-    def build(self, login: str, filters: dict[str, str], threshold: float, *, include_toxic: bool = False) -> dict[str, Any]:
+    def build(
+        self,
+        login: str,
+        filters: dict[str, str],
+        threshold: float,
+        *,
+        include_toxic: bool = False,
+        on_progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
         pending: dict[str, dict[str, str]] = {self._account_key(login, filters): dict(filters)}
         visited: set[str] = set()
         entities: dict[str, dict[str, Any]] = {}
@@ -56,10 +64,15 @@ class AccountRelationshipRiskService:
         latest_scored: dict[str, Any] | None = None
         toxic_checks = 0
         query_budget_exhausted = False
+        known_shared_ip_members: set[str] = set()
         root_key = self._account_key(login, filters)
-        deadline = time.monotonic() + self._discovery_timeout_seconds
+        deadline = (
+            time.monotonic() + self._discovery_timeout_seconds
+            if self._discovery_timeout_seconds is not None
+            else None
+        )
         while pending and len(visited) < MAX_ACCOUNT_EXPANSIONS:
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 query_budget_exhausted = True
                 coverage.append({
                     "source": "relationshipDiscovery", "status": "partial",
@@ -72,13 +85,17 @@ class AccountRelationshipRiskService:
                 continue
             visited.add(account_key)
             account_login = account_key.split("|", 1)[0].removeprefix("account:")
-            remaining_seconds = deadline - time.monotonic()
             budgeted_build = getattr(self._evidence_network, "build_with_budget", None)
+            source_budget = (
+                deadline - time.monotonic()
+                if deadline is not None
+                else float(getattr(self._evidence_network, "_source_timeout_seconds", 6.0))
+            )
             evidence = (
                 budgeted_build(
                     account_login,
                     account_filters,
-                    remaining_seconds=remaining_seconds,
+                    remaining_seconds=source_budget,
                     include_ib_aggregate=account_key == root_key,
                 )
                 if callable(budgeted_build)
@@ -91,7 +108,7 @@ class AccountRelationshipRiskService:
             if account_key in entities:
                 entities[account_key]["isSubject"] = account_key == self._account_key(login, filters)
             coverage.extend({**item, "account": account_login} for item in evidence["coverage"])
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 query_budget_exhausted = True
                 coverage.append({
                     "source": "relationshipDiscovery", "status": "partial",
@@ -99,13 +116,26 @@ class AccountRelationshipRiskService:
                 })
                 latest_scored = propagate_scores(list(entities.values()), list(relationships.values()), threshold=threshold)
                 break
-            shared_ip, shared_ip_coverage = self._shared_ip_with_budget(
-                account_login,
-                account_filters,
-                remaining_seconds=deadline - time.monotonic(),
-            )
+            if account_key in known_shared_ip_members:
+                shared_ip, shared_ip_coverage = None, {
+                    "source": "sharedLastIp", "status": "skipped", "reason": "当前 LastIP 群组已读取，避免重复查询",
+                }
+            else:
+                shared_ip, shared_ip_coverage = self._shared_ip_with_budget(
+                    account_login,
+                    account_filters,
+                    remaining_seconds=(deadline - time.monotonic()) if deadline is not None else self._shared_ip_timeout_seconds,
+                )
             if shared_ip is not None:
                 self._merge_shared_ip(account_key, shared_ip, entities, relationships)
+                known_shared_ip_members.add(account_key)
+                for peer in shared_ip.get("peers", []):
+                    peer_login = str(peer.get("account") or "")
+                    if peer_login:
+                        known_shared_ip_members.add(self._account_key(peer_login, {
+                            "platform": str(peer.get("platform") or account_filters.get("platform") or ""),
+                            "server": str(peer.get("server") or account_filters.get("server") or ""),
+                        }))
                 coverage.extend({**item, "account": account_login} for item in shared_ip.get("coverage", []))
             elif shared_ip_coverage is not None:
                 coverage.append({**shared_ip_coverage, "account": account_login})
@@ -135,6 +165,16 @@ class AccountRelationshipRiskService:
                         "start": "",
                         "end": "",
                     }
+            self._report_progress(
+                on_progress,
+                latest_scored,
+                login,
+                filters,
+                relation_types,
+                coverage,
+                len(visited),
+                len(pending),
+            )
         if latest_scored is None:
             raise RuntimeError("关系图没有可用的账户证据")
         projection_entities, projection_relationships, projection_truncated = self._bounded_projection(
@@ -171,7 +211,7 @@ class AccountRelationshipRiskService:
                 "关系图按调查优先级扩散；分数用于排序和决定是否继续读取下一层，不是违规或欺诈结论。",
                 f"已实际扩展 {len(visited)} 个达到阈值的账户；队列剩余 {len(pending)} 个。当前已接入 CRM、同服务器 LastIP、EA、跟单、返佣和 Toxic 同步订单边。",
                 f"Toxic 全平台同步订单检查已执行 {toxic_checks} 次；仅检查调查分数不低于 30 的账户，单次请求最多 {MAX_TOXIC_CHECKS} 次，避免对低分外围节点进行无界全库扫描。",
-                f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "本次关系发现查询在预算内完成。",
+                f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "关系扩散已完成：所有达到阈值的节点均已处理，或已达到安全节点上限。",
                 *[
                     f"{item['source']} 查询失败：{item['reason']}"
                     for item in failed
@@ -180,8 +220,44 @@ class AccountRelationshipRiskService:
             ],
             "discoveryTruncated": discovery_truncated,
             "queryBudgetExhausted": query_budget_exhausted,
+            "inProgress": False,
             **scored,
         }
+
+    @staticmethod
+    def _report_progress(
+        callback: ProgressCallback | None,
+        scored: dict[str, Any],
+        login: str,
+        filters: dict[str, str],
+        relation_types: list[dict[str, str]],
+        coverage: list[dict[str, str]],
+        visited_count: int,
+        pending_count: int,
+    ) -> None:
+        if callback is None:
+            return
+        progress = {
+            "ok": True,
+            "account": login,
+            "filters": dict(filters),
+            "relationTypes": list(relation_types),
+            "coverage": list(coverage),
+            "limitations": [
+                f"后台扩散中：已处理 {visited_count} 个达到阈值的账户，待处理 {pending_count} 个。"
+            ],
+            "discoveryTruncated": bool(pending_count),
+            "queryBudgetExhausted": False,
+            "inProgress": True,
+            "progress": {"state": "expanding", "expandedAccounts": visited_count, "pendingAccounts": pending_count},
+            **scored,
+        }
+        progress["summary"] = {
+            **dict(scored.get("summary") or {}),
+            "discoveryAccountCount": visited_count,
+            "pendingAccountCount": pending_count,
+        }
+        callback(progress)
 
     def _shared_ip_with_budget(
         self,

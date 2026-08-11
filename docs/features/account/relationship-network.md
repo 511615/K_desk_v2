@@ -4,7 +4,7 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
 last_verified_version: 2.1.0
@@ -45,14 +45,16 @@ counts; its members are not automatically emitted as account nodes or expanded f
 
 `GET /api/accounts/by-login/{login}/relationship-network` accepts existing account filters and
 `threshold=1..100` and optional `include_toxic=true`. It returns scored `entities`,
-`relationships`, `relationTypes`, `summary`, source `coverage` and limitations. Each entity includes
+`relationships`, `relationTypes`, `summary`, source `coverage` and limitations. While the same
+request key is still expanding, `inProgress=true` and `progress` report processed/pending account
+counts; the page polls that snapshot rather than holding a web request open. Each entity includes
 score, colour, hop count, expansion state and score ledger. The former evidence-only response is
 replaced by this contract.
 
 ## Data, routing and read-only constraints
 
-The service first reads the selected account's bounded CRM, EA, Copy, rebate and login-IP evidence,
-then reads each account whose propagated score still meets the threshold. For MT5 it also reads
+The service first reads the selected account's bounded CRM, EA, Copy and rebate evidence, then reads
+each account whose propagated score still meets the threshold. For MT5 it also reads
 same-server peers sharing the current `LastIP`. When the Kuzu page asks for it, high-priority nodes
 are additionally checked through the existing all-platform Toxic synchronised open/close matcher.
 It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
@@ -65,11 +67,13 @@ but omit repeated group aggregation.
 ## Business rules and units
 
 The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-duplication. Returned
-money labels retain source currency and existing USD/USC normalization. The request scope has a
-100-account and 12-second discovery safety budget. Each parallel source has a six-second budget;
-the follow-up MT5 same-server `LastIP` read has its own three-second budget and is skipped or marked
-as timed out when less request time remains. Late sources are returned as explicit partial coverage
-rather than blocking the page. Before request-scoped Kuzu materialization, the visible projection is
+money labels retain source currency and existing USD/USC normalization. A single local background
+expansion continues through score-eligible accounts rather than ending at a request-wide timer;
+equivalent requests reuse its current snapshot. Each parallel source has a six-second budget and the
+follow-up MT5 same-server `LastIP` read has its own three-second budget. Accounts already identified
+in the same current-LastIP cohort skip that redundant lookup. Individual late sources are returned as
+explicit partial coverage rather than blocking the page. The 2,000-node/10,000-score-expansion safety
+caps remain in force. Before request-scoped Kuzu materialization, the visible projection is
 bounded to 400 entities and 1,200 relationships, prioritizing the subject and highest propagated
 scores; exceeding either cap sets `truncated=true`. Native Kuzu materialization runs in a one-at-a-time
 child process with a four-second hard deadline, so a native allocation or stall cannot retain memory in
@@ -86,15 +90,17 @@ alone never creates a downstream account candidate.
 
 ## Loading, empty and failure behavior
 
-The destination page shows a Kuzu loading state and has a 20-second browser wait limit. It renders
-the verified partial graph when the server query budget is reached. Independent source failure or
-timeout does not hide available facts and remains in source coverage. A Kuzu failure returns a
-sanitized unavailable response.
+The destination page shows a Kuzu loading state, renders the first verified snapshot when available,
+then polls while background expansion continues. It labels processed and pending account counts, so
+an incomplete view is not mistaken for threshold stopping. Independent source failure or timeout
+does not hide available facts and remains in source coverage. A Kuzu failure returns a sanitized
+unavailable response.
 
 ## Code and dependencies
 
 `AccountRelationshipNetworkService` retains evidence composition.
-`AccountRelationshipRiskService` passes that evidence to the request-scoped
+`AccountRelationshipExpansionCoordinator` serializes one active request key and stores its pollable
+snapshot. `AccountRelationshipRiskService` passes completed evidence to the request-scoped
 `KuzuRiskGraphRepository`, while the pure domain scorer owns propagation. The legacy page only
 navigates to the Kuzu page.
 

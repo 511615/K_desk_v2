@@ -4,6 +4,7 @@ import time
 from threading import Event
 from typing import Any
 
+from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.domain.relationship_propagation import propagate_scores
@@ -63,6 +64,61 @@ def test_relationship_risk_expands_real_evidence_until_score_falls_below_thresho
     assert "已实际扩展 3 个" in result["limitations"][1]
 
 
+def test_relationship_risk_without_a_global_deadline_expands_until_threshold() -> None:
+    evidence = _EvidenceNetwork()
+    service = AccountRelationshipRiskService(
+        evidence,
+        _projection,
+        lambda _login, _filters: {"peers": [], "coverage": []},
+        discovery_timeout_seconds=None,
+    )
+
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert evidence.calls == ["100", "200", "300"]
+    assert result["queryBudgetExhausted"] is False
+    assert result["discoveryTruncated"] is False
+
+
+def test_relationship_expansion_runs_once_in_the_background_and_returns_progress() -> None:
+    started = Event()
+    release = Event()
+
+    class _SlowRiskService:
+        def build(self, login: str, filters: dict[str, str], threshold: float, *, include_toxic: bool, on_progress) -> dict[str, Any]:
+            started.set()
+            on_progress({
+                "ok": True, "account": login, "filters": filters, "entities": [], "relationships": [],
+                "relationTypes": [], "coverage": [], "limitations": [], "summary": {"discoveryAccountCount": 0},
+                "inProgress": True, "queryBudgetExhausted": False, "discoveryTruncated": False,
+            })
+            release.wait(1)
+            return {
+                "ok": True, "account": login, "filters": filters, "entities": [], "relationships": [],
+                "relationTypes": [], "coverage": [], "limitations": [], "summary": {"discoveryAccountCount": 3},
+                "inProgress": False, "queryBudgetExhausted": False, "discoveryTruncated": False,
+            }
+
+    coordinator = AccountRelationshipExpansionCoordinator(_SlowRiskService(), max_concurrent_jobs=1)
+    try:
+        first = coordinator.get_or_start("100", {"platform": "MT5", "server": "AC CN MT5"}, 12, False)
+        assert first["inProgress"] is True
+        assert started.wait(0.5)
+        duplicate = coordinator.get_or_start("100", {"platform": "MT5", "server": "AC CN MT5"}, 12, False)
+        assert duplicate["inProgress"] is True
+        release.set()
+        deadline = time.monotonic() + 1
+        completed = duplicate
+        while completed["inProgress"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+            completed = coordinator.get_or_start("100", {"platform": "MT5", "server": "AC CN MT5"}, 12, False)
+        assert completed["inProgress"] is False
+        assert completed["summary"]["discoveryAccountCount"] == 3
+    finally:
+        release.set()
+        coordinator.close()
+
+
 def test_relationship_risk_materializes_kuzu_only_once_after_recursive_discovery() -> None:
     evidence = _EvidenceNetwork()
     projections: list[tuple[int, int]] = []
@@ -91,6 +147,18 @@ def test_relationship_evidence_returns_partial_coverage_when_one_source_exceeds_
 
     timed_out = next(item for item in result["coverage"] if item["source"] == "copyGroups")
     assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
+
+
+def test_relationship_evidence_uses_shared_last_ip_instead_of_slow_personal_ip_observation() -> None:
+    calls: list[str] = []
+
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        calls.append(name)
+        return {}
+
+    AccountRelationshipNetworkService(legacy_call).build("100", {"platform": "MT5", "server": "AC CN MT5"})
+
+    assert "account_login_ips_payload" not in calls
 
 
 def test_relationship_evidence_can_use_the_remaining_discovery_budget() -> None:
@@ -148,6 +216,35 @@ def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None
     assert "400" in evidence.calls
     edge = next(item for item in result["relationships"] if item["type"] == "login_ip")
     assert edge["evidence"] == ["LastIP：203.0.113.8", "最后访问：2026-08-10 11:00:00"]
+
+
+def test_relationship_risk_does_not_repeat_shared_last_ip_lookup_for_the_same_ip_cohort() -> None:
+    class _FlatEvidenceNetwork:
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            return {
+                "entities": [{
+                    "id": f"account:{login}", "type": "account", "label": login,
+                    "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+                }],
+                "relationships": [], "relationTypes": [{"id": "login_ip", "label": "同 IP"}], "coverage": [],
+            }
+
+    shared_calls: list[str] = []
+
+    def shared_ip(login: str, filters: dict[str, str]) -> dict[str, Any]:
+        shared_calls.append(login)
+        if login == "100":
+            return {
+                "peers": [{"account": "200", "platform": filters["platform"], "server": filters["server"], "ip": "203.0.113.8"}],
+                "coverage": [],
+            }
+        return {"peers": [], "coverage": []}
+
+    service = AccountRelationshipRiskService(_FlatEvidenceNetwork(), _projection, shared_ip)
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert shared_calls == ["100"]
+    assert {entity["label"] for entity in result["entities"]} == {"100", "200"}
 
 
 def test_relationship_risk_adds_toxic_sync_edges_only_for_nodes_with_investigation_score() -> None:

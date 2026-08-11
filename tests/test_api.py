@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import time
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
@@ -208,9 +209,14 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         response = client.get("/api/accounts/by-login/302360/relationship-network?platform=MT5&server=DBG%20MT5")
+        payload = response.json()
+        deadline = time.monotonic() + 1
+        while payload.get("inProgress") and time.monotonic() < deadline:
+            time.sleep(0.01)
+            payload = client.get("/api/accounts/by-login/302360/relationship-network?platform=MT5&server=DBG%20MT5").json()
 
     assert response.status_code == 200
-    payload = response.json()
+    assert payload["inProgress"] is False
     assert payload["account"] == "302360"
     assert payload["source"] == "kuzu-request-projection"
     assert payload["threshold"] == 12
@@ -227,7 +233,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert "调查优先级" in payload["limitations"][0]
     assert all("score" in item and "riskColor" in item for item in payload["entities"])
     assert {name for name, _args in calls} == {
-        "account_risk_panels_payload", "account_login_ips_payload", "account_copy_origins_payload",
+        "account_risk_panels_payload", "account_copy_origins_payload",
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
         "account_shared_last_ip_payload",
     }
@@ -245,6 +251,9 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "问题账户的直属上级 IB 本人名下交易账户" in page.text
     assert "directSubjectEdge" in page.text
     assert "type === 'ib_direct_account'" in page.text
+    assert "function queuePoll" in page.text
+    assert "data.inProgress" in page.text
+    assert "后台扩散中：已处理" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text

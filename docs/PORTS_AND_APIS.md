@@ -47,8 +47,9 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /api/accounts/by-login/{login}/automation-analysis`
 - `GET /api/accounts/by-login/{login}/relationship-network` - score-propagated relationship graph
   for same-CRM-user, same-server MT5 current LastIP, EA/route, Copy and rebate facts; supports
-  existing filters, `threshold=1..100` and optional `include_toxic=true`, and returns partial
-  coverage plus evidence ledgers without an automated risk conclusion
+  existing filters, `threshold=1..100` and optional `include_toxic=true`. It returns `inProgress`
+  plus `progress` while its single-flight local expansion continues, then the final coverage and
+  evidence ledger without an automated risk conclusion
 - `GET /api/accounts/by-login/{login}/copy-origins` - accepts optional `platform`, `server`,
   `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
 - `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the
@@ -129,7 +130,8 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100&include_toxic=true` -
   the primary Kuzu request-projection interface opened from account detail; Toxic is opt-in and the
   response returns recursively discovered scored entities, evidence ledger, source timeout coverage,
-  truncation and query-budget state
+  truncation and `inProgress`/`progress` state. Repeated equivalent requests join the active local
+  expansion rather than launching duplicate remote scans.
 - `GET /api/hierarchy-products` - products from every configured route-backed physical source,
   including the independent DBG MT5 Live2 schema
 - `GET /api/hierarchy-net-deposit` - hierarchy finance by exact CRM/server route; supports existing

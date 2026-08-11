@@ -47,7 +47,6 @@ class AccountRelationshipNetworkService:
         source_timeout_seconds = min(self._source_timeout_seconds, max(float(remaining_seconds), 0.001))
         requests = {
             "sameName": ("account_risk_panels_payload", login, filters),
-            "loginIps": ("account_login_ips_payload", login),
             "copyOrigins": ("account_copy_origins_payload", login, filters),
             "copyGroups": ("account_copy_group_profit_payload", login, filters),
             "eaGroups": ("account_ea_comment_profit_payload", login, filters),
@@ -91,7 +90,6 @@ class AccountRelationshipNetworkService:
         builder = _EvidenceGraphBuilder(login, filters)
         builder.add_same_name(payloads.get("sameName", {}))
         builder.add_crm_ib_relationship(payloads.get("crmIb", {}))
-        builder.add_login_ips(payloads.get("loginIps", {}))
         builder.add_ea_groups(payloads.get("eaGroups", {}))
         builder.add_copy_origins(payloads.get("copyOrigins", {}))
         builder.add_copy_groups(payloads.get("copyGroups", {}))

@@ -32,9 +32,12 @@ triggering an on-demand remote multi-hop scan.
 The account-detail `ACC-REL-001` relationship entry uses a different request-scoped Kuzu projection:
 it reads governed account/IP/EA/Copy/rebate payloads for each score-eligible account, serializes the
 aggregated response to a temporary local Kuzu graph once, reads it and deletes it before response.
-MT5 same-IP peers are same-server `LastIP` matches only. Each source has a six-second wait budget,
-the LastIP follow-up has a separately clamped three-second client/database timeout, and total discovery
-has a 12-second budget, returning partial coverage when exceeded. The temporary Kuzu write is limited
+MT5 same-IP peers are same-server `LastIP` matches only. The account endpoint starts or reuses one
+bounded local background expansion and returns an in-progress read-only snapshot for page polling;
+it continues through score-eligible accounts until the threshold or the 2,000-node/10,000-score-
+expansion safety limits are reached. Each source has a six-second wait budget and the LastIP follow-up
+has a separately clamped three-second client/database timeout. Known members of one current-LastIP
+cohort skip redundant follow-up queries. The temporary Kuzu write is limited
 to 400 selected entities and 1,200 selected relationships and runs in an isolated local child process
 with a four-second hard deadline; the parent falls back to pure in-process scoring if the child is busy,
 fails or times out. `include_toxic=true` enables the existing all-platform five-second open-and-close

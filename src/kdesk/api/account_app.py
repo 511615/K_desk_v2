@@ -25,6 +25,7 @@ from kdesk.application.historical_funds import HistoricalFundsService
 from kdesk.application.ledger_service import LedgerService
 from kdesk.application.position_risk import PositionRiskService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
+from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.build_info import build_metadata
@@ -208,6 +209,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
         lambda login, filters: _toxic_sync_payload(legacy, login, filters),
     )
+    relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
             config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
@@ -220,7 +222,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         if database.count_accounts() == 0 and config.bootstrap_xlsx.exists():
             result = ledger.import_excel(config.bootstrap_xlsx)
             export_audit_json(config.runtime_dir / "import" / "last_import.json", result)
-        yield
+        try:
+            yield
+        finally:
+            relationship_expansion.close()
 
     app = FastAPI(title="K_desk Account API", version=__version__, lifespan=lifespan)
     app.middleware("http")(request_context)
@@ -230,6 +235,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.legacy = legacy
     app.state.relationship_network = relationship_network
     app.state.relationship_risk = relationship_risk
+    app.state.relationship_expansion = relationship_expansion
     app.state.historical_funds = historical_funds
     app.state.kuzu_demo = kuzu_demo
     app.state.kuzu_risk = kuzu_risk
@@ -448,12 +454,11 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         threshold: float = Query(12, ge=1, le=100),
         include_toxic: bool = Query(False),
     ):
-        return await run_in_threadpool(
-            relationship_risk.build,
+        return relationship_expansion.get_or_start(
             _safe_login(login),
             legacy_filters(request.query_params),
             threshold,
-            include_toxic=include_toxic,
+            include_toxic,
         )
 
     @app.get("/kuzu-demo", response_class=HTMLResponse)
