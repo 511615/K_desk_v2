@@ -92,6 +92,8 @@ class IndependentCopyPosition:
     demo_realized_pnl_usd: float | None = None
     demo_floating_pnl_usd: float | None = None
     demo_total_pnl_usd: float | None = None
+    exit_only_source_baseline_lots: float = 0.0
+    exit_only_copy_baseline_lots: float = 0.0
     last_action: str = "monitor"
     children: list[DemoChildTicket] = field(default_factory=list)
 
@@ -449,6 +451,12 @@ class IndependentCopyBook:
                 demo_total_pnl_usd=(
                     float(raw["demo_total_pnl_usd"])
                     if raw.get("demo_total_pnl_usd") is not None else None
+                ),
+                exit_only_source_baseline_lots=float(
+                    raw.get("exit_only_source_baseline_lots", 0.0)
+                ),
+                exit_only_copy_baseline_lots=float(
+                    raw.get("exit_only_copy_baseline_lots", 0.0)
                 ),
                 last_action=str(raw.get("last_action") or "monitor"),
                 children=children,

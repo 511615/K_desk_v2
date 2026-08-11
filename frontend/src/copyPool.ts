@@ -310,6 +310,7 @@ export function copyReasonLabel(value: unknown): string {
     source_position_over_24h: '来源持仓超过24小时',
     zero_effective_weight: '当前有效权重为零',
     below_minimum_risk_lot: '客户独立风险手数低于产品最小手',
+    filtered_client_exit_only: '账户未通过当前建池硬过滤，禁止新增和加仓',
     event_detail_unavailable: '执行器未保存更细子原因',
     'execution_gate_blocked:external_position_conflict': '该产品存在人工或其他 EA 持仓冲突',
     'execution_gate_blocked:pending_order_conflict': '该产品存在未完成挂单，暂不新增跟单仓位',
@@ -339,6 +340,9 @@ export function eventExecutionLabel(row: Record<string, unknown>): string {
   const decision = String(row.decision || '').trim()
   const reasonCode = String(row.reasonCode || '').trim()
   const phase = String(row.phase || '').trim()
+  if (reasonCode === 'filtered_client_exit_only') {
+    return `仅退出托管：${copyReasonLabel(reasonCode)}`
+  }
   if (phase === 'pool_rebuild_failed') {
     return '未跟单：客户池重建失败，执行暂停，目标手数为 0'
   }

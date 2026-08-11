@@ -76,6 +76,45 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_filtered_owned_ticket_retains_exit_only_source_subscription(self) -> None:
+        retired = client(1, 38011, "38011")
+        book = IndependentCopyBook()
+        _action, position = book.observe_source_position(
+            retired.account_key,
+            retired.spec.alias,
+            "AUDCAD",
+            991,
+            0.0,
+            0.10,
+            utc_now(),
+        )
+        assert position is not None
+        position.children.append(
+            DemoChildTicket(612035003, 0.01, 1, utc_now().isoformat(), 0.90)
+        )
+
+        class FakeDatabase:
+            clients: dict[str, RoutedClient] = {}
+
+            def set_clients(self, clients: dict[str, RoutedClient]) -> None:
+                self.clients = dict(clients)
+
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.routed_clients = {}
+        service.clients = {}
+        service.db = FakeDatabase()  # type: ignore[assignment]
+        service.copy_book = book
+
+        service._retain_exit_only_clients()
+
+        self.assertEqual(service.exit_only_accounts, {retired.account_key})
+        restored = service.routed_clients[retired.account_key]
+        self.assertEqual(restored.login, 38011)
+        self.assertEqual(restored.route_key, "ac_cn_mt5")
+        self.assertFalse(restored.products["AUDCAD"].activity_eligible)
+        self.assertEqual(restored.products["AUDCAD"].base_weight, 0.0)
+        self.assertIn(retired.account_key, service.db.clients)
+
     def test_account_profitability_gate_is_non_compensable_and_requires_samples(self) -> None:
         self.assertEqual(
             account_profitability_gate_reasons(

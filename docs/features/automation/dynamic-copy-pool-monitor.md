@@ -100,6 +100,18 @@ live reconciliation and is removed when the source closes; restart never turns i
 Demo order. A uniquely recovered or already mapped Ticket remains eligible for reduction, close and
 risk management.
 
+When a complete rebuild or hourly discovery removes an account from the current qualified universe,
+an account that still owns one or more persisted Demo Tickets is retained as an `exit-only` source
+subscription. This is a risk-ledger membership, not an active-pool membership: the account is not
+counted as active or reserve, its base and effective weights are both zero, and the Producer cannot
+open or add a new Demo Ticket for it. The source route and the products represented by its owned
+Tickets remain subscribed so that an authoritative source reduction is copied proportionally to the
+existing Ticket, a source close or reversal closes the old Ticket before any opposite leg, and a
+portfolio/client hard-stop can still reduce or close it. The exit-only record is removed only after
+all owned Demo Tickets are gone. Thus a pool filter can stop new risk without losing Ticket
+ownership or turning an existing model position into an unknown Demo position; any mapping mismatch
+still fails closed.
+
 After the non-compensable account-level lifetime/recent comprehensive-profit and sample gates, then
 the rolling-30-day product-level cost-adjusted comprehensive-profit and account-data gates,
 every executable sleeve receives proportional base-weight input. Drawdown, holding, carry and

@@ -51,6 +51,7 @@ from copy_pool_multisource import (
     TOTAL_CLIENT_BUDGET,
     MultiSourceDatabase,
     MultiSourcePortfolio,
+    ProductSpec,
     RoutedClient,
     RoutedEvent,
     SourceCursor,
@@ -74,6 +75,7 @@ from copy_product_catalog import (
     stress_move_fraction,
 )
 from copy_trading_live_core import (
+    ClientSpec,
     drawdown_throttle,
     filetime_to_datetime,
     friday_policy,
@@ -190,6 +192,7 @@ PUBLIC_EVENT_REASON_CODES = frozenset({
     "zero_effective_weight",
     "below_minimum_risk_lot",
     "restart_without_demo_ticket",
+    "filtered_client_exit_only",
     "legacy_monitor_only",
     "event_detail_unavailable",
     "execution_gate_blocked:external_position_conflict",
@@ -1079,8 +1082,12 @@ class MultiSourceLiveService(LiveService):
             account
             for account in self.routed_clients
             if account not in new_clients
-            and bool(self.copy_book.positions_for_client(account))
+            and any(
+                position.children
+                for position in self.copy_book.positions_for_client(account)
+            )
         }
+        self._set_exit_only_accounts(retiring_accounts)
         merged_clients = dict(new_clients)
         for account in retiring_accounts:
             merged_clients[account] = self.routed_clients[account]
@@ -1209,14 +1216,11 @@ class MultiSourceLiveService(LiveService):
                 self.scheduler_state, str(self.pool_build_day)
             )
 
+        self.copy_book = self._restore_independent_copy_book(saved)
+        self._retain_exit_only_clients()
         highwaters = self.db.highwaters()
         rows = self.db.all_positions()
         open_risk = self.db.selected_open_risk()
-        self.copy_book = (
-            IndependentCopyBook()
-            if getattr(self, "pool_was_rebuilt", False)
-            else IndependentCopyBook.from_private(saved.get("independent_copy"))
-        )
         restored_source_keys = set(self.copy_book.positions)
         self.portfolio = MultiSourcePortfolio(self.routed_clients)
         self.portfolio.replace_positions(rows)
@@ -1341,6 +1345,102 @@ class MultiSourceLiveService(LiveService):
         self.pending_source_snapshot_count = 0
         self.persist_private_state()
 
+    @staticmethod
+    def _restore_independent_copy_book(
+        saved: Mapping[str, Any],
+    ) -> IndependentCopyBook:
+        """Restore owned Demo-ticket mappings even when the pool was rebuilt."""
+        return IndependentCopyBook.from_private(saved.get("independent_copy"))
+
+    def _retain_exit_only_clients(self) -> None:
+        """Keep filtered clients subscribed only while an owned Demo ticket exists."""
+        owned_accounts = {
+            position.account_key
+            for position in self.copy_book.positions.values()
+            if position.children
+        }
+        exit_only_accounts = {
+            account_key_value
+            for account_key_value in owned_accounts
+            if account_key_value not in self.routed_clients
+        }
+        self._set_exit_only_accounts(exit_only_accounts)
+        if not exit_only_accounts:
+            return
+
+        routes = {route.key: route for route in ROUTES}
+        retained = dict(self.routed_clients)
+        if not hasattr(self, "current_targets"):
+            self.current_targets = {}
+        for account_key_value in sorted(exit_only_accounts):
+            route_key, separator, login_text = account_key_value.rpartition(":")
+            route = routes.get(route_key)
+            if not separator or route is None:
+                raise RuntimeError(
+                    f"Cannot restore exit-only source route for {account_key_value!r}."
+                )
+            try:
+                login = int(login_text)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Cannot restore exit-only source login for {account_key_value!r}."
+                ) from exc
+            positions = self.copy_book.positions_for_client(account_key_value)
+            aliases = {position.client_alias for position in positions}
+            if len(aliases) != 1:
+                raise RuntimeError(
+                    f"Cannot restore unambiguous exit-only alias for {account_key_value!r}."
+                )
+            products: dict[str, ProductSpec] = {}
+            for product in sorted({position.product for position in positions}):
+                contract_size = float(product_spec(product).contract_size)
+                products[product] = ProductSpec(
+                    product=product,
+                    base_weight=0.0,
+                    historical_net_20d_usd=0.0,
+                    source_contract_size=contract_size,
+                    demo_contract_size=contract_size,
+                    adjusted_score=0.0,
+                    activity_eligible=False,
+                )
+                self.current_targets.setdefault(product, 0.0)
+            alias = next(iter(aliases))
+            retained[account_key_value] = RoutedClient(
+                account_key=account_key_value,
+                login=login,
+                route_key=route.key,
+                physical_key=route.physical_key,
+                connection=route.connection,
+                schema=route.schema,
+                crm_schema=route.crm_schema,
+                server_code=route.server_code,
+                platform=route.platform,
+                server=route.server,
+                spec=ClientSpec(
+                    login=login,
+                    alias=alias,
+                    equity_usd=1.0,
+                    base_weight=0.0,
+                ),
+                products=products,
+            )
+        self.routed_clients = retained
+        self.clients = {key: client.spec for key, client in retained.items()}  # type: ignore[assignment]
+        self.db.set_clients(retained)
+
+    def _set_exit_only_accounts(self, accounts: set[str]) -> None:
+        self.exit_only_accounts = set(accounts)
+        for account_key_value in self.exit_only_accounts:
+            for position in self.copy_book.positions_for_client(account_key_value):
+                if not position.children:
+                    continue
+                if position.exit_only_source_baseline_lots <= 0.0:
+                    position.exit_only_source_baseline_lots = abs(position.source_lots)
+                if position.exit_only_copy_baseline_lots <= 0.0:
+                    position.exit_only_copy_baseline_lots = abs(
+                        position.copied_signed_lots
+                    )
+
     def _initialize_client_copy_risk(self, equity_usd: float) -> None:
         prior = self.copy_book.clients
         rebuilt: dict[str, ClientCopyRisk] = {}
@@ -1353,6 +1453,22 @@ class MultiSourceLiveService(LiveService):
                 if spec.activity_eligible
             )
             old = prior.get(key)
+            if key in getattr(self, "exit_only_accounts", set()):
+                rebuilt[key] = ClientCopyRisk(
+                    account_key=key,
+                    client_alias=client.spec.alias,
+                    base_weight=0.0,
+                    effective_weight=0.0,
+                    loss_budget_usd=max(old.loss_budget_usd if old else 0.0, 1.0),
+                    realized_pnl_usd=old.realized_pnl_usd if old else 0.0,
+                    floating_pnl_usd=old.floating_pnl_usd if old else 0.0,
+                    cycle_baseline_pnl_usd=(
+                        old.cycle_baseline_pnl_usd if old else 0.0
+                    ),
+                    status="exit_only",
+                    reduction_reason="账户未通过当前建池硬过滤，仅管理已有模型仓",
+                )
+                continue
             loss_budget_usd = total_budget * min(
                 base_weight, PORTFOLIO_CLIENT_RISK_FRACTION
             )
@@ -1420,6 +1536,14 @@ class MultiSourceLiveService(LiveService):
                 floating += position_floating
             risk.realized_pnl_usd = realized
             risk.floating_pnl_usd = floating
+
+            if account_key in getattr(self, "exit_only_accounts", set()):
+                risk.base_weight = 0.0
+                risk.effective_weight = 0.0
+                risk.status = "exit_only"
+                risk.reduction_reason = "账户未通过当前建池硬过滤，仅管理已有模型仓"
+                risk.last_weight_update_at = now.isoformat()
+                continue
 
             if risk.is_paused(now):
                 risk.effective_weight = 0.0
@@ -1955,6 +2079,30 @@ class MultiSourceLiveService(LiveService):
     ) -> tuple[float, str]:
         if abs(position.source_lots) < 1e-12:
             return 0.0, "source_closed"
+        if position.account_key in getattr(self, "exit_only_accounts", set()):
+            current = position.copied_signed_lots
+            if not position.children or position.source_lots * current <= 0:
+                return 0.0, "filtered_client_exit_only"
+            source_baseline = max(
+                position.exit_only_source_baseline_lots,
+                abs(position.source_lots),
+                1e-12,
+            )
+            copy_baseline = max(
+                position.exit_only_copy_baseline_lots,
+                abs(current),
+            )
+            target_abs = min(
+                abs(current),
+                copy_baseline * abs(position.source_lots) / source_baseline,
+            )
+            symbol = self.mt.symbol(position.product)
+            target_abs = quantize_lots(
+                target_abs,
+                float(symbol.volume_min),
+                float(symbol.volume_step),
+            )
+            return math.copysign(target_abs, current), "filtered_client_exit_only"
         client = self.routed_clients.get(position.account_key)
         risk = self.copy_book.clients.get(position.account_key)
         if client is None or risk is None or position.product not in client.products:

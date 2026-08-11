@@ -18,6 +18,7 @@ describe('copy pool presentation helpers', () => {
     expect(eventExecutionLabel({ decision: 'risk_rejected', rawTargetLots: 0.0045, desiredTargetLots: 0 })).toBe('未跟单：目标手数低于最小手')
     expect(eventExecutionLabel({ decision: 'signal_expired', desiredTargetLots: 0 })).toBe('未跟单：信号已过期，未复制')
     expect(eventExecutionLabel({ decision: 'monitor', reasonCode: 'below_minimum_risk_lot', desiredTargetLots: 0 })).toBe('未跟单：客户独立风险手数低于产品最小手')
+    expect(eventExecutionLabel({ decision: 'monitor', reasonCode: 'filtered_client_exit_only', desiredTargetLots: 0.01 })).toBe('仅退出托管：账户未通过当前建池硬过滤，禁止新增和加仓')
     expect(eventExecutionLabel({ decision: 'risk_rejected', reasonCode: 'execution_gate_blocked:spread', desiredTargetLots: 0 })).toBe('未跟单：点差超过开仓上限')
     expect(eventExecutionLabel({ decision: 'risk_rejected', reasonCode: 'execution_gate_blocked:spread', spreadCostPerLot: 80, spreadLimitPerLot: 45, bid: 4000, ask: 4000.8 })).toBe('未跟单：点差一手成本 80.00（账户币种）> 上限 45.00；Bid 4000.000 / Ask 4000.800')
     expect(eventExecutionLabel({ decision: 'monitor', desiredTargetLots: 0 })).toBe('未跟单：当时仅监控；旧事件未保存具体子原因')

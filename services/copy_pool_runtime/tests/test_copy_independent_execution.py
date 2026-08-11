@@ -57,7 +57,11 @@ class EventReasonCodeTests(unittest.TestCase):
         )
 
     def test_structural_monitor_reason_wins_over_latency_annotation(self) -> None:
-        for reason in ("old_or_shadow_position", "zero_effective_weight"):
+        for reason in (
+            "old_or_shadow_position",
+            "zero_effective_weight",
+            "filtered_client_exit_only",
+        ):
             with self.subTest(reason=reason):
                 position = SimpleNamespace(status="monitor", reject_reason=reason)
                 self.assertEqual(
@@ -1011,6 +1015,63 @@ class IndependentExecutionServiceTests(unittest.TestCase):
         service._validate_copy_ticket_mapping()
 
         self.assertEqual(service.copy_book.ticket_owners(), {777: position.source_key})
+
+    def test_filtered_client_with_owned_ticket_is_exit_only_until_source_closes(self) -> None:
+        mt = FakeHedgingMt()
+        service = self.sizing_service(mt)
+        _action, position = service.copy_book.observe_source_position(
+            "route:1", "C001", "XAUUSD", 55, 0.0, 1.0, NOW
+        )
+        assert position is not None
+        position.copy_eligible = True
+        mt.add(777, position.comment, 1, 0.02)
+        service._sync_book_children(position)
+        position.exit_only_source_baseline_lots = 1.0
+        position.exit_only_copy_baseline_lots = 0.02
+        service.exit_only_accounts = {"route:1"}
+
+        target, reason = service._desired_copy_lots(position, allow_increase=True)
+
+        self.assertEqual(target, 0.02)
+        self.assertEqual(reason, "filtered_client_exit_only")
+        self.assertEqual(mt.actions, [])
+
+        position.source_lots = 0.5
+        service._sync_independent_position(
+            position, "source_reduce", allow_increase=True
+        )
+        self.assertEqual(mt.actions, [("close", 777, 0.01)])
+
+        position.source_lots = 0.0
+        service._sync_independent_position(
+            position, "source_close", allow_increase=True
+        )
+
+        self.assertEqual(
+            mt.actions,
+            [("close", 777, 0.01), ("close", 777, 0.01)],
+        )
+
+    def test_full_pool_rebuild_restores_owned_copy_book(self) -> None:
+        original = IndependentCopyBook()
+        _action, position = original.observe_source_position(
+            "ac_cn_mt5:38011", "38011", "AUDCAD", 991, 0.0, 0.1, NOW
+        )
+        assert position is not None
+        position.children.append(
+            DemoChildTicket(612035003, 0.01, 1, NOW.isoformat(), 0.9)
+        )
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.pool_was_rebuilt = True
+
+        restored = service._restore_independent_copy_book(
+            {"independent_copy": original.to_private()}
+        )
+
+        self.assertEqual(
+            restored.ticket_owners(),
+            {612035003: position.source_key},
+        )
 
     def test_restart_without_demo_ticket_is_monitor_only_and_never_reopens(self) -> None:
         original = IndependentCopyBook()
