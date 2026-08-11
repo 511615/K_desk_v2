@@ -1016,20 +1016,28 @@ def trade_db_connect() -> sqlite3.Connection:
     return conn
 
 
-def mysql_trade_connect(source: dict):
+def mysql_trade_connect(source: dict, *, connect_timeout: int | None = None, read_timeout: int | None = None):
     if not MYSQL_PASSWORD:
         raise RuntimeError("远程交易数据库未配置密码：请设置 ACCOUNT_TRADE_MYSQL_PASSWORD")
     try:
         import pymysql
     except ImportError as exc:
         raise RuntimeError("缺少 pymysql，无法连接远程 MySQL 交易数据库") from exc
+    try:
+        effective_connect_timeout = max(int(connect_timeout if connect_timeout is not None else 10), 1)
+    except (TypeError, ValueError):
+        effective_connect_timeout = 10
+    try:
+        effective_read_timeout = max(int(read_timeout if read_timeout is not None else source.get("read_timeout", 90)), 1)
+    except (TypeError, ValueError):
+        effective_read_timeout = 90
     return pymysql.connect(
         host=source["host"],
         port=int(source.get("port", 3306)),
         user=MYSQL_USER,
         password=MYSQL_PASSWORD,
-        connect_timeout=10,
-        read_timeout=max(mysql_int(source.get("read_timeout"), 90), 1),
+        connect_timeout=effective_connect_timeout,
+        read_timeout=effective_read_timeout,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
     )
@@ -4651,7 +4659,12 @@ def account_shared_last_ip_payload(login: str, filters: dict | None = None) -> d
     if not source:
         return {"ok": True, "peers": [], "coverage": [{"source": "sharedLastIp", "status": "skipped", "reason": "当前服务器没有 MT5 LastIP 数据源"}]}
     try:
-        with mysql_trade_connect(source) as conn:
+        requested_timeout = float(filters.get("relationshipQueryTimeoutSeconds") or 3)
+    except (TypeError, ValueError):
+        requested_timeout = 3
+    query_timeout_seconds = min(max(int(requested_timeout + 0.999), 1), 3)
+    try:
+        with mysql_trade_connect(source, connect_timeout=query_timeout_seconds, read_timeout=query_timeout_seconds) as conn:
             with conn.cursor() as cur:
                 cur.execute(f"SELECT LastIP FROM `{source['schema']}`.mt5_users_view WHERE Login = %s LIMIT 1", (int(login),))
                 target = cur.fetchone() or {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from threading import Event
 from typing import Any
 
@@ -254,3 +255,71 @@ def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account
     service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
 
     assert evidence.calls == [("100", True), ("200", False)]
+
+
+def test_relationship_risk_returns_partial_graph_when_shared_ip_ignores_its_budget() -> None:
+    release = Event()
+
+    def slow_shared_ip(_login: str, _filters: dict[str, str]) -> dict[str, Any]:
+        release.wait(1)
+        return {"peers": [], "coverage": []}
+
+    service = AccountRelationshipRiskService(
+        _EvidenceNetwork(),
+        _projection,
+        slow_shared_ip,
+        discovery_timeout_seconds=0.05,
+        shared_ip_timeout_seconds=0.01,
+    )
+    started = time.monotonic()
+    try:
+        result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+    finally:
+        release.set()
+
+    assert time.monotonic() - started < 0.25
+    assert any(
+        item["source"] == "sharedLastIp" and item["status"] == "timeout"
+        for item in result["coverage"]
+    )
+
+
+def test_relationship_risk_caps_kuzu_projection_before_materialization() -> None:
+    class _BroadEvidenceNetwork:
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            subject = {
+                "id": f"account:{login}", "type": "account", "label": login,
+                "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+            }
+            if login != "100":
+                return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
+            peers = [
+                {**subject, "id": f"account:{index}", "label": str(index), "isSubject": False}
+                for index in range(200, 650)
+            ]
+            edges = [
+                {
+                    "id": f"ea-{peer['label']}", "source": subject["id"], "target": peer["id"],
+                    "type": "ea_feature", "label": "EA", "evidence": [],
+                }
+                for peer in peers
+            ]
+            return {
+                "entities": [subject, *peers], "relationships": edges,
+                "relationTypes": [{"id": "ea_feature", "label": "EA"}], "coverage": [],
+            }
+
+    projections: list[tuple[int, int]] = []
+
+    def capped_projection(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], threshold: float) -> dict[str, Any]:
+        projections.append((len(entities), len(relationships)))
+        return _projection(entities, relationships, threshold)
+
+    service = AccountRelationshipRiskService(
+        _BroadEvidenceNetwork(), capped_projection, lambda _login, _filters: {"peers": [], "coverage": []},
+    )
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert projections[0][0] <= 400
+    assert projections[0][1] <= 1_200
+    assert result["truncated"] is True

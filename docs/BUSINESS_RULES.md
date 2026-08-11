@@ -380,5 +380,7 @@ projection and reads the next account only if its score remains at least the ope
 It obtains cross-account MT5 peers from same-server current `LastIP` and, when requested, Toxic
 sync evidence from completed same-symbol orders whose opening and closing timestamps are both within
 five seconds; opposite directions additionally require at least 80% lot similarity. The implementation
-limits account discovery to 100 and 12 seconds, limits each evidence source wait to six seconds, and
-limits opt-in Toxic checks to two high-score accounts. It marks truncation or query-budget exhaustion.
+limits account discovery to 100 and 12 seconds, limits each evidence source wait to six seconds and
+the MT5 shared-LastIP follow-up to three seconds, and limits opt-in Toxic checks to two high-score
+accounts. It caps the final temporary Kuzu projection at 400 entities and 1,200 relationships. It marks
+truncation or query-budget exhaustion.

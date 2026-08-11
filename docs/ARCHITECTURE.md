@@ -46,9 +46,11 @@ projection. The latter serializes only read-only source evidence into a temporar
 reads it back, then removes it. `AccountRelationshipRiskService` recursively obtains the next
 account's source facts only while its propagated score meets the threshold; pure score propagation
 remains in domain code. Discovery is bounded by 100 accounts and 12 seconds; every parallel source
-has a six-second wait budget. Kuzu is materialized only once after discovery, avoiding per-hop local
-graph allocation. It also has 2,000-node and 10,000-score-expansion safety caps. Cross-platform Toxic
-checks are an explicit, bounded high-priority source adapter.
+has a six-second wait budget and the MT5 shared-LastIP follow-up has a separately clamped three-second
+budget. Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, and
+its request projection is capped at 400 entities / 1,200 relationships before native Kuzu writes. It
+also has 2,000-node and 10,000-score-expansion safety caps. Cross-platform Toxic checks are an explicit,
+bounded high-priority source adapter.
 
 ## Compatibility boundary
 

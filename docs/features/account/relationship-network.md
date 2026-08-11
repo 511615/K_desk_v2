@@ -59,7 +59,11 @@ but omit repeated group aggregation.
 The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-duplication. Returned
 money labels retain source currency and existing USD/USC normalization. The request scope has a
 100-account and 12-second discovery safety budget. Each parallel source has a six-second budget;
-late sources are returned as explicit partial coverage rather than blocking the page.
+the follow-up MT5 same-server `LastIP` read has its own three-second budget and is skipped or marked
+as timed out when less request time remains. Late sources are returned as explicit partial coverage
+rather than blocking the page. Before request-scoped Kuzu materialization, the visible projection is
+bounded to 400 entities and 1,200 relationships, prioritizing the subject and highest propagated
+scores; exceeding either cap sets `truncated=true`.
 `discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Every account evidence
 read uses the lesser of its six-second source budget and the remaining request-wide discovery budget,
 so a late source cannot extend a near-complete request by another full source timeout. Toxic checks are
@@ -71,7 +75,7 @@ alone never creates a downstream account candidate.
 
 ## Loading, empty and failure behavior
 
-The destination page shows a Kuzu loading state and has a 45-second browser wait limit. It renders
+The destination page shows a Kuzu loading state and has a 20-second browser wait limit. It renders
 the verified partial graph when the server query budget is reached. Independent source failure or
 timeout does not hide available facts and remains in source coverage. A Kuzu failure returns a
 sanitized unavailable response.

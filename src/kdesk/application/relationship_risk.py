@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
@@ -14,6 +15,9 @@ ToxicLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 MAX_ACCOUNT_EXPANSIONS = 100
 MAX_DISCOVERY_SECONDS = 12.0
 MAX_TOXIC_CHECKS = 2
+MAX_SHARED_IP_SECONDS = 3.0
+MAX_KUZU_PROJECTION_ENTITIES = 400
+MAX_KUZU_PROJECTION_RELATIONSHIPS = 1_200
 BUILTIN_RELATION_TYPES = [
     {"id": "toxic_sync_same", "label": "Toxic 同向同步开平仓"},
     {"id": "toxic_sync_opposite", "label": "Toxic 反向同步开平仓"},
@@ -29,11 +33,18 @@ class AccountRelationshipRiskService:
         projection_scorer: ProjectionScorer,
         shared_ip_lookup: SharedIpLookup,
         toxic_lookup: ToxicLookup | None = None,
+        *,
+        discovery_timeout_seconds: float = MAX_DISCOVERY_SECONDS,
+        shared_ip_timeout_seconds: float = MAX_SHARED_IP_SECONDS,
     ) -> None:
+        if discovery_timeout_seconds <= 0 or shared_ip_timeout_seconds <= 0:
+            raise ValueError("relationship query timeouts must be positive")
         self._evidence_network = evidence_network
         self._projection_scorer = projection_scorer
         self._shared_ip_lookup = shared_ip_lookup
         self._toxic_lookup = toxic_lookup
+        self._discovery_timeout_seconds = discovery_timeout_seconds
+        self._shared_ip_timeout_seconds = shared_ip_timeout_seconds
 
     def build(self, login: str, filters: dict[str, str], threshold: float, *, include_toxic: bool = False) -> dict[str, Any]:
         pending: dict[str, dict[str, str]] = {self._account_key(login, filters): dict(filters)}
@@ -46,13 +57,13 @@ class AccountRelationshipRiskService:
         toxic_checks = 0
         query_budget_exhausted = False
         root_key = self._account_key(login, filters)
-        deadline = time.monotonic() + MAX_DISCOVERY_SECONDS
+        deadline = time.monotonic() + self._discovery_timeout_seconds
         while pending and len(visited) < MAX_ACCOUNT_EXPANSIONS:
             if time.monotonic() >= deadline:
                 query_budget_exhausted = True
                 coverage.append({
                     "source": "relationshipDiscovery", "status": "partial",
-                    "reason": f"已达到 {MAX_DISCOVERY_SECONDS:g} 秒查询预算", "account": "",
+                    "reason": f"已达到 {self._discovery_timeout_seconds:g} 秒查询预算", "account": "",
                 })
                 break
             account_key, account_filters = next(iter(pending.items()))
@@ -84,16 +95,20 @@ class AccountRelationshipRiskService:
                 query_budget_exhausted = True
                 coverage.append({
                     "source": "relationshipDiscovery", "status": "partial",
-                    "reason": f"已达到 {MAX_DISCOVERY_SECONDS:g} 秒查询预算", "account": "",
+                    "reason": f"已达到 {self._discovery_timeout_seconds:g} 秒查询预算", "account": "",
                 })
                 latest_scored = propagate_scores(list(entities.values()), list(relationships.values()), threshold=threshold)
                 break
-            try:
-                shared_ip = self._shared_ip_lookup(account_login, account_filters)
+            shared_ip, shared_ip_coverage = self._shared_ip_with_budget(
+                account_login,
+                account_filters,
+                remaining_seconds=deadline - time.monotonic(),
+            )
+            if shared_ip is not None:
                 self._merge_shared_ip(account_key, shared_ip, entities, relationships)
                 coverage.extend({**item, "account": account_login} for item in shared_ip.get("coverage", []))
-            except Exception as exc:
-                coverage.append({"source": "sharedLastIp", "status": "failed", "reason": str(exc), "account": account_login})
+            elif shared_ip_coverage is not None:
+                coverage.append({**shared_ip_coverage, "account": account_login})
             current_score = 100.0 if account_key == root_key else self._node_score(latest_scored, account_key)
             if include_toxic and self._toxic_lookup and current_score >= 30 and toxic_checks < MAX_TOXIC_CHECKS:
                 toxic_checks += 1
@@ -122,9 +137,12 @@ class AccountRelationshipRiskService:
                     }
         if latest_scored is None:
             raise RuntimeError("关系图没有可用的账户证据")
-        scored = self._projection_scorer(list(entities.values()), list(relationships.values()), threshold)
+        projection_entities, projection_relationships, projection_truncated = self._bounded_projection(
+            latest_scored["entities"], latest_scored["relationships"],
+        )
+        scored = self._projection_scorer(projection_entities, projection_relationships, threshold)
         discovery_truncated = bool(pending)
-        scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated
+        scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated or projection_truncated
         scored["summary"]["discoveryAccountCount"] = len(visited)
         labels = {item["id"]: item["label"] for item in relation_types}
         for relationship in scored["relationships"]:
@@ -141,7 +159,7 @@ class AccountRelationshipRiskService:
                 "关系图按调查优先级扩散；分数用于排序和决定是否继续读取下一层，不是违规或欺诈结论。",
                 f"已实际扩展 {len(visited)} 个达到阈值的账户；队列剩余 {len(pending)} 个。当前已接入 CRM、同服务器 LastIP、EA、跟单、返佣和 Toxic 同步订单边。",
                 f"Toxic 全平台同步订单检查已执行 {toxic_checks} 次；仅检查调查分数不低于 30 的账户，单次请求最多 {MAX_TOXIC_CHECKS} 次，避免对低分外围节点进行无界全库扫描。",
-                f"本次关系发现查询预算为 {MAX_DISCOVERY_SECONDS:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "本次关系发现查询在预算内完成。",
+                f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "本次关系发现查询在预算内完成。",
                 *[
                     f"{item['source']} 查询失败：{item['reason']}"
                     for item in failed
@@ -152,6 +170,69 @@ class AccountRelationshipRiskService:
             "queryBudgetExhausted": query_budget_exhausted,
             **scored,
         }
+
+    def _shared_ip_with_budget(
+        self,
+        login: str,
+        filters: dict[str, str],
+        *,
+        remaining_seconds: float,
+    ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+        timeout_seconds = min(self._shared_ip_timeout_seconds, max(remaining_seconds, 0.0))
+        if timeout_seconds <= 0:
+            return None, {"source": "sharedLastIp", "status": "timeout", "reason": "剩余查询预算不足，未启动同服务器 LastIP 查询"}
+        bounded_filters = {
+            **filters,
+            "relationshipQueryTimeoutSeconds": f"{timeout_seconds:.3f}",
+        }
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="relationship-shared-ip")
+        try:
+            future = executor.submit(self._shared_ip_lookup, login, bounded_filters)
+            completed, _pending = wait((future,), timeout=timeout_seconds)
+            if future not in completed:
+                future.cancel()
+                return None, {
+                    "source": "sharedLastIp", "status": "timeout",
+                    "reason": f"同服务器 LastIP 查询超过 {timeout_seconds:g} 秒预算",
+                }
+            try:
+                payload = future.result()
+            except Exception as exc:
+                return None, {"source": "sharedLastIp", "status": "failed", "reason": str(exc)}
+            return (payload if isinstance(payload, dict) else {}), None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _bounded_projection(
+        entities: list[dict[str, Any]], relationships: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+        """Keep request-scoped Kuzu writes small while preserving the highest-priority facts."""
+        ordered_entities = sorted(
+            entities,
+            key=lambda item: (
+                not bool(item.get("isSubject")),
+                -float(item.get("score") or 0),
+                str(item.get("id") or ""),
+            ),
+        )
+        projection_entities = ordered_entities[:MAX_KUZU_PROJECTION_ENTITIES]
+        entity_ids = {str(item.get("id") or "") for item in projection_entities}
+        ordered_relationships = sorted(
+            (
+                item for item in relationships
+                if str(item.get("source") or "") in entity_ids and str(item.get("target") or "") in entity_ids
+            ),
+            key=lambda item: (
+                str(item.get("source") or ""), str(item.get("target") or ""), str(item.get("id") or ""),
+            ),
+        )
+        projection_relationships = ordered_relationships[:MAX_KUZU_PROJECTION_RELATIONSHIPS]
+        return (
+            projection_entities,
+            projection_relationships,
+            len(projection_entities) < len(entities) or len(projection_relationships) < len(ordered_relationships),
+        )
 
     @staticmethod
     def _account_key(login: str, filters: dict[str, str]) -> str:

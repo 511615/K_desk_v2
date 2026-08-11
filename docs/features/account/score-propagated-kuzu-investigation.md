@@ -59,9 +59,13 @@ to 100 discovered accounts and 12 seconds; each account evidence source has a si
 Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read receives no more
 than the time left in the request-wide discovery budget, in addition to its per-source timeout. If a
 read consumes that remaining budget, the service scores its returned evidence and immediately returns
-the partial graph without starting later same-account LastIP or Toxic reads. The fixed 2,000-node and
-10,000-score-expansion caps, source timeout or discovery budget set `truncated=true` rather than
-claiming complete coverage.
+the partial graph without starting later same-account LastIP or Toxic reads. A started same-server
+`LastIP` follow-up has a separate three-second maximum wait, also clamped to the request remainder;
+its MySQL connect/read timeout is capped at the same boundary. The fixed 2,000-node and 10,000-score-
+expansion caps, source timeout or discovery budget set `truncated=true` rather than claiming complete
+coverage. The final request-scoped Kuzu projection is additionally capped at 400 entities and 1,200
+relationships, ordered by subject then propagated investigation score; cap application also sets
+`truncated=true`.
 CRM hierarchy adds explanatory ownership/direct-parent/top-group bridges at `0.05`; these preserve
 the auditable path without allowing a large distribution tree to amplify risk. The separately verified
 direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. A top-IB
@@ -70,7 +74,7 @@ independent evidence family already governed by this scorer.
 
 ## Loading, empty and failure behavior
 
-The page shows Kuzu loading status and aborts browser waiting after 45 seconds with actionable retry
+The page shows Kuzu loading status and aborts browser waiting after 20 seconds with actionable retry
 guidance. Low-score nodes remain inspectable but do not expand. Missing static trial data does not
 trigger a remote scan. Invalid graph shape and Kuzu failures do not expose internal paths or exceptions.
 
@@ -84,11 +88,11 @@ read-only legacy boundary. Its aggregate query runs only for the seed account in
 
 ## Tests and acceptance
 
-Unit tests cover recursive source expansion, one final Kuzu materialization, source timeout handling,
-threshold stopping, noisy-OR, de-duplication, cycles, same-IP and Toxic evidence ledger construction,
-and risk colour. Repository tests cover request-scoped Kuzu materialization/readback. API tests cover
-account-route replacement, page request targeting and invalid thresholds. Source tests use mocks; they
-make no live writes.
+Unit tests cover recursive source expansion, one final Kuzu materialization, bounded same-IP timeout,
+Kuzu projection caps, threshold stopping, noisy-OR, de-duplication, cycles, same-IP and Toxic evidence
+ledger construction, and risk colour. Repository tests cover request-scoped Kuzu materialization/readback.
+API tests cover account-route replacement, page request targeting and invalid thresholds. Source tests use
+mocks; they make no live writes.
 
 ## Compatibility and deprecation
 

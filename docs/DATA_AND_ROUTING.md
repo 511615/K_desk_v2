@@ -32,10 +32,12 @@ triggering an on-demand remote multi-hop scan.
 The account-detail `ACC-REL-001` relationship entry uses a different request-scoped Kuzu projection:
 it reads governed account/IP/EA/Copy/rebate payloads for each score-eligible account, serializes the
 aggregated response to a temporary local Kuzu graph once, reads it and deletes it before response.
-MT5 same-IP peers are same-server `LastIP` matches only. Each source has a six-second wait budget and
-total discovery has a 12-second budget, returning partial coverage when exceeded. `include_toxic=true`
-enables the existing all-platform five-second open-and-close sync matcher for up to two high-score
-accounts. It never writes AC, DBG, MT4, MT5, CRM or authoritative K_desk SQLite data.
+MT5 same-IP peers are same-server `LastIP` matches only. Each source has a six-second wait budget,
+the LastIP follow-up has a separately clamped three-second client/database timeout, and total discovery
+has a 12-second budget, returning partial coverage when exceeded. The temporary Kuzu write is limited
+to 400 selected entities and 1,200 selected relationships. `include_toxic=true` enables the existing
+all-platform five-second open-and-close sync matcher for up to two high-score accounts. It never writes
+AC, DBG, MT4, MT5, CRM or authoritative K_desk SQLite data.
 `ACC-REL-003` separately reads an operator-created direct-account evidence file at
 `KDESK_KUZU_RISK_DB` (default `runtime/<profile>/relationship_risk_graph.kuzu`). It is likewise a
 non-authoritative read-only projection. Runtime scoring reads only local Kuzu `Entity` and
