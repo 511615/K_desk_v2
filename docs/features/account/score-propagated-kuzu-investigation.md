@@ -26,7 +26,9 @@ There is no fixed hop limit: a node is visible when it has a contribution, but f
 its aggregate reaches the threshold. The overview projects account nodes only into concentric rings
 by their logical account-depth and keeps each strongest evidence family in an angular sector. It
 shows the selected account's ancestry path rather than all edges. The lower detail view exposes that
-account's relationship families, evidence and peer accounts. The seed account is bright red,
+account's relationship families, evidence and peer accounts. It explains each layer as an account-to-
+account business route from the problem account, and each evidence-family selector carries a
+relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
 Scores are investigation priority, not a fraud or trading conclusion.

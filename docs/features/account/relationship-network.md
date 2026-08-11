@@ -25,6 +25,12 @@ The Kuzu page has a linked overview and detail view. The overview renders accoun
 rings by their logical account-to-account discovery depth, keeping descendants of the same strongest
 evidence family in one angular sector. It shows only the selected account's path, instead of a full
 edge web. Selecting an overview account updates the detailed account-to-evidence-to-peer view below.
+The caption explicitly states whether the selected account is the problem-account start or which
+relationship layer separates it from that account, then narrates the evidence-family route in business
+terms. Each detail relationship card names the actual account logic rather than generic `附加线索`;
+for example, the direct-IB group says that it contains the direct superior IB's own trading accounts,
+not that IB's downstream customer accounts. Peer cards likewise state their layer relative to the
+problem account rather than showing an unexplained hop count.
 The subject is bright red; other expandable accounts use a score-and-depth red-to-light-orange
 gradient. A node retained as a clue but stopped by the propagation threshold is green. Operators can
 use the mouse wheel to zoom around the pointer and drag the overview to pan. Scores are investigation
