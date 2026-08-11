@@ -51,7 +51,9 @@ does not occupy an account HTTP request. Discovery continues until the propagate
 or the existing 2,000-node/10,000-score-expansion safety limits apply; every parallel source has a
 six-second wait budget and the MT5 shared-LastIP follow-up has a separately clamped three-second
 budget. Accounts already proven to belong to the same current-LastIP cohort do not repeat that
-lookup. Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, but
+lookup. `AccountRelationshipNetworkService` gives each legacy evidence source one shared execution
+lane, so a timed-out EA, Copy or CRM call cannot accumulate a new orphan thread for every expanded
+account. Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, but
 native Kuzu execution runs in a short-lived, single-concurrency child process rather than 8777. The
 parent terminates that child after four seconds and falls back to the same capped pure propagation
 projection when it is busy or unavailable. Its request projection is capped at 400 entities / 1,200

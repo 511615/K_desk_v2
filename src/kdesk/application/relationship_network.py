@@ -31,6 +31,14 @@ class AccountRelationshipNetworkService:
             raise ValueError("source_timeout_seconds must be positive")
         self._legacy_call = legacy_call
         self._source_timeout_seconds = source_timeout_seconds
+        self._source_executors = {
+            source: ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"relationship-{source}")
+            for source in ("sameName", "copyOrigins", "copyGroups", "eaGroups", "crmIb")
+        }
+
+    def close(self) -> None:
+        for executor in self._source_executors.values():
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
         return self.build_with_budget(login, filters, remaining_seconds=self._source_timeout_seconds)
@@ -58,34 +66,28 @@ class AccountRelationshipNetworkService:
         }
         payloads: dict[str, dict[str, Any]] = {}
         coverage: list[dict[str, str]] = []
-        executor = ThreadPoolExecutor(max_workers=len(requests), thread_name_prefix="relation-network")
-        try:
-            futures = {
-                executor.submit(self._legacy_call, *args): source
-                for source, args in requests.items()
-            }
-            completed, pending = wait(futures, timeout=source_timeout_seconds)
-            for future in completed:
-                source = futures[future]
-                try:
-                    payload = future.result()
-                    payloads[source] = payload if isinstance(payload, dict) else {}
-                    coverage.append({"source": source, "status": "available", "reason": ""})
-                except Exception as exc:
-                    payloads[source] = {}
-                    coverage.append({"source": source, "status": "failed", "reason": str(exc)})
-            for future in pending:
-                source = futures[future]
-                future.cancel()
+        futures = {
+            self._source_executors[source].submit(self._legacy_call, *args): source
+            for source, args in requests.items()
+        }
+        completed, pending = wait(futures, timeout=source_timeout_seconds)
+        for future in completed:
+            source = futures[future]
+            try:
+                payload = future.result()
+                payloads[source] = payload if isinstance(payload, dict) else {}
+                coverage.append({"source": source, "status": "available", "reason": ""})
+            except Exception as exc:
                 payloads[source] = {}
-                coverage.append({
-                    "source": source, "status": "timeout",
-                    "reason": f"来源查询超过 {source_timeout_seconds:g} 秒预算",
-                })
-        finally:
-            # Do not wait for a slow legacy database call. It is read-only and can complete in its
-            # own thread, while this account request returns its verified partial evidence promptly.
-            executor.shutdown(wait=False, cancel_futures=True)
+                coverage.append({"source": source, "status": "failed", "reason": str(exc)})
+        for future in pending:
+            source = futures[future]
+            future.cancel()
+            payloads[source] = {}
+            coverage.append({
+                "source": source, "status": "timeout",
+                "reason": f"来源查询超过 {source_timeout_seconds:g} 秒预算",
+            })
 
         builder = _EvidenceGraphBuilder(login, filters)
         builder.add_same_name(payloads.get("sameName", {}))

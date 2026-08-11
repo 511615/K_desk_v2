@@ -226,6 +226,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             relationship_expansion.close()
+            relationship_network.close()
 
     app = FastAPI(title="K_desk Account API", version=__version__, lifespan=lifespan)
     app.middleware("http")(request_context)

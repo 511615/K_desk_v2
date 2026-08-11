@@ -71,8 +71,9 @@ money labels retain source currency and existing USD/USC normalization. A single
 expansion continues through score-eligible accounts rather than ending at a request-wide timer;
 equivalent requests reuse its current snapshot. Each parallel source has a six-second budget and the
 follow-up MT5 same-server `LastIP` read has its own three-second budget. Accounts already identified
-in the same current-LastIP cohort skip that redundant lookup. Individual late sources are returned as
-explicit partial coverage rather than blocking the page. The 2,000-node/10,000-score-expansion safety
+in the same current-LastIP cohort skip that redundant lookup. Each legacy evidence family has one
+shared local execution lane, so a late source is returned as explicit partial coverage rather than
+creating an unbounded number of timed-out worker threads. The 2,000-node/10,000-score-expansion safety
 caps remain in force. Before request-scoped Kuzu materialization, the visible projection is
 bounded to 400 entities and 1,200 relationships, prioritizing the subject and highest propagated
 scores; exceeding either cap sets `truncated=true`. Native Kuzu materialization runs in a one-at-a-time

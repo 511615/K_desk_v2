@@ -37,7 +37,9 @@ bounded local background expansion and returns an in-progress read-only snapshot
 it continues through score-eligible accounts until the threshold or the 2,000-node/10,000-score-
 expansion safety limits are reached. Each source has a six-second wait budget and the LastIP follow-up
 has a separately clamped three-second client/database timeout. Known members of one current-LastIP
-cohort skip redundant follow-up queries. The temporary Kuzu write is limited
+cohort skip redundant follow-up queries. Each legacy evidence family has one local shared execution
+lane; a source that exceeds its per-account wait budget remains bounded instead of accumulating
+threads during continued expansion. The temporary Kuzu write is limited
 to 400 selected entities and 1,200 selected relationships and runs in an isolated local child process
 with a four-second hard deadline; the parent falls back to pure in-process scoring if the child is busy,
 fails or times out. `include_toxic=true` enables the existing all-platform five-second open-and-close

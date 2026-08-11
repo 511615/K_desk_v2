@@ -66,8 +66,10 @@ Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence 
 six-second source timeout; a source failure is retained in coverage but does not stop later eligible
 accounts. A started same-server `LastIP` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
-launching duplicate scans. Accounts in the same current-LastIP cohort skip repeat LastIP reads. The
-fixed 2,000-node and 10,000-score-expansion caps set `truncated=true` rather than claiming complete
+launching duplicate scans. Accounts in the same current-LastIP cohort skip repeat LastIP reads.
+Each legacy evidence family has one shared local execution lane, preventing timed-out sources from
+accumulating unbounded worker threads. The fixed 2,000-node and 10,000-score-expansion caps set
+`truncated=true` rather than claiming complete
 coverage. The final request-scoped Kuzu projection is additionally capped at 400 entities and 1,200
 relationships, ordered by subject then propagated investigation score; cap application also sets
 `truncated=true`. Kuzu's native temporary graph is executed in one short-lived child process at a time,

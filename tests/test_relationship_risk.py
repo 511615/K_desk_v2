@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from threading import Event
+from threading import Event, Lock
 from typing import Any
 
 from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
@@ -159,6 +159,38 @@ def test_relationship_evidence_uses_shared_last_ip_instead_of_slow_personal_ip_o
     AccountRelationshipNetworkService(legacy_call).build("100", {"platform": "MT5", "server": "AC CN MT5"})
 
     assert "account_login_ips_payload" not in calls
+
+
+def test_relationship_evidence_limits_a_slow_source_to_one_running_call_across_expansion() -> None:
+    release = Event()
+    started = Event()
+    lock = Lock()
+    active = 0
+    peak = 0
+
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        nonlocal active, peak
+        if name != "account_ea_comment_profit_payload":
+            return {}
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        started.set()
+        release.wait(1)
+        with lock:
+            active -= 1
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call, source_timeout_seconds=0.01)
+    try:
+        service.build("100", {"platform": "MT5", "server": "AC CN MT5"})
+        assert started.wait(0.5)
+        service.build("200", {"platform": "MT5", "server": "AC CN MT5"})
+        service.build("300", {"platform": "MT5", "server": "AC CN MT5"})
+        assert peak == 1
+    finally:
+        release.set()
+        service.close()
 
 
 def test_relationship_evidence_can_use_the_remaining_discovery_budget() -> None:
