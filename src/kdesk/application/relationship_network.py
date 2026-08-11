@@ -28,6 +28,17 @@ class AccountRelationshipNetworkService:
         self._source_timeout_seconds = source_timeout_seconds
 
     def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+        return self.build_with_budget(login, filters, remaining_seconds=self._source_timeout_seconds)
+
+    def build_with_budget(
+        self,
+        login: str,
+        filters: dict[str, str],
+        *,
+        remaining_seconds: float,
+    ) -> dict[str, Any]:
+        """Read one account's evidence without exceeding the caller's remaining deadline."""
+        source_timeout_seconds = min(self._source_timeout_seconds, max(float(remaining_seconds), 0.001))
         requests = {
             "sameName": ("account_risk_panels_payload", login, filters),
             "loginIps": ("account_login_ips_payload", login),
@@ -43,7 +54,7 @@ class AccountRelationshipNetworkService:
                 executor.submit(self._legacy_call, *args): source
                 for source, args in requests.items()
             }
-            completed, pending = wait(futures, timeout=self._source_timeout_seconds)
+            completed, pending = wait(futures, timeout=source_timeout_seconds)
             for future in completed:
                 source = futures[future]
                 try:
@@ -59,7 +70,7 @@ class AccountRelationshipNetworkService:
                 payloads[source] = {}
                 coverage.append({
                     "source": source, "status": "timeout",
-                    "reason": f"来源查询超过 {self._source_timeout_seconds:g} 秒预算",
+                    "reason": f"来源查询超过 {source_timeout_seconds:g} 秒预算",
                 })
         finally:
             # Do not wait for a slow legacy database call. It is read-only and can complete in its

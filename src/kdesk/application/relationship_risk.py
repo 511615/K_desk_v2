@@ -61,7 +61,13 @@ class AccountRelationshipRiskService:
                 continue
             visited.add(account_key)
             account_login = account_key.split("|", 1)[0].removeprefix("account:")
-            evidence = self._evidence_network.build(account_login, account_filters)
+            remaining_seconds = deadline - time.monotonic()
+            budgeted_build = getattr(self._evidence_network, "build_with_budget", None)
+            evidence = (
+                budgeted_build(account_login, account_filters, remaining_seconds=remaining_seconds)
+                if callable(budgeted_build)
+                else self._evidence_network.build(account_login, account_filters)
+            )
             if not relation_types:
                 relation_types = list(evidence["relationTypes"])
                 relation_types.extend(BUILTIN_RELATION_TYPES)

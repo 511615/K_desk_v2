@@ -23,13 +23,13 @@ trial.
 ## UI and behavior
 
 There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
-its aggregate reaches the threshold. The seed account is bright red, expandable accounts progress
-from red to lighter orange as score falls, and a retained non-expandable clue is green. A
-relation-aware force layout uses wide node separation and combines multiple facts between a pair
-into one edge; the relation label is displayed when the graph is zoomed in. The graph initially fits
-the complete result, then supports pointer-centred mouse-wheel zoom and drag-to-pan. Selection shows
-score, hop count, expansion status and evidence ledger. Scores are investigation priority, not a
-fraud or trading conclusion.
+its aggregate reaches the threshold. The overview projects account nodes only into concentric rings
+by their logical account-depth and keeps each strongest evidence family in an angular sector. It
+shows the selected account's ancestry path rather than all edges. The lower detail view exposes that
+account's relationship families, evidence and peer accounts. The seed account is bright red,
+expandable accounts progress from red to lighter orange as score/depth falls, and a retained
+non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
+Scores are investigation priority, not a fraud or trading conclusion.
 
 ## API contract
 
@@ -56,7 +56,8 @@ current LastIP `0.90`, EA and Copy order `0.80`, Copy group `0.75`, rebate `0.70
 close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`. The live path
 recursively reads relations while a node remains at or above the selected threshold. It is limited
 to 100 discovered accounts and 12 seconds; each account evidence source has a six-second budget.
-Toxic runs only for nodes at least 30 and has a two-check budget. The fixed 2,000-node and
+Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read receives no more
+than the time left in the request-wide discovery budget, in addition to its per-source timeout. The fixed 2,000-node and
 10,000-score-expansion caps, source timeout or discovery budget set `truncated=true` rather than
 claiming complete coverage.
 

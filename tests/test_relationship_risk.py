@@ -92,6 +92,22 @@ def test_relationship_evidence_returns_partial_coverage_when_one_source_exceeds_
     assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
 
 
+def test_relationship_evidence_can_use_the_remaining_discovery_budget() -> None:
+    release = Event()
+
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        if name == "account_copy_group_profit_payload":
+            release.wait(1)
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call, source_timeout_seconds=6)
+    result = service.build_with_budget("100", {"platform": "MT5", "server": "AC CN MT5"}, remaining_seconds=0.01)
+    release.set()
+
+    timed_out = next(item for item in result["coverage"] if item["source"] == "copyGroups")
+    assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
+
+
 def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None:
     evidence = _EvidenceNetwork()
 

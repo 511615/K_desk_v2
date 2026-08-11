@@ -21,15 +21,14 @@ previous in-dialog fact graph is no longer the visible account relationship inte
 
 ## UI and behavior
 
-The Kuzu page renders a relation-aware force layout: connected nodes attract, non-connected nodes
-repel to a deliberately wide readable spacing, and the subject remains central. Parallel facts
-between the same two nodes are combined into one line whose label names every relation type when
-zoomed in. The page retains the threshold control, optional Toxic checkbox and evidence ledger.
-The subject is bright red; other expandable accounts use a score-driven red-to-light-orange gradient.
-A node retained as a clue but stopped by the propagation threshold is green. Operators can use the
-mouse wheel to zoom around the pointer and drag the canvas to pan, so a large graph starts fitted but
-can be inspected without collapsing nodes. Scores are investigation priorities only; they are not a
-fraud conclusion or an automated action.
+The Kuzu page has a linked overview and detail view. The overview renders account nodes in concentric
+rings by their logical account-to-account discovery depth, keeping descendants of the same strongest
+evidence family in one angular sector. It shows only the selected account's path, instead of a full
+edge web. Selecting an overview account updates the detailed account-to-evidence-to-peer view below.
+The subject is bright red; other expandable accounts use a score-and-depth red-to-light-orange
+gradient. A node retained as a clue but stopped by the propagation threshold is green. Operators can
+use the mouse wheel to zoom around the pointer and drag the overview to pan. Scores are investigation
+priorities only; they are not a fraud conclusion or an automated action.
 
 ## API contract
 
@@ -54,7 +53,9 @@ The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-dupli
 money labels retain source currency and existing USD/USC normalization. The request scope has a
 100-account and 12-second discovery safety budget. Each parallel source has a six-second budget;
 late sources are returned as explicit partial coverage rather than blocking the page.
-`discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Toxic checks are
+`discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Every account evidence
+read uses the lesser of its six-second source budget and the remaining request-wide discovery budget,
+so a late source cannot extend a near-complete request by another full source timeout. Toxic checks are
 restricted to nodes scored at least 30 and two cross-platform checks per request. A current `LastIP`
 is a shared-login clue, not proof of shared device ownership or historical IP use.
 
