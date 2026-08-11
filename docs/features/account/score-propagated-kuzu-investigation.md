@@ -41,6 +41,9 @@ current canvas coordinate, including after zoom, pan, resize or graph relayout. 
 same dynamically sized pixel coordinate plane as Canvas. This avoids both square-letterboxing offset
 and non-uniform stretching: the scan fan remains circular on a wide board; it does not intercept
 canvas pointer, zoom or drag interaction.
+After a completed, non-truncated scan, an account that met the expansion threshold and was queried
+but produced no new account child is marked with a small teal check. The legend and selected-account
+detail call this `已核查，无新增账户`; this is distinct from the green low-score `停止扩散` state.
 Scores are investigation priority, not a fraud or trading conclusion.
 
 ## API contract

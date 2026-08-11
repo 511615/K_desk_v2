@@ -104,6 +104,9 @@ The global overview's radar scan must remain visible and rotate only while the p
 interaction available. Its origin must track the subject account's current on-screen canvas position
 after zoom, pan, resize and relayout, without SVG aspect-ratio side padding offset or non-uniform
 stretching on a wide board.
+Relationship graph UI regressions must distinguish a low-score green stop from a completed,
+non-truncated, score-eligible account that was queried and yielded no new account child; the latter
+must have the teal check marker and `已核查，无新增账户` detail text.
 The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,
