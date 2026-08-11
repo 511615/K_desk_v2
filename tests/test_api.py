@@ -200,6 +200,8 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
             }]}
         if name == "account_copy_group_profit_payload":
             raise RuntimeError("copy group source temporarily unavailable")
+        if name == "account_crm_ib_relationship_payload":
+            return {"records": []}
         raise AssertionError(name)
 
     monkeypatch.setattr(LegacyBridge, "call", fake_call)
@@ -214,6 +216,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert payload["threshold"] == 12
     assert {item["id"] for item in payload["relationTypes"]} == {
         "same_crm_user", "login_ip", "ea_feature", "copy_order", "copy_group", "rebate",
+        "crm_owner", "direct_ib", "ib_owned_account", "ib_direct_account", "top_ib_group",
         "toxic_sync_same", "toxic_sync_opposite",
     }
     assert {item["type"] for item in payload["relationships"]} == {
@@ -225,7 +228,8 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert all("score" in item and "riskColor" in item for item in payload["entities"])
     assert {name for name, _args in calls} == {
         "account_risk_panels_payload", "account_login_ips_payload", "account_copy_origins_payload",
-        "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_shared_last_ip_payload",
+        "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
+        "account_shared_last_ip_payload",
     }
 
 

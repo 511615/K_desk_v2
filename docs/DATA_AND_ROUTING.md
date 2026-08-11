@@ -7,8 +7,10 @@ Production state is under `runtime/prod`; development and tests use `runtime/dev
 accounts, account history, quick actions, login-IP observations, job runs, job events and Alembic
 revision state. Excel files are import/export snapshots only.
 The account relationship network has no independent authoritative store. It recursively composes
-routed read-only account-risk, same-server MT5 current-LastIP, Copy, EA, CRM-rebate and selected
-high-priority Toxic synchronisation payloads, and never writes an inferred cross-account relationship.
+routed read-only account-risk, same-server MT5 current-LastIP, Copy, EA, CRM-rebate, exact CRM
+account-owner/direct-IB mappings and selected high-priority Toxic synchronisation payloads, and never
+writes an inferred cross-account relationship. A top-IB cohort is a count-only aggregate for the
+selected seed, not a source of unbounded account edges.
 Historical funds backtrace has no independent store. For one selected account route it reads the
 complete platform ledger/trade facts and daily account anchors through LegacyBridge. MT4 sources are
 `mt4_trades` plus `mt4_daily`; MT5 sources are the indexed `mt5_deals` and current `mt5_accounts`.

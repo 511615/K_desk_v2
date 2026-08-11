@@ -13,6 +13,14 @@ MAX_EXPANSIONS = 10_000
 # only comparable within this graph rule version and must retain its evidence ledger.
 RELATIONSHIP_STRENGTHS = {
     "same_crm_user": 0.95,
+    # CRM/IB entities explain a route.  They are deliberately weak bridge edges so a broad
+    # distribution hierarchy never turns every downstream account into an auto-expanded peer.
+    "crm_owner": 0.05,
+    "direct_ib": 0.05,
+    "ib_owned_account": 0.05,
+    "top_ib_group": 0.05,
+    # This is the verified shortcut to an IB user's own trading account, not the IB's downline.
+    "ib_direct_account": 0.60,
     "login_ip": 0.90,
     "ea_feature": 0.80,
     "copy_order": 0.80,

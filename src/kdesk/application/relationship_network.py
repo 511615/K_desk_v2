@@ -10,6 +10,11 @@ LegacyCall = Callable[..., dict[str, Any]]
 
 RELATION_TYPES = {
     "same_crm_user": "同 CRM 客户",
+    "crm_owner": "CRM \u8d26\u6237\u5f52\u5c5e",
+    "direct_ib": "\u76f4\u5c5e IB",
+    "ib_owned_account": "IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+    "ib_direct_account": "\u76f4\u5c5e IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+    "top_ib_group": "\u9876\u7ea7 IB \u7fa4\u7ec4\uff08\u805a\u5408\uff09",
     "login_ip": "登录 IP",
     "ea_feature": "EA / 路由特征",
     "copy_order": "跟单订单",
@@ -36,6 +41,7 @@ class AccountRelationshipNetworkService:
         filters: dict[str, str],
         *,
         remaining_seconds: float,
+        include_ib_aggregate: bool = True,
     ) -> dict[str, Any]:
         """Read one account's evidence without exceeding the caller's remaining deadline."""
         source_timeout_seconds = min(self._source_timeout_seconds, max(float(remaining_seconds), 0.001))
@@ -45,6 +51,11 @@ class AccountRelationshipNetworkService:
             "copyOrigins": ("account_copy_origins_payload", login, filters),
             "copyGroups": ("account_copy_group_profit_payload", login, filters),
             "eaGroups": ("account_ea_comment_profit_payload", login, filters),
+            "crmIb": (
+                "account_crm_ib_relationship_payload",
+                login,
+                {**filters, "includeIbAggregate": include_ib_aggregate},
+            ),
         }
         payloads: dict[str, dict[str, Any]] = {}
         coverage: list[dict[str, str]] = []
@@ -79,6 +90,7 @@ class AccountRelationshipNetworkService:
 
         builder = _EvidenceGraphBuilder(login, filters)
         builder.add_same_name(payloads.get("sameName", {}))
+        builder.add_crm_ib_relationship(payloads.get("crmIb", {}))
         builder.add_login_ips(payloads.get("loginIps", {}))
         builder.add_ea_groups(payloads.get("eaGroups", {}))
         builder.add_copy_origins(payloads.get("copyOrigins", {}))
@@ -212,6 +224,107 @@ class _EvidenceGraphBuilder:
                     _money_evidence("返佣", row.get("rebate"), row.get("currency")),
                 ],
             )
+
+    def add_crm_ib_relationship(self, payload: dict[str, Any]) -> None:
+        """Add exact CRM-parent accounts, but retain broad top-IB membership as one aggregate."""
+        for record in _items(payload.get("records")):
+            crm_user_id = _text(record.get("crmUserId"))
+            if not crm_user_id:
+                continue
+            route = _route_text(_text(record.get("platform")), _text(record.get("server")))
+            crm_user_id_entity = self.add_entity(
+                "crm_user",
+                f"CRM \u7528\u6237 {crm_user_id}",
+                detail="\u5f53\u524d\u4ea4\u6613\u8d26\u6237\u5f52\u5c5e\u7528\u6237",
+                key=f"{_text(record.get('crmSchema'))}|{crm_user_id}",
+            )
+            self.add_relationship(
+                "crm_owner",
+                self.subject_id,
+                crm_user_id_entity,
+                "CRM \u8d26\u6237\u5f52\u5c5e",
+                [route, f"CRM \u7528\u6237\uff1a{crm_user_id}"],
+                key=f"crm-owner|{self.subject_id}|{crm_user_id_entity}",
+            )
+
+            direct_ib_user_id = _text(record.get("directIbUserId"))
+            direct_ib_entity = ""
+            if direct_ib_user_id:
+                direct_ib_entity = self.add_entity(
+                    "ib_user",
+                    f"IB {direct_ib_user_id}",
+                    detail="CRM \u76f4\u5c5e\u4e0a\u7ea7",
+                    key=f"{_text(record.get('crmSchema'))}|{direct_ib_user_id}",
+                )
+                self.add_relationship(
+                    "direct_ib",
+                    crm_user_id_entity,
+                    direct_ib_entity,
+                    "CRM \u76f4\u5c5e\u4e0a\u7ea7",
+                    [f"\u76f4\u5c5e IB CRM \u7528\u6237\uff1a{direct_ib_user_id}"],
+                    key=f"direct-ib|{crm_user_id_entity}|{direct_ib_entity}",
+                )
+                for member in _items(record.get("directIbAccounts")):
+                    account = _text(member.get("account"))
+                    platform = _text(member.get("platform"))
+                    server = _text(member.get("server"))
+                    if not account or not platform or not server:
+                        continue
+                    account_id = self.add_entity(
+                        "account",
+                        account,
+                        platform=platform,
+                        server=server,
+                        detail="\u76f4\u5c5e IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+                    )
+                    self.add_relationship(
+                        "ib_owned_account",
+                        direct_ib_entity,
+                        account_id,
+                        "IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+                        [
+                            _route_text(platform, server),
+                            f"\u8be5\u4ea4\u6613\u8d26\u6237\u5f52\u5c5e\u76f4\u5c5e IB CRM \u7528\u6237\uff1a{direct_ib_user_id}",
+                        ],
+                        key=f"ib-owned-account|{direct_ib_entity}|{account_id}",
+                    )
+                    if account_id != self.subject_id:
+                        self.add_relationship(
+                            "ib_direct_account",
+                            self.subject_id,
+                            account_id,
+                            "\u76f4\u5c5e IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+                            [
+                                f"CRM \u7528\u6237 {crm_user_id} \u2192 \u76f4\u5c5e IB {direct_ib_user_id} \u2192 \u8be5 IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+                                _route_text(platform, server),
+                            ],
+                            key=f"direct-ib-account|{self.subject_id}|{account_id}|{direct_ib_user_id}",
+                        )
+
+            top_ib_user_id = _text(record.get("topIbUserId"))
+            if top_ib_user_id and bool(record.get("topIbAggregateAvailable", True)):
+                account_count = _number_text(record.get("topIbAccountCount"))
+                client_count = _number_text(record.get("topIbClientCount"))
+                others = max(_int(record.get("topIbAccountCount")) - 1, 0)
+                group_entity = self.add_entity(
+                    "ib_group",
+                    f"\u9876\u7ea7 IB {top_ib_user_id}",
+                    detail=f"\u805a\u5408\u7fa4\u7ec4\uff1a{account_count or '\u672a\u77e5'} \u4e2a\u4ea4\u6613\u8d26\u6237\uff1b\u9ed8\u8ba4\u4e0d\u5c55\u5f00",
+                    key=f"{_text(record.get('crmSchema'))}|{top_ib_user_id}",
+                )
+                self.add_relationship(
+                    "top_ib_group",
+                    self.subject_id,
+                    group_entity,
+                    "\u9876\u7ea7 IB \u7fa4\u7ec4\uff08\u805a\u5408\uff09",
+                    [
+                        f"\u9876\u7ea7 IB CRM \u7528\u6237\uff1a{top_ib_user_id}",
+                        account_count and f"\u5f53\u524d CRM \u4e0b\u4ea4\u6613\u8d26\u6237\uff1a{account_count} \u4e2a\uff08\u5176\u4ed6 {others} \u4e2a\uff09",
+                        client_count and f"\u5f53\u524d CRM \u4e0b\u5ba2\u6237\uff1a{client_count} \u4e2a",
+                        "\u7fa4\u7ec4\u6210\u5458\u9ed8\u8ba4\u4e0d\u5c55\u5f00\uff1b\u987b\u53e6\u6709\u72ec\u7acb IP\u3001EA\u3001\u8ddf\u5355\u3001\u5b9e\u540d\u6216\u4ea4\u6613\u540c\u6b65\u8bc1\u636e\u624d\u8fdb\u5165\u8d26\u6237\u56fe\u3002",
+                    ],
+                    key=f"top-ib-group|{self.subject_id}|{group_entity}",
+                )
 
     def add_login_ips(self, payload: dict[str, Any]) -> None:
         for row in _items(payload.get("records")):
@@ -432,6 +545,17 @@ def _mapping(value: Any) -> dict[str, Any]:
 
 def _text(value: Any) -> str:
     return str(value).strip() if value not in (None, "") else ""
+
+
+def _int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _number_text(value: Any) -> str:
+    return str(_int(value)) if value not in (None, "") else ""
 
 
 def _route_text(platform: str, server: str) -> str:

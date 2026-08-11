@@ -29,6 +29,9 @@ The subject is bright red; other expandable accounts use a score-and-depth red-t
 gradient. A node retained as a clue but stopped by the propagation threshold is green. Operators can
 use the mouse wheel to zoom around the pointer and drag the overview to pan. Scores are investigation
 priorities only; they are not a fraud conclusion or an automated action.
+For CRM hierarchy, a verified direct-parent IB user's own trading account is a real account peer and
+is visible/expandable. A top-IB downline is rendered as one aggregate group with account/customer
+counts; its members are not automatically emitted as account nodes or expanded from that group.
 
 ## API contract
 
@@ -46,6 +49,10 @@ same-server peers sharing the current `LastIP`. When the Kuzu page asks for it, 
 are additionally checked through the existing all-platform Toxic synchronised open/close matcher.
 It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
 through Kuzu and removes it before returning. It never writes AC, DBG, MT4, MT5, CRM or K_desk SQLite.
+The CRM hierarchy read resolves account-to-CRM-user, direct parent IB and accounts owned by that
+direct IB user through the exact CRM schema/server route. It performs the potentially broad top-IB
+aggregate only for the seed account; later score-eligible account reads retain direct-parent mapping
+but omit repeated group aggregation.
 
 ## Business rules and units
 
@@ -58,6 +65,9 @@ read uses the lesser of its six-second source budget and the remaining request-w
 so a late source cannot extend a near-complete request by another full source timeout. Toxic checks are
 restricted to nodes scored at least 30 and two cross-platform checks per request. A current `LastIP`
 is a shared-login clue, not proof of shared device ownership or historical IP use.
+CRM ownership and hierarchy bridge edges are explanatory and deliberately weak. The verified direct
+IB-owned trading-account shortcut is separately scored and may expand; membership of a top-IB aggregate
+alone never creates a downstream account candidate.
 
 ## Loading, empty and failure behavior
 

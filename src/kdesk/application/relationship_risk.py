@@ -64,7 +64,12 @@ class AccountRelationshipRiskService:
             remaining_seconds = deadline - time.monotonic()
             budgeted_build = getattr(self._evidence_network, "build_with_budget", None)
             evidence = (
-                budgeted_build(account_login, account_filters, remaining_seconds=remaining_seconds)
+                budgeted_build(
+                    account_login,
+                    account_filters,
+                    remaining_seconds=remaining_seconds,
+                    include_ib_aggregate=account_key == root_key,
+                )
                 if callable(budgeted_build)
                 else self._evidence_network.build(account_login, account_filters)
             )

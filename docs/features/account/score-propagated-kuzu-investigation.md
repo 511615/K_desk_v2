@@ -62,6 +62,11 @@ read consumes that remaining budget, the service scores its returned evidence an
 the partial graph without starting later same-account LastIP or Toxic reads. The fixed 2,000-node and
 10,000-score-expansion caps, source timeout or discovery budget set `truncated=true` rather than
 claiming complete coverage.
+CRM hierarchy adds explanatory ownership/direct-parent/top-group bridges at `0.05`; these preserve
+the auditable path without allowing a large distribution tree to amplify risk. The separately verified
+direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. A top-IB
+aggregate never emits all downline accounts: a downline account appears only through a separate
+independent evidence family already governed by this scorer.
 
 ## Loading, empty and failure behavior
 
@@ -74,6 +79,8 @@ trigger a remote scan. Invalid graph shape and Kuzu failures do not expose inter
 `relationship_propagation.py` is pure scoring, `relationship_risk.py` composes source facts, and
 `KuzuRiskGraphRepository` owns temporary/static Kuzu reads. Canvas uses DOM `textContent` for data
 and never injects evidence as HTML.
+`AccountRelationshipNetworkService` obtains the routed CRM hierarchy payload through the existing
+read-only legacy boundary. Its aggregate query runs only for the seed account in one request.
 
 ## Tests and acceptance
 

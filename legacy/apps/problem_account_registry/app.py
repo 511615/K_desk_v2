@@ -3888,6 +3888,97 @@ def query_same_name_logins(source: dict, account: str) -> list[str]:
     ))
 
 
+def account_crm_ib_relationship_payload(login: str, filters: dict | None = None) -> dict:
+    """Return the exact CRM-parent route and a collapsed top-IB aggregate for relationship graphs."""
+    filters = filters or {}
+    login = normalize_text(login)
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    include_ib_aggregate = bool(filters.get("includeIbAggregate", True))
+    if not login.isdigit():
+        raise ValueError("账号格式无效")
+    cache_key = ("crm-ib-relationship", login, platform, server, include_ib_aggregate)
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    records: list[dict] = []
+    seen: set[tuple[str, int]] = set()
+    sources = [source for source in MYSQL_SOURCES if source_allowed(source, platform=platform, server=server)]
+    for source in sources:
+        with mysql_trade_connect(source) as conn:
+            with conn.cursor() as cur:
+                for route in source_crm_routes(source):
+                    crm_schema = route["schema"]
+                    server_code = route["mt_server_code"]
+                    cur.execute(
+                        f"select user_id from `{crm_schema}`.`mt_users_account` "
+                        "where mt_login = %s and mt_server_code = %s limit 1",
+                        (int(login), server_code),
+                    )
+                    mapping = cur.fetchone() or {}
+                    crm_user_id = mysql_int(mapping.get("user_id"))
+                    if not crm_user_id or (crm_schema, crm_user_id) in seen:
+                        continue
+                    seen.add((crm_schema, crm_user_id))
+                    cur.execute(
+                        f"select id, supper_id, top_ib_id from `{crm_schema}`.`sys_user_view` where id = %s limit 1",
+                        (crm_user_id,),
+                    )
+                    crm_user = cur.fetchone() or {}
+                    direct_ib_user_id = mysql_int(crm_user.get("supper_id"))
+                    top_ib_user_id = mysql_int(crm_user.get("top_ib_id"))
+                    direct_ib_accounts: list[dict] = []
+                    direct_ib_account_truncated = False
+                    if direct_ib_user_id:
+                        cur.execute(
+                            f"select mt_login, mt_server_code from `{crm_schema}`.`mt_users_account` "
+                            "where user_id = %s order by mt_server_code, mt_login limit 21",
+                            (direct_ib_user_id,),
+                        )
+                        direct_rows = cur.fetchall() or []
+                        direct_ib_account_truncated = len(direct_rows) > 20
+                        for item in direct_rows[:20]:
+                            account = normalize_text(item.get("mt_login"))
+                            account_server_code = normalize_text(item.get("mt_server_code"))
+                            account_source = source_for_crm_route(crm_schema, account_server_code)
+                            if not account or not account_source:
+                                continue
+                            direct_ib_accounts.append({
+                                "account": account,
+                                "platform": normalize_text(account_source.get("platform")),
+                                "server": normalize_text(account_source.get("server") or account_source.get("name")),
+                            })
+
+                    top_ib_account_count = top_ib_client_count = 0
+                    if top_ib_user_id and include_ib_aggregate:
+                        cur.execute(
+                            f"select count(distinct a.mt_login) as AccountCount, count(distinct a.user_id) as ClientCount "
+                            f"from `{crm_schema}`.`mt_users_account` a "
+                            f"inner join `{crm_schema}`.`sys_user_view` u on u.id = a.user_id "
+                            "where u.top_ib_id = %s",
+                            (top_ib_user_id,),
+                        )
+                        aggregate = cur.fetchone() or {}
+                        top_ib_account_count = mysql_int(aggregate.get("AccountCount"))
+                        top_ib_client_count = mysql_int(aggregate.get("ClientCount"))
+
+                    records.append({
+                        "crmSchema": crm_schema,
+                        "platform": normalize_text(source.get("platform")),
+                        "server": normalize_text(source.get("server") or source.get("name")),
+                        "crmUserId": crm_user_id,
+                        "directIbUserId": direct_ib_user_id or "",
+                        "topIbUserId": top_ib_user_id or "",
+                        "directIbAccounts": direct_ib_accounts,
+                        "directIbAccountTruncated": direct_ib_account_truncated,
+                        "topIbAggregateAvailable": include_ib_aggregate,
+                        "topIbAccountCount": top_ib_account_count,
+                        "topIbClientCount": top_ib_client_count,
+                    })
+    return account_cache_set(cache_key, {"ok": True, "account": login, "records": records})
+
+
 def query_mt5_database_statuses(source: dict, accounts: list[str]) -> dict[str, str]:
     logins = [normalize_text(account) for account in accounts if normalize_text(account).isdigit()]
     if not logins:

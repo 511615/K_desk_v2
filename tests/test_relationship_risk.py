@@ -108,6 +108,28 @@ def test_relationship_evidence_can_use_the_remaining_discovery_budget() -> None:
     assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
 
 
+def test_relationship_evidence_keeps_top_ib_members_collapsed_but_exposes_direct_ib_accounts() -> None:
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        if name == "account_crm_ib_relationship_payload":
+            return {"records": [{
+                "crmSchema": "crm", "platform": "MT5", "server": "AC CN MT5", "crmUserId": 101,
+                "directIbUserId": 202, "topIbUserId": 202,
+                "directIbAccounts": [{"account": "200", "platform": "MT5", "server": "AC CN MT5"}],
+                "topIbAccountCount": 601, "topIbClientCount": 600,
+            }]}
+        return {}
+
+    result = AccountRelationshipNetworkService(legacy_call).build("100", {"platform": "MT5", "server": "AC CN MT5"})
+
+    direct_account = next(entity for entity in result["entities"] if entity["type"] == "account" and entity["label"] == "200")
+    aggregate = next(entity for entity in result["entities"] if entity["type"] == "ib_group")
+    direct_edge = next(edge for edge in result["relationships"] if edge["type"] == "ib_direct_account")
+    group_edge = next(edge for edge in result["relationships"] if edge["type"] == "top_ib_group")
+    assert direct_edge["target"] == direct_account["id"]
+    assert "601" in aggregate["detail"]
+    assert any("600" in evidence for evidence in group_edge["evidence"])
+
+
 def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None:
     evidence = _EvidenceNetwork()
 
@@ -154,3 +176,81 @@ def test_relationship_risk_adds_toxic_sync_edges_only_for_nodes_with_investigati
     edge = next(item for item in result["relationships"] if item["type"] == "toxic_sync_opposite")
     assert any("1s" in value for value in edge["evidence"])
     assert "500" in evidence.calls
+
+
+def test_relationship_risk_expands_a_direct_ib_owned_account_but_not_a_top_ib_aggregate() -> None:
+    class _IbEvidenceNetwork:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            self.calls.append(login)
+            subject = {
+                "id": f"account:{login}", "type": "account", "label": login,
+                "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+            }
+            if login != "100":
+                return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
+            ib_account = {**subject, "id": "account:200", "label": "200", "isSubject": False}
+            ib_group = {"id": "ib_group:900", "type": "ib_group", "label": "顶级 IB 900", "detail": "聚合 600 个账户", "isSubject": False}
+            return {
+                "entities": [subject, ib_account, ib_group],
+                "relationships": [
+                    {"id": "direct-ib-account", "source": subject["id"], "target": ib_account["id"], "type": "ib_direct_account", "label": "直属 IB 自身交易账户", "evidence": ["CRM 直属上级账户"]},
+                    {"id": "ib-group", "source": subject["id"], "target": ib_group["id"], "type": "top_ib_group", "label": "顶级 IB 群组（聚合）", "evidence": ["600 个账户，默认不展开"]},
+                ],
+                "relationTypes": [
+                    {"id": "ib_direct_account", "label": "直属 IB 自身交易账户"},
+                    {"id": "top_ib_group", "label": "顶级 IB 群组（聚合）"},
+                ],
+                "coverage": [],
+            }
+
+    evidence = _IbEvidenceNetwork()
+    service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})
+
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert evidence.calls == ["100", "200"]
+    assert "200" in {entity["label"] for entity in result["entities"]}
+    assert "顶级 IB 900" in {entity["label"] for entity in result["entities"]}
+    assert not any(entity.get("type") == "account" and entity.get("label") == "600" for entity in result["entities"])
+
+
+def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account() -> None:
+    class _TrackingEvidenceNetwork:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool]] = []
+
+        def build_with_budget(
+            self,
+            login: str,
+            filters: dict[str, str],
+            *,
+            remaining_seconds: float,
+            include_ib_aggregate: bool,
+        ) -> dict[str, Any]:
+            self.calls.append((login, include_ib_aggregate))
+            subject = {
+                "id": f"account:{login}", "type": "account", "label": login,
+                "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+            }
+            if login == "100":
+                peer = {**subject, "id": "account:200", "label": "200", "isSubject": False}
+                return {
+                    "entities": [subject, peer],
+                    "relationships": [{
+                        "id": "ib-direct", "source": subject["id"], "target": peer["id"],
+                        "type": "ib_direct_account", "label": "direct IB account", "evidence": [],
+                    }],
+                    "relationTypes": [{"id": "ib_direct_account", "label": "direct IB account"}],
+                    "coverage": [],
+                }
+            return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
+
+    evidence = _TrackingEvidenceNetwork()
+    service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})
+
+    service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert evidence.calls == [("100", True), ("200", False)]

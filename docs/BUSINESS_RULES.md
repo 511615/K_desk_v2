@@ -242,9 +242,11 @@
   matching symbol/direction within two seconds, three distinct times and a 60-second span are required.
   Qualifying groups remain `可能是跟单路由`, have `countedAsEa=false` and do not change EA KPIs.
 - Relationship-network scoring is an investigation-priority rule: same-CRM-user, current `LastIP`,
-  EA/route, Copy, CRM-rebate and qualified Toxic sync facts contribute through the ACC-REL-003
-  strength table, but never produce an automated fraud conclusion or trading action. A current
-  `LastIP` is an observation of shared current login IP, not proof of shared device ownership.
+  EA/route, Copy, CRM-rebate, verified direct-IB-owned accounts and qualified Toxic sync facts
+  contribute through the ACC-REL-003 strength table, but never produce an automated fraud conclusion
+  or trading action. CRM ownership, direct-parent and top-IB group edges are explanatory bridges;
+  top-IB membership alone cannot create or expand downline account nodes. A current `LastIP` is an
+  observation of shared current login IP, not proof of shared device ownership.
 
 ## Toxic and market-pushing
 
