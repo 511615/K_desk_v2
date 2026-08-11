@@ -57,7 +57,9 @@ close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`.
 recursively reads relations while a node remains at or above the selected threshold. It is limited
 to 100 discovered accounts and 12 seconds; each account evidence source has a six-second budget.
 Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read receives no more
-than the time left in the request-wide discovery budget, in addition to its per-source timeout. The fixed 2,000-node and
+than the time left in the request-wide discovery budget, in addition to its per-source timeout. If a
+read consumes that remaining budget, the service scores its returned evidence and immediately returns
+the partial graph without starting later same-account LastIP or Toxic reads. The fixed 2,000-node and
 10,000-score-expansion caps, source timeout or discovery budget set `truncated=true` rather than
 claiming complete coverage.
 

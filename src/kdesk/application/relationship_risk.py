@@ -75,6 +75,14 @@ class AccountRelationshipRiskService:
             if account_key in entities:
                 entities[account_key]["isSubject"] = account_key == self._account_key(login, filters)
             coverage.extend({**item, "account": account_login} for item in evidence["coverage"])
+            if time.monotonic() >= deadline:
+                query_budget_exhausted = True
+                coverage.append({
+                    "source": "relationshipDiscovery", "status": "partial",
+                    "reason": f"已达到 {MAX_DISCOVERY_SECONDS:g} 秒查询预算", "account": "",
+                })
+                latest_scored = propagate_scores(list(entities.values()), list(relationships.values()), threshold=threshold)
+                break
             try:
                 shared_ip = self._shared_ip_lookup(account_login, account_filters)
                 self._merge_shared_ip(account_key, shared_ip, entities, relationships)
