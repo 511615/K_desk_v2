@@ -263,6 +263,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "MutationObserver" in page.text
     assert "repeatCount=\"indefinite\"" in page.text
     assert "pointerEvents:'none'" in page.text
+    assert "function positionRadar" in page.text
+    assert "radarSweep.setAttribute('transform'" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text

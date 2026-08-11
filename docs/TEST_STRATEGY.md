@@ -101,7 +101,8 @@ must retain a readable type label. Current-LastIP cohort siblings must reuse the
 EA/Copy read and expose an explicit skipped-coverage reason while CRM/LastIP propagation continues.
 The global overview's radar scan must remain visible and rotate only while the poll status is
 `后台扩散中`, hide at completion, failure and idle states, and keep canvas pointer, wheel and drag
-interaction available.
+interaction available. Its origin must track the subject account's current on-screen canvas position
+after zoom, pan, resize and relayout.
 The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,

@@ -36,7 +36,9 @@ expandable accounts progress from red to lighter orange as score/depth falls, an
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
 While its background expansion is in progress, the overview overlays a translucent rotating radar
 sweep. It appears only for the visible `后台扩散中` state, continues through polling, then hides when
-the task completes, fails or is idle; it does not intercept canvas pointer, zoom or drag interaction.
+the task completes, fails or is idle. Its origin is continuously projected to the problem account's
+current canvas coordinate, including after zoom, pan, resize or graph relayout; it does not intercept
+canvas pointer, zoom or drag interaction.
 Scores are investigation priority, not a fraud or trading conclusion.
 
 ## API contract
