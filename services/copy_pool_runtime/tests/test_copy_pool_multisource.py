@@ -26,6 +26,7 @@ from copy_pool_multisource import (
     RoutedClient,
     RoutedEvent,
     SourceCursor,
+    account_profitability_gate_reasons,
     account_key,
     mt4_source_time_to_utc,
     mt4_source_utc_offset_hours,
@@ -75,6 +76,44 @@ def client(route_index: int, login: int, alias: str, money_scale: float = 1.0) -
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_account_profitability_gate_is_non_compensable_and_requires_samples(self) -> None:
+        self.assertEqual(
+            account_profitability_gate_reasons(
+                lifetime_comprehensive_profit_usd=100.0,
+                account_comprehensive_net_30d_usd=10.0,
+                closed_positions_30d=5,
+                active_days_30d=3,
+            ),
+            (),
+        )
+        self.assertEqual(
+            account_profitability_gate_reasons(
+                lifetime_comprehensive_profit_usd=-56_277.28,
+                account_comprehensive_net_30d_usd=36.0,
+                closed_positions_30d=1,
+                active_days_30d=1,
+            ),
+            (
+                "lifetime_comprehensive_profit_not_positive",
+                "account_closed_positions_30d_below_5",
+                "account_active_days_30d_below_3",
+            ),
+        )
+        self.assertEqual(
+            account_profitability_gate_reasons(
+                lifetime_comprehensive_profit_usd=0.0,
+                account_comprehensive_net_30d_usd=0.0,
+                closed_positions_30d=4,
+                active_days_30d=2,
+            ),
+            (
+                "lifetime_comprehensive_profit_not_positive",
+                "account_comprehensive_profit_30d_not_positive",
+                "account_closed_positions_30d_below_5",
+                "account_active_days_30d_below_3",
+            ),
+        )
+
     def test_realtime_mt5_poll_starts_every_selected_physical_source_without_queueing(self) -> None:
         database = MultiSourceDatabase()
         entered = 0
@@ -239,6 +278,13 @@ class MultiSourceTests(unittest.TestCase):
             "max_floating_loss_ratio_30d": 0.01,
             "max_underwater_seconds_30d": 600.0,
             "max_losing_positions_30d": 1,
+            "account_profitability_ready": True,
+            "lifetime_closed_trading_net_usd": 1_000.0,
+            "lifetime_comprehensive_profit_usd": 1_000.0,
+            "account_net_30d_usd": 300.0,
+            "account_comprehensive_net_30d_usd": 300.0,
+            "account_closed_positions_30d": 10,
+            "account_active_days_30d": 5,
         }])
 
         restored_book = IndependentCopyBook()
@@ -377,7 +423,7 @@ class MultiSourceTests(unittest.TestCase):
             self.assertEqual(migrated_meta["producer"], service.POOL_PRODUCER)
             self.assertEqual(
                 migrated_meta["factor_schema"],
-                "cost-profit-recent-coverage-carry-v4",
+                "cost-profit-recent-coverage-carry-v5",
             )
 
     def test_mt5_trade_feature_close_and_lot_totals_use_all_close_entries(self) -> None:
@@ -385,7 +431,7 @@ class MultiSourceTests(unittest.TestCase):
 
         class FakeSource:
             platform = "MT5"
-            schema = "readonly"
+            schema = "sass_crm_ac_mt5_live"
 
             @staticmethod
             def query(sql: str, _params: object = ()) -> list[dict[str, object]]:
@@ -453,6 +499,203 @@ class MultiSourceTests(unittest.TestCase):
         self.assertGreater(rows[0]["closes_7d"], 0.0)
         self.assertGreaterEqual(rows[0]["closes_30d"], rows[0]["closes_7d"])
         self.assertGreaterEqual(min(start for start, _end in calls), as_of_naive - timedelta(days=30))
+
+    def test_trade_feature_account_net_includes_unsupported_products(self) -> None:
+        class FakeSource:
+            platform = "MT5"
+            schema = "readonly"
+
+            @staticmethod
+            def query(_sql, params):
+                start, _end = params
+                if start != as_of_naive - timedelta(days=5):
+                    return []
+                return [
+                    {
+                        "Login": 634412, "Symbol": "XAGUSD", "closes": 1,
+                        "closed_positions": 1, "active_days": "2026-08-08",
+                        "net": 36.0, "gross_profit": 36.0, "gross_loss": 0.0,
+                        "lots": 0.1, "source_contract_size": 5_000.0, "spread_cost": 0.0,
+                    },
+                    {
+                        "Login": 634412, "Symbol": "UNSUPPORTED_PRODUCT", "closes": 1,
+                        "closed_positions": 1, "active_days": "2026-08-09",
+                        "net": -100.0, "gross_profit": 0.0, "gross_loss": 100.0,
+                        "lots": 1.0, "source_contract_size": 1.0, "spread_cost": 0.0,
+                    },
+                ]
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        as_of = datetime(2026, 8, 11, tzinfo=timezone.utc)
+        as_of_naive = as_of.astimezone(timezone(timedelta(hours=8))).replace(tzinfo=None)
+
+        rows = database._trade_feature_rows(
+            FakeSource(), as_of_naive - timedelta(days=30),
+            as_of_naive - timedelta(days=7), as_of_naive,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["product"], "XAGUSD")
+        self.assertEqual(rows[0]["account_net_30d"], -64.0)
+        self.assertEqual(rows[0]["account_closed_positions_30d"], 2)
+        self.assertEqual(rows[0]["account_active_days_30d"], 2)
+
+    def test_account_profitability_evidence_excludes_cashflows_and_requires_complete_positions(self) -> None:
+        calls: list[str] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "sass_crm_ac_mt5_live"
+
+            @staticmethod
+            def query(sql, _params=()):
+                calls.append(sql)
+                if "SELECT MAX(" in sql:
+                    return [{"max_id": 100}]
+                if "Action IN (2,3,4,5,6)" in sql:
+                    return [{"Login": 634412, "nontrading_net": 67_457.73}]
+                raise AssertionError(sql)
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        accounts = pd.DataFrame([{
+            "physical_key": "source", "Login": 634412,
+            "account_key": "ac_gb_mt5:634412", "account_net_30d": 36.0,
+            "account_closed_positions_30d": 1, "account_active_days_30d": 1,
+        }])
+        profiles = pd.DataFrame([{
+            "account_key": "ac_gb_mt5:634412", "Balance": 11_180.45,
+            "Credit": 0.0, "Profit": 0.0,
+        }])
+
+        evidence = database.account_profitability_evidence(
+            accounts, profiles, datetime(2026, 8, 11, tzinfo=timezone.utc),
+        ).iloc[0]
+
+        self.assertAlmostEqual(float(evidence["lifetime_closed_trading_net_raw"]), -56_277.28)
+        self.assertAlmostEqual(float(evidence["lifetime_comprehensive_profit_raw"]), -56_277.28)
+        self.assertEqual(float(evidence["account_comprehensive_net_30d_raw"]), 36.0)
+        self.assertTrue(any("Action IN (2,3,4,5,6)" in sql for sql in calls))
+        self.assertFalse(any("NOT EXISTS" in sql for sql in calls))
+
+    def test_account_profitability_ledger_forces_the_physical_login_index(self) -> None:
+        observed: list[str] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "mt5_export_new"
+
+            @staticmethod
+            def query(sql, _params=()):
+                observed.append(sql)
+                if "SELECT MAX(" in sql:
+                    return [{"max_id": 100}]
+                return []
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        accounts = pd.DataFrame([{
+            "physical_key": "source", "Login": 1,
+            "account_key": "route:1", "account_net_30d": 1.0,
+        }])
+        profiles = pd.DataFrame([{
+            "account_key": "route:1", "Balance": 2.0, "Credit": 0.0, "Profit": 0.0,
+        }])
+
+        database.account_profitability_evidence(
+            accounts, profiles, datetime(2026, 8, 11, tzinfo=timezone.utc),
+        )
+
+        ledger_sql = next(sql for sql in observed if "Action IN (2,3,4,5,6)" in sql)
+        self.assertIn("FORCE INDEX (index_Login)", ledger_sql)
+
+    def test_account_profitability_adaptively_bisects_slow_login_batches(self) -> None:
+        successful_sizes: list[tuple[str, int]] = []
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "mt5_export_new"
+
+            @staticmethod
+            def query(sql, params=()):
+                if "SELECT MAX(" in sql:
+                    return [{"max_id": 100}]
+                login_count = len(params) - 1
+                if login_count > 5:
+                    raise TimeoutError("simulated oversized Login batch")
+                successful_sizes.append(("ledger", login_count))
+                return []
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        accounts = pd.DataFrame([
+            {
+                "physical_key": "source", "Login": login,
+                "account_key": f"route:{login}", "account_net_30d": 1.0,
+                "account_closed_positions_30d": 5, "account_active_days_30d": 3,
+            }
+            for login in range(1, 13)
+        ])
+        profiles = pd.DataFrame([
+            {
+                "account_key": f"route:{login}", "Balance": 2.0,
+                "Credit": 0.0, "Profit": 0.0,
+            }
+            for login in range(1, 13)
+        ])
+
+        database.account_profitability_evidence(
+            accounts, profiles, datetime(2026, 8, 11, tzinfo=timezone.utc),
+        )
+
+        ledger_sizes = [size for kind, size in successful_sizes if kind == "ledger"]
+        self.assertEqual(sum(ledger_sizes), 12)
+        self.assertLessEqual(max(ledger_sizes), 5)
+
+    def test_account_profitability_cache_uses_only_highwater_delta_after_backfill(self) -> None:
+        highwaters = iter((100, 105))
+        full_queries = 0
+        delta_queries = 0
+
+        class FakeSource:
+            platform = "MT5"
+            schema = "mt5_export_new"
+
+            @staticmethod
+            def query(sql, _params=()):
+                nonlocal full_queries, delta_queries
+                if "SELECT MAX(" in sql:
+                    return [{"max_id": next(highwaters)}]
+                if "Deal > %s" in sql:
+                    delta_queries += 1
+                    return [{"Login": 1, "nontrading_net": 2.0}]
+                if "Login IN" in sql:
+                    full_queries += 1
+                    return [{"Login": 1, "nontrading_net": 10.0}]
+                raise AssertionError(sql)
+
+        database = MultiSourceDatabase.__new__(MultiSourceDatabase)
+        database.sources = {"source": FakeSource()}
+        accounts = pd.DataFrame([{
+            "physical_key": "source", "Login": 1, "account_key": "route:1",
+            "account_net_30d": 5.0, "account_closed_positions_30d": 5,
+            "account_active_days_30d": 3,
+        }])
+        profiles = pd.DataFrame([{
+            "account_key": "route:1", "Balance": 20.0, "Credit": 0.0, "Profit": 0.0,
+        }])
+
+        first = database.account_profitability_evidence(
+            accounts, profiles, datetime(2026, 8, 11, tzinfo=timezone.utc),
+        ).iloc[0]
+        second = database.account_profitability_evidence(
+            accounts, profiles, datetime(2026, 8, 11, 1, tzinfo=timezone.utc),
+        ).iloc[0]
+
+        self.assertEqual(full_queries, 1)
+        self.assertEqual(delta_queries, 1)
+        self.assertEqual(float(first["lifetime_closed_trading_net_raw"]), 10.0)
+        self.assertEqual(float(second["lifetime_closed_trading_net_raw"]), 8.0)
 
     def test_risk_history_uses_a_rolling_thirty_day_window_and_columns(self) -> None:
         calls: list[tuple[str, tuple[object, ...]]] = []
@@ -967,6 +1210,34 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(metadata["monitor_accounts"], 30)
         self.assertEqual(metadata["reserve_accounts"], 70)
         self.assertEqual(selected["account_key"].nunique(), 100)
+
+    def test_hourly_ranking_cannot_revive_an_account_with_nonpositive_comprehensive_profit(self) -> None:
+        rows = []
+        for account, lifetime in (("route:loss", -1.0), ("route:profit", 100.0)):
+            rows.append({
+                "account_key": account,
+                "product": "XAUUSD",
+                "sleeve_key": f"{account}|XAUUSD",
+                "factor_ready": True,
+                "factor_base_score": 0.8,
+                "activity_eligible": True,
+                "equity_pre_usd": 1_000.0,
+                "route_key": "route",
+                "physical_key": "source",
+                "hold_multiplier": 1.0,
+                "is_abook": False,
+                "net_30d_usd": 50.0,
+                "account_net_30d_usd": 50.0,
+                "lifetime_closed_trading_net_usd": lifetime,
+                "account_closed_positions_30d": 5,
+                "account_active_days_30d": 3,
+                "current_floating_pnl_usd": 0.0,
+                "account_closed_delta_since_build_usd": 0.0,
+            })
+
+        selected, _metadata = rank_hourly_universe(pd.DataFrame(rows))
+
+        self.assertEqual(set(selected["account_key"]), {"route:profit"})
 
     def test_hourly_ranking_does_not_apply_a_minimum_equity_filter(self) -> None:
         frame = pd.DataFrame([{

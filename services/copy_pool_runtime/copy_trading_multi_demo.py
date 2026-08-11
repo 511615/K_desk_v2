@@ -277,8 +277,8 @@ class MultiSourceLiveService(LiveService):
     # A v7 accepted snapshot may have been built with the former 0.55 score
     # floor. Treat it as a same-day migration candidate so startup recomputes
     # weights from the complete private universe without touching ownership.
-    POOL_PRODUCER = "copy-pool-multisource-v10-7d-30d"
-    POOL_FACTOR_SCHEMA = "cost-profit-recent-coverage-carry-v4"
+    POOL_PRODUCER = "copy-pool-multisource-v11-account-profit-gates"
+    POOL_FACTOR_SCHEMA = "cost-profit-recent-coverage-carry-v5"
     LEGACY_WEIGHT_POOL_PRODUCERS = frozenset({
         "copy-pool-multisource-v6-weight-fallback",
         "copy-pool-multisource-v7-cost-profit",
@@ -299,7 +299,10 @@ class MultiSourceLiveService(LiveService):
             warm_missing_quote_partitions=True,
             historical_delay_enabled=False,
         )
-        self.db = MultiSourceDatabase(factor_service=factor_service)
+        self.db = MultiSourceDatabase(
+            factor_service=factor_service,
+            profitability_cache_path=self.output_dir / "account_profitability_cache_private.json",
+        )
         self.routed_clients: dict[str, RoutedClient] = {}
         self.portfolio: MultiSourcePortfolio | None = None
         self.coverage: dict[str, Any] = {}
@@ -611,6 +614,13 @@ class MultiSourceLiveService(LiveService):
                         "delay_score", "mdd_20d", "mdd_60d", "holding_path_complete",
                         "pool_tier", "conservative_break_even_ms",
                         "historical_delay_enabled", "delay_factor_status",
+                        "account_profitability_ready",
+                        "lifetime_closed_trading_net_usd",
+                        "lifetime_comprehensive_profit_usd",
+                        "account_net_30d_usd",
+                        "account_comprehensive_net_30d_usd",
+                        "account_closed_positions_30d",
+                        "account_active_days_30d",
                     }
                     if pool.empty or not required.issubset(pool.columns):
                         cache_valid = False
@@ -623,6 +633,15 @@ class MultiSourceLiveService(LiveService):
                     }
                     if not carry_required.issubset(universe.columns):
                         raise ValueError("Legacy universe lacks carry-risk evidence")
+                    account_gate_required = {
+                        "account_profitability_ready",
+                        "lifetime_closed_trading_net_usd",
+                        "account_net_30d_usd",
+                        "account_closed_positions_30d",
+                        "account_active_days_30d",
+                    }
+                    if not account_gate_required.issubset(universe.columns):
+                        raise ValueError("Legacy universe lacks account profitability evidence")
                     expected_rows = int(coverage.get("eligible_sleeves", 0) or 0)
                     if expected_rows and len(universe.index) != expected_rows:
                         raise ValueError(
@@ -652,6 +671,9 @@ class MultiSourceLiveService(LiveService):
                 universe_required = {
                     "account_key", "Login", "product", "sleeve_key",
                     "factor_ready", "factor_base_score", "activity_eligible",
+                    "account_profitability_ready",
+                    "lifetime_closed_trading_net_usd", "account_net_30d_usd",
+                    "account_closed_positions_30d", "account_active_days_30d",
                 }
                 if universe.empty or not universe_required.issubset(universe.columns):
                     cache_valid = False
@@ -735,6 +757,10 @@ class MultiSourceLiveService(LiveService):
             "short_trade_ratio", "holding_samples", "activity_eligible", "pool_status",
             "daily_activity_eligible",
             "pool_tier", "factor_ready", "factor_base_score", "factor_gate_reasons",
+            "account_profitability_ready", "account_profitability_gate_reasons",
+            "lifetime_closed_trading_net_usd", "lifetime_comprehensive_profit_usd",
+            "account_net_30d_usd", "account_comprehensive_net_30d_usd",
+            "account_closed_positions_30d", "account_active_days_30d",
             "factor_model", "factor_cost_adjusted_net_5d_usd",
             "factor_cost_adjusted_net_20d_usd", "factor_cost_profit_per_trade",
             "factor_recent_profit_per_trade", "factor_cost_coverage",
@@ -777,7 +803,8 @@ class MultiSourceLiveService(LiveService):
         for column in public_columns:
             if column not in pool.columns:
                 pool[column] = "" if column in {
-                    "factor_gate_reasons", "pool_status", "pool_tier",
+                    "factor_gate_reasons", "account_profitability_gate_reasons",
+                    "pool_status", "pool_tier",
                 } | UNKNOWN_HOURLY_PUBLIC_COLUMNS else 0.0
         pool[public_columns].to_csv(self.pool_path, index=False, encoding="utf-8-sig")
         atomic_json(self.coverage_path, coverage)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import threading
@@ -8,6 +9,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
@@ -37,6 +39,16 @@ MAX_CLIENTS_PER_ROUTE = 5
 MT4_STRESS_SPREAD_USD_PER_LOT = 60.0
 MAX_BUILD_FLOATING_LOSS_RATIO = 0.10
 MAX_BUILD_MARGIN_TO_EQUITY = 0.50
+MIN_ACCOUNT_CLOSED_POSITIONS_30D = 5
+MIN_ACCOUNT_ACTIVE_DAYS_30D = 3
+ACCOUNT_PROFITABILITY_BATCH_SIZE = 50
+MT5_LEDGER_LOGIN_INDEX_BY_SCHEMA = {
+    "int_sass_crm_ac_mt5_live_new": "index_Login",
+    "sass_crm_ac_mt5_live": "idx_mt5_deals_Login",
+    "sass_crm_ac_mt5_live3": "idx_mt5_deals_Login",
+    "mt5_export_new": "index_Login",
+    "crm_vn_mt5_live2": "INDEX_LOGIN",
+}
 RETRYABLE_MYSQL_CONNECTION_CODES = frozenset({2006, 2013, 2055})
 
 
@@ -78,6 +90,26 @@ def passes_current_open_risk_gate(
         and floating_loss_ratio < MAX_BUILD_FLOATING_LOSS_RATIO
         and margin_to_equity < MAX_BUILD_MARGIN_TO_EQUITY
     )
+
+
+def account_profitability_gate_reasons(
+    *,
+    lifetime_comprehensive_profit_usd: float,
+    account_comprehensive_net_30d_usd: float,
+    closed_positions_30d: int,
+    active_days_30d: int,
+) -> tuple[str, ...]:
+    """Return non-compensable account-level gates before product ranking."""
+    reasons: list[str] = []
+    if not math.isfinite(lifetime_comprehensive_profit_usd) or lifetime_comprehensive_profit_usd <= 0:
+        reasons.append("lifetime_comprehensive_profit_not_positive")
+    if not math.isfinite(account_comprehensive_net_30d_usd) or account_comprehensive_net_30d_usd <= 0:
+        reasons.append("account_comprehensive_profit_30d_not_positive")
+    if int(closed_positions_30d) < MIN_ACCOUNT_CLOSED_POSITIONS_30D:
+        reasons.append("account_closed_positions_30d_below_5")
+    if int(active_days_30d) < MIN_ACCOUNT_ACTIVE_DAYS_30D:
+        reasons.append("account_active_days_30d_below_3")
+    return tuple(reasons)
 
 
 @dataclass(frozen=True)
@@ -562,6 +594,8 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
         "recent_net_4h_usd": 0.0,
         "closed_delta_since_build_usd": 0.0,
         "current_product_floating_pnl_usd": 0.0,
+        "current_floating_pnl_usd": 0.0,
+        "account_closed_delta_since_build_usd": 0.0,
         "current_equity_usd": pd.to_numeric(ranked["equity_pre_usd"], errors="coerce"),
         "current_margin_to_equity": 0.0,
         "current_floating_loss_ratio": 0.0,
@@ -600,6 +634,41 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
         + ranked["closed_delta_since_build_usd"]
         + ranked["current_product_floating_pnl_usd"]
     )
+    account_gate_columns = {
+        "account_net_30d_usd",
+        "lifetime_closed_trading_net_usd",
+        "account_closed_positions_30d",
+        "account_active_days_30d",
+    }
+    if account_gate_columns.issubset(ranked.columns):
+        ranked["current_account_comprehensive_net_30d_usd"] = (
+            pd.to_numeric(ranked["account_net_30d_usd"], errors="coerce")
+            + ranked["account_closed_delta_since_build_usd"]
+            + ranked["current_floating_pnl_usd"]
+        )
+        ranked["current_lifetime_comprehensive_profit_usd"] = (
+            pd.to_numeric(ranked["lifetime_closed_trading_net_usd"], errors="coerce")
+            + ranked["account_closed_delta_since_build_usd"]
+            + ranked["current_floating_pnl_usd"]
+        )
+        ranked["current_account_profitability_ready"] = [
+            not account_profitability_gate_reasons(
+                lifetime_comprehensive_profit_usd=float(lifetime),
+                account_comprehensive_net_30d_usd=float(recent),
+                closed_positions_30d=int(closes),
+                active_days_30d=int(days),
+            )
+            for lifetime, recent, closes, days in zip(
+                ranked["current_lifetime_comprehensive_profit_usd"],
+                ranked["current_account_comprehensive_net_30d_usd"],
+                ranked["account_closed_positions_30d"],
+                ranked["account_active_days_30d"],
+            )
+        ]
+    else:
+        # Legacy/unit frames remain readable. Production v11 cache validation
+        # requires these columns before hourly discovery can run.
+        ranked["current_account_profitability_ready"] = True
     carry_metrics = [
         calculate_carry_risk_metrics(
             max_floating_loss_ratio_30d=max(
@@ -623,6 +692,7 @@ def rank_hourly_universe(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, A
     ranked["current_carry_hard_failed"] = [item.hard_failed for item in carry_metrics]
     ranked["hourly_hard_eligible"] = (
         ranked["factor_ready"].fillna(False).astype(bool)
+        & ranked["current_account_profitability_ready"].fillna(False).astype(bool)
         & (ranked["current_comprehensive_net_30d_usd"] > 0)
         & (ranked["current_floating_loss_ratio"] < MAX_BUILD_FLOATING_LOSS_RATIO)
         & (ranked["current_margin_to_equity"] < MAX_BUILD_MARGIN_TO_EQUITY)
@@ -976,13 +1046,63 @@ class MultiSourcePortfolio:
 
 
 class MultiSourceDatabase:
-    def __init__(self, factor_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        factor_service: Any | None = None,
+        profitability_cache_path: Path | None = None,
+    ) -> None:
         self.sources = {
             key: ReadOnlySource(routes) for key, routes in physical_routes().items()
         }
         self.clients: dict[str, RoutedClient] = {}
         self.clients_by_source_login: dict[str, dict[int, str]] = defaultdict(dict)
         self.factor_service = factor_service
+        self.profitability_cache_path = profitability_cache_path
+        self._profitability_cache_lock = threading.Lock()
+        self._profitability_cache = self._load_profitability_cache()
+        self.account_profitability_cache_stats: dict[str, Any] = {}
+
+    def _load_profitability_cache(self) -> dict[str, Any]:
+        if self.profitability_cache_path is None or not self.profitability_cache_path.exists():
+            return {"version": 1, "sources": {}}
+        try:
+            payload = json.loads(self.profitability_cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"version": 1, "sources": {}}
+        if payload.get("version") != 1 or not isinstance(payload.get("sources"), dict):
+            return {"version": 1, "sources": {}}
+        return payload
+
+    def _persist_profitability_cache_source(
+        self,
+        source_key: str,
+        *,
+        highwater: int,
+        accounts: Mapping[int, float],
+    ) -> None:
+        if not hasattr(self, "_profitability_cache_lock"):
+            self._profitability_cache_lock = threading.Lock()
+        if not hasattr(self, "_profitability_cache"):
+            self._profitability_cache = {"version": 1, "sources": {}}
+        with self._profitability_cache_lock:
+            self._profitability_cache.setdefault("sources", {})[source_key] = {
+                "highwater": int(highwater),
+                "accounts": {str(login): float(value) for login, value in accounts.items()},
+            }
+            path = getattr(self, "profitability_cache_path", None)
+            if path is None:
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+            try:
+                temporary.write_text(
+                    json.dumps(self._profitability_cache, ensure_ascii=False, sort_keys=True),
+                    encoding="utf-8",
+                )
+                temporary.replace(path)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
 
     def connect(self) -> None:
         errors: list[str] = []
@@ -1103,6 +1223,8 @@ class MultiSourceDatabase:
             sql = f"""
  SELECT Login, Symbol,
  SUM(CASE WHEN Entry IN (1,2,3) THEN 1 ELSE 0 END) AS closes,
+ COUNT(DISTINCT CASE WHEN Entry IN (1,2,3) THEN PositionID END) AS closed_positions,
+ GROUP_CONCAT(DISTINCT CASE WHEN Entry IN (1,2,3) THEN DATE_FORMAT(Time, '%%Y-%%m-%%d') END) AS active_days,
  SUM(Profit + Commission + Storage + Fee) AS net,
  SUM(CASE WHEN Profit + Commission + Storage + Fee > 0 THEN Profit + Commission + Storage + Fee ELSE 0 END) AS gross_profit,
  -SUM(CASE WHEN Profit + Commission + Storage + Fee < 0 THEN Profit + Commission + Storage + Fee ELSE 0 END) AS gross_loss,
@@ -1118,7 +1240,8 @@ FROM {source.schema}.mt5_deals
             initial_shard = timedelta(days=2)
         else:
             sql = f"""
- SELECT LOGIN AS Login, SYMBOL AS Symbol, COUNT(*) AS closes,
+ SELECT LOGIN AS Login, SYMBOL AS Symbol, COUNT(*) AS closes, COUNT(*) AS closed_positions,
+ GROUP_CONCAT(DISTINCT DATE_FORMAT(CLOSE_TIME, '%%Y-%%m-%%d')) AS active_days,
  SUM(PROFIT + COMMISSION + SWAPS + TAXES) AS net,
  SUM(CASE WHEN PROFIT + COMMISSION + SWAPS + TAXES > 0 THEN PROFIT + COMMISSION + SWAPS + TAXES ELSE 0 END) AS gross_profit,
  -SUM(CASE WHEN PROFIT + COMMISSION + SWAPS + TAXES < 0 THEN PROFIT + COMMISSION + SWAPS + TAXES ELSE 0 END) AS gross_loss,
@@ -1157,6 +1280,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 "source_contract_size": 0.0,
             }
         )
+        account_net_30d: dict[int, float] = defaultdict(float)
+        account_closed_positions_30d: dict[int, int] = defaultdict(int)
+        account_active_days_30d: dict[int, set[str]] = defaultdict(set)
         start_20 = end - timedelta(days=20)
         start_5 = end - timedelta(days=5)
         periods = (
@@ -1171,6 +1297,14 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 shard_end = min(period_end, shard_start + initial_shard)
                 for row in query_shard(shard_start, shard_end):
                     login = int(row["Login"])
+                    net = float(row.get("net") or 0.0)
+                    account_net_30d[login] += net
+                    account_closed_positions_30d[login] += int(
+                        row.get("closed_positions") or 0
+                    )
+                    account_active_days_30d[login].update(
+                        day for day in str(row.get("active_days") or "").split(",") if day
+                    )
                     source_symbol = str(row.get("Symbol") or "")
                     product = normalize_source_product(source_symbol)
                     if product is None:
@@ -1181,7 +1315,6 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         float(row.get("source_contract_size") or product_spec(product).contract_size),
                     )
                     closes = float(row.get("closes") or 0.0)
-                    net = float(row.get("net") or 0.0)
                     target["closes_30d"] += closes
                     target["net_30d"] += net
                     gross_profit = float(row.get("gross_profit") or 0.0)
@@ -1213,6 +1346,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 "Login": login,
                 "product": product,
                 "demo_symbol": product,
+                "account_net_30d": account_net_30d[login],
+                "account_closed_positions_30d": account_closed_positions_30d[login],
+                "account_active_days_30d": len(account_active_days_30d[login]),
                 **values,
             }
             for (login, product), values in totals.items()
@@ -1313,6 +1449,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 "closed_delta_since_build_usd": 0.0,
             }
         )
+        account_closed_delta: dict[str, float] = defaultdict(float)
         unique_accounts = candidates.drop_duplicates("account_key")
         scales = {
             str(row.account_key): float(row.money_scale)
@@ -1346,12 +1483,17 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         (start_1h, start_4h, build_local, *batch, query_start, end),
                     )
                 for item in rows:
-                    product = normalize_source_product(item.get("Symbol"))
                     account = by_login.get(int(item["Login"]))
-                    if product is None or account is None:
+                    if account is None:
+                        continue
+                    scale = scales[account]
+                    account_closed_delta[account] += (
+                        float(item.get("net_since_build") or 0.0) * scale
+                    )
+                    product = normalize_source_product(item.get("Symbol"))
+                    if product is None:
                         continue
                     key = sleeve_key(account, product)
-                    scale = scales[account]
                     recent[key]["recent_net_1h_usd"] += float(item.get("net_1h") or 0.0) * scale
                     recent[key]["recent_net_4h_usd"] += float(item.get("net_4h") or 0.0) * scale
                     recent[key]["closed_delta_since_build_usd"] += float(item.get("net_since_build") or 0.0) * scale
@@ -1371,6 +1513,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                 "current_equity_usd": equity,
                 "current_margin_to_equity": margin / equity if equity > 0 else float("inf"),
                 "current_floating_loss_ratio": max(-floating, 0.0) / equity if equity > 0 else float("inf"),
+                "current_floating_pnl_usd": floating,
             })
         refreshed = candidates.merge(
             pd.DataFrame(profile_rows), on="account_key", how="left", validate="many_to_one"
@@ -1422,6 +1565,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             refreshed[column] = refreshed["sleeve_key"].map(
                 lambda key, name=column: recent.get(str(key), {}).get(name, 0.0)
             )
+        refreshed["account_closed_delta_since_build_usd"] = refreshed["account_key"].map(
+            lambda key: account_closed_delta.get(str(key), 0.0)
+        )
         selected, metadata = rank_hourly_universe(refreshed)
         metadata.update({
             "as_of": as_of.astimezone(BEIJING).isoformat(),
@@ -1466,6 +1612,162 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
                         original = route_by_login[int(item["Login"])]
                         rows.append({"account_key": original.account_key, **{k: v for k, v in item.items() if k != "Login"}})
         return pd.DataFrame(rows)
+
+    def account_profitability_evidence(
+        self,
+        frame: pd.DataFrame,
+        profiles: pd.DataFrame,
+        as_of: datetime,
+    ) -> pd.DataFrame:
+        """Load bounded samples and derive lifetime net without scanning trade history."""
+        accounts = frame.drop_duplicates("account_key").copy()
+        profile_by_account = {
+            str(row.account_key): row for row in profiles.itertuples(index=False)
+        }
+        _ = as_of
+
+        def load_source(_source_key: str, group: pd.DataFrame) -> list[dict[str, Any]]:
+            source = self.sources[str(group.iloc[0]["physical_key"])]
+            if source.platform == "MT5":
+                login_index = MT5_LEDGER_LOGIN_INDEX_BY_SCHEMA.get(source.schema)
+                if not login_index:
+                    raise RuntimeError(
+                        f"No verified MT5 ledger Login index is configured for {source.schema}."
+                    )
+            else:
+                login_index = "INDEX_LOGIN"
+            route_by_login = {int(row.Login): row for row in group.itertuples(index=False)}
+            profitability_cache = getattr(
+                self, "_profitability_cache", {"version": 1, "sources": {}}
+            )
+            source_cache = dict(
+                profitability_cache.get("sources", {}).get(_source_key, {})
+            )
+            cached_accounts = {
+                int(login): float(value)
+                for login, value in dict(source_cache.get("accounts", {})).items()
+            }
+            old_highwater = int(source_cache.get("highwater", 0) or 0)
+            id_column = "Deal" if source.platform == "MT5" else "TICKET"
+            table = "mt5_deals" if source.platform == "MT5" else "mt4_trades"
+            highwater_rows = source.query(
+                f"SELECT MAX({id_column}) AS max_id FROM {source.schema}.{table}"
+            )
+            new_highwater = int((highwater_rows[0].get("max_id") if highwater_rows else 0) or 0)
+
+            def query_full_batch(batch: Sequence[int]) -> list[dict[str, Any]]:
+                placeholders = self._placeholders(len(batch))
+                try:
+                    if source.platform == "MT5":
+                        return source.query(
+                            f"SELECT Login, SUM(Profit + Commission + Storage + Fee) AS nontrading_net "
+                            f"FROM {source.schema}.mt5_deals FORCE INDEX ({login_index}) "
+                            f"WHERE Login IN ({placeholders}) "
+                            f"AND Deal <= %s AND Action IN (2,3,4,5,6) GROUP BY Login",
+                            (*batch, new_highwater),
+                        )
+                    return source.query(
+                        f"SELECT LOGIN AS Login, SUM(PROFIT + COMMISSION + SWAPS + TAXES) AS nontrading_net "
+                        f"FROM {source.schema}.mt4_trades FORCE INDEX ({login_index}) "
+                        f"WHERE LOGIN IN ({placeholders}) "
+                        f"AND TICKET <= %s AND CMD IN (6,7) GROUP BY LOGIN",
+                        (*batch, new_highwater),
+                    )
+                except Exception:
+                    if len(batch) <= 1:
+                        raise
+                    midpoint = len(batch) // 2
+                    return query_full_batch(batch[:midpoint]) + query_full_batch(
+                        batch[midpoint:]
+                    )
+
+            previous_reconnect_attempts = getattr(source, "build_reconnect_attempts", 0)
+            source.build_reconnect_attempts = 0
+            try:
+                missing_logins = sorted(set(route_by_login) - set(cached_accounts))
+                ledger_rows: list[dict[str, Any]] = []
+                for batch in _chunks(
+                    missing_logins, size=ACCOUNT_PROFITABILITY_BATCH_SIZE
+                ):
+                    ledger_rows.extend(query_full_batch(batch))
+                full_by_login = {
+                    int(item["Login"]): float(item.get("nontrading_net") or 0.0)
+                    for item in ledger_rows
+                }
+                for login in missing_logins:
+                    cached_accounts[login] = full_by_login.get(login, 0.0)
+                existing_before_delta = set(cached_accounts) - set(missing_logins)
+                if new_highwater > old_highwater and existing_before_delta:
+                    if source.platform == "MT5":
+                        delta_rows = source.query(
+                            f"SELECT Login, SUM(Profit + Commission + Storage + Fee) AS nontrading_net "
+                            f"FROM {source.schema}.mt5_deals FORCE INDEX (PRIMARY) "
+                            f"WHERE Deal > %s AND Deal <= %s AND Action IN (2,3,4,5,6) GROUP BY Login",
+                            (old_highwater, new_highwater),
+                        )
+                    else:
+                        delta_rows = source.query(
+                            f"SELECT LOGIN AS Login, SUM(PROFIT + COMMISSION + SWAPS + TAXES) AS nontrading_net "
+                            f"FROM {source.schema}.mt4_trades FORCE INDEX (PRIMARY) "
+                            f"WHERE TICKET > %s AND TICKET <= %s AND CMD IN (6,7) GROUP BY LOGIN",
+                            (old_highwater, new_highwater),
+                        )
+                    for item in delta_rows:
+                        login = int(item["Login"])
+                        if login in existing_before_delta:
+                            cached_accounts[login] = cached_accounts.get(login, 0.0) + float(
+                                item.get("nontrading_net") or 0.0
+                            )
+            finally:
+                source.build_reconnect_attempts = previous_reconnect_attempts
+
+            output: list[dict[str, Any]] = []
+            for login in sorted(route_by_login):
+                original = route_by_login[int(login)]
+                account = str(original.account_key)
+                profile = profile_by_account.get(account)
+                if profile is None:
+                    raise RuntimeError(
+                        f"Account profitability evidence is missing current profile for {account}."
+                    )
+                nontrading_net = cached_accounts.get(int(login), 0.0)
+                balance = float(getattr(profile, "Balance", 0.0) or 0.0)
+                credit = float(getattr(profile, "Credit", 0.0) or 0.0)
+                floating = float(getattr(profile, "Profit", 0.0) or 0.0)
+                recent_closed = float(getattr(original, "account_net_30d", 0.0) or 0.0)
+                lifetime_closed = balance + credit - nontrading_net
+                output.append({
+                    "account_key": account,
+                    "lifetime_closed_trading_net_raw": lifetime_closed,
+                    "lifetime_comprehensive_profit_raw": lifetime_closed + floating,
+                    "account_comprehensive_net_30d_raw": recent_closed + floating,
+                })
+            self._persist_profitability_cache_source(
+                _source_key,
+                highwater=new_highwater,
+                accounts=cached_accounts,
+            )
+            if not hasattr(self, "account_profitability_cache_stats"):
+                self.account_profitability_cache_stats = {}
+            self.account_profitability_cache_stats[_source_key] = {
+                "candidate_accounts": len(route_by_login),
+                "cached_accounts_before": len(route_by_login) - len(missing_logins),
+                "history_backfills": len(missing_logins),
+                "highwater_advanced": max(new_highwater - old_highwater, 0),
+            }
+            return output
+
+        rows: list[dict[str, Any]] = []
+        for _source_key, source_rows in self._run_physical_groups(
+            accounts,
+            load_source,
+            context="Account profitability evidence",
+        ):
+            rows.extend(source_rows)
+        return pd.DataFrame(rows, columns=[
+            "account_key", "lifetime_closed_trading_net_raw",
+            "lifetime_comprehensive_profit_raw", "account_comprehensive_net_30d_raw",
+        ])
 
     def current_open_positions(self, frame: pd.DataFrame, as_of: datetime) -> pd.DataFrame:
         rows: list[dict[str, Any]] = []
@@ -1891,9 +2193,21 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         if features.empty:
             raise RuntimeError("No supported account-product candidates were returned by the all-source scan.")
         account_frame = features.drop_duplicates("account_key")
+        current_state_started = time.perf_counter()
         stage_started = time.perf_counter()
         profiles = self.current_profiles(account_frame)
+        build_stage_seconds["current_profiles"] = time.perf_counter() - stage_started
         frame = features.merge(profiles, on="account_key", how="inner", validate="many_to_one")
+        stage_started = time.perf_counter()
+        profitability = self.account_profitability_evidence(account_frame, profiles, as_of)
+        build_stage_seconds["account_profitability"] = time.perf_counter() - stage_started
+        frame = frame.merge(
+            profitability,
+            on="account_key",
+            how="inner",
+            validate="many_to_one",
+        )
+        stage_started = time.perf_counter()
         open_positions = self.current_open_positions(account_frame, as_of)
         frame = frame.merge(open_positions, on="account_key", how="left", validate="many_to_one")
         product_positions = self.current_product_positions(account_frame, as_of)
@@ -1903,7 +2217,8 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             how="left",
             validate="one_to_one",
         )
-        build_stage_seconds["current_state"] = time.perf_counter() - stage_started
+        build_stage_seconds["current_positions"] = time.perf_counter() - stage_started
+        build_stage_seconds["current_state"] = time.perf_counter() - current_state_started
         numeric = [
             "closes_5d", "closes_7d", "closes_20d", "closes_30d",
             "net_5d", "net_7d", "net_20d", "net_30d",
@@ -1911,6 +2226,9 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             "gross_profit_30d", "gross_loss_30d", "lots_30d", "observed_spread_cost_30d",
             "source_contract_size",
             "Balance", "Credit", "Equity", "Profit", "Margin", "MarginLevel",
+            "account_net_30d", "lifetime_closed_trading_net_raw",
+            "lifetime_comprehensive_profit_raw", "account_comprehensive_net_30d_raw",
+            "account_closed_positions_30d", "account_active_days_30d",
             "open_position_count", "open_gross_lots", "xau_gross_lots", "xau_net_lots",
             "oldest_open_seconds", "position_floating",
             "product_open_position_count", "product_open_gross_lots", "product_open_net_lots",
@@ -1935,7 +2253,7 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             for row in frame.itertuples()
         ]
         for column in (
-            "net_5d", "net_7d", "net_20d", "net_30d",
+            "net_5d", "net_7d", "net_20d", "net_30d", "account_net_30d",
             "gross_profit_20d", "gross_loss_20d", "observed_spread_cost_20d",
             "gross_profit_30d", "gross_loss_30d", "observed_spread_cost_30d",
             "Balance", "Credit", "Equity", "Profit",
@@ -1943,6 +2261,15 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
         ):
             frame[f"{column}_usd"] = frame[column] * frame["money_scale"]
         frame["product_floating_pnl_usd"] = frame["product_floating_pnl"] * frame["money_scale"]
+        frame["lifetime_closed_trading_net_usd"] = (
+            frame["lifetime_closed_trading_net_raw"] * frame["money_scale"]
+        )
+        frame["lifetime_comprehensive_profit_usd"] = (
+            frame["lifetime_comprehensive_profit_raw"] * frame["money_scale"]
+        )
+        frame["account_comprehensive_net_30d_usd"] = (
+            frame["account_comprehensive_net_30d_raw"] * frame["money_scale"]
+        )
         frame["equity_pre_usd"] = frame["Equity_usd"].where(frame["Equity_usd"] > 0, frame["Balance_usd"] + frame["Credit_usd"] + frame["Profit_usd"])
         frame["floating_pnl_usd"] = frame["Profit_usd"]
         frame["floating_loss_usd"] = (-frame["floating_pnl_usd"]).clip(lower=0.0)
@@ -2005,8 +2332,29 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             / frame["quality_net_20d_usd"].replace(0, float("nan"))
         ).clip(-1.0, 1.0)
 
+        account_gate_reasons = [
+            account_profitability_gate_reasons(
+                lifetime_comprehensive_profit_usd=float(row.lifetime_comprehensive_profit_usd),
+                account_comprehensive_net_30d_usd=float(row.account_comprehensive_net_30d_usd),
+                closed_positions_30d=int(row.account_closed_positions_30d),
+                active_days_30d=int(row.account_active_days_30d),
+            )
+            for row in frame.itertuples()
+        ]
+        frame["account_profitability_gate_reasons"] = [
+            "|".join(reasons) for reasons in account_gate_reasons
+        ]
+        frame["account_profitability_ready"] = [not reasons for reasons in account_gate_reasons]
+        account_gate_counts: dict[str, int] = {}
+        for account_reasons in (
+            frame.drop_duplicates("account_key")["account_profitability_gate_reasons"]
+        ):
+            for reason in str(account_reasons or "").split("|"):
+                if reason:
+                    account_gate_counts[reason] = account_gate_counts.get(reason, 0) + 1
         positive_comprehensive = frame.loc[
-            frame["comprehensive_net_30d_usd"] > 0
+            frame["account_profitability_ready"]
+            & (frame["comprehensive_net_30d_usd"] > 0)
         ].copy()
         preliminary = positive_comprehensive.loc[
             (positive_comprehensive["closes_7d"] > 0)
@@ -2259,6 +2607,12 @@ WHERE CLOSE_TIME >= %s AND CLOSE_TIME < %s AND CLOSE_TIME > OPEN_TIME
             "route_account_counts": route_counts,
             "ambiguous_login_counts": ambiguous,
             "candidate_sleeves": int(len(features)),
+            "candidate_accounts": int(features["account_key"].nunique()),
+            "account_profitability_ready_accounts": int(
+                frame.loc[frame["account_profitability_ready"], "account_key"].nunique()
+            ),
+            "account_profitability_gate_counts": account_gate_counts,
+            "account_profitability_cache": self.account_profitability_cache_stats,
             "positive_comprehensive_sleeves": int(len(positive_comprehensive)),
             "eligible_sleeves": int(len(eligible)),
             "selected_sleeves": int(len(pool)),

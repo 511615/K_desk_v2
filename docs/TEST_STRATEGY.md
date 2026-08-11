@@ -403,6 +403,15 @@ floating and dynamic values separately and keeps zero-net hedged accounts in the
 Execution-quality scheduling regressions require the hourly schedule to be consumed exactly once,
 the cached factor-ready universe to rank 30 unique monitor plus 70 unique reserve clients, current
 comprehensive loss to remain a hard rejection, and one/four-hour strength to affect only ordering.
+Account-profitability regressions require strict positive lifetime and 30-day comprehensive trading
+profit, all-product aggregation before product normalization, funding/Credit/rebate exclusion, and
+the five-complete-position/three-trading-day boundary. A 634412-style account with positive recent
+single-trade profit but negative lifetime trading profit must be rejected before product factors,
+and hourly discovery must not revive it. Old caches without the new evidence must force a rebuild.
+Cache tests require atomic per-source persistence, first-use historical backfill, delta-only reuse,
+new-candidate backfill and adaptive split of oversized Login batches. The all-source read-only
+preflight must prove a warm-cache complete build remains below ten minutes and that the rejected
+regression account is absent from public pool, private universe and selected snapshot.
 Detached-discovery regressions require an independent connection set, non-blocking live polls,
 generation-checked commit, empty/failure pool retention, no duplicate follow-up collection and
 clean worker shutdown. Status regressions pin one-second normal-write throttling and forced error

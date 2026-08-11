@@ -60,8 +60,15 @@
   same-day private snapshot after restart. Any missing source rejects the build; a partial pool is
   never deployed.
 - Pool identity is `CRM route + Login + normalized product`. Shared-source ambiguity is excluded.
-  The first candidate gate is a close in the rolling seven-day window. The core gate is
-  `30-day closed trading net + current same-product floating P/L > 0` after normalized copy cost.
+  The first candidate gate is a close in the rolling seven-day window. Account eligibility then
+  requires both `lifetime closed trading net + current all-product floating P/L > 0` and
+  `30-day all-product trading net + current all-product floating P/L > 0`, plus at least five
+  complete closed Positions/Tickets across at least three trading days in that 30-day window.
+  Balance funding/rebate movements, Credit, Charge, Correction and Bonus never count as profit.
+  Only a passing account reaches the product gate:
+  `30-day closed trading net + current same-product floating P/L - normalized copy cost > 0`.
+  Lifetime ledger totals are cached per physical source with a Deal/Ticket highwater; cache reuse may
+  reduce query work but never changes the strict gate or supplies a missing account as zero.
   Scoring excludes rebates, converts confirmed Cent/USC money by `0.01` without scaling lots,
   applies 1.5x spread stress, negative-balance/equity, stop-out compensation and margin gates, and
   gives an additive `0.02` A-containing status boost that cannot bypass a hard gate.
@@ -157,8 +164,9 @@
   reductions and closes never refresh that deadline. The deadline is checked before execution gates
   and again immediately before the broker open request. An expired addition is ignored, while an
   expired reversal closes the old owned Ticket but cannot open its opposite leg.
-- Pool quality uses same-product closed trading net plus current same-product floating P/L for the
-  strict positive candidate gate. Current floating profit cannot hide later account-risk failures or
+- Pool quality first applies the non-compensable account-wide lifetime/recent comprehensive-profit
+  and complete-sample gates, then uses same-product closed trading net plus current same-product
+  floating P/L for the strict positive product gate. Current floating profit cannot hide later account-risk failures or
   increase a dynamic weight. Current floating loss at or above 10% of equity or margin usage at or
   above 50% of equity is a build hard gate. Below those extremes, negative realized/floating
   components, margin use and gross-versus-net hedge evidence reduce the deployable score.

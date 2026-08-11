@@ -84,6 +84,18 @@ contacts or private route structures. Hourly score, one/four-hour P/L, current c
 also public snapshot fields. K_desk does not query them from MySQL. The producer obtains them from
 the accepted `pool_universe_private.csv` plus bounded current-session reads; the daily historical
 factor evidence remains immutable until the next complete build.
+Account eligibility evidence is computed before product selection. Lifetime closed trading net uses
+the current platform `Balance + Credit` less cumulative Balance, Credit, Charge, Correction and Bonus
+ledger movements, so funding, withdrawals and balance-posted rebates are removed without a remote write. Current all-product floating P/L
+is added to lifetime and rolling-30-day trading net. MT5 complete-sample counts use distinct closed
+Position IDs with no authoritative open residual; MT4 counts closed market Tickets. The 30-day sample
+must contain at least five such Positions/Tickets and three distinct close dates. A v10 or older cache
+without these fields is invalid for v11 and triggers a full read-only rebuild.
+The private `account_profitability_cache_private.json` is a v1 per-physical-source accumulator of
+Login, cumulative raw Balance/Credit-class ledger net and Deal/Ticket highwater. It contains no CRM
+identity, contact, credential or Ticket ownership data. A known Login is refreshed from the highwater
+delta; a missing candidate is backfilled through the current highwater. Rolling sample counts and
+active-day sets come from the same non-overlapping 30-day feature shards already used for product P/L.
 The recovery endpoint is the only copy-pool monitor path permitted to write local runtime files:
 it atomically creates or reuses `runtime_recovery_request.json` and reads the bounded companion
 `runtime_recovery_status.json`. The request contains only the fixed action, revision and request

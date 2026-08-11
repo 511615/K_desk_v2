@@ -40,9 +40,14 @@ strategy-only results.
 ## Independent execution model
 
 Selection and monitoring use `account + normalized product` sleeves across every supported Demo
-product. The first candidate gate is a close within the rolling seven-day activity window, followed
-by strictly positive rolling 30-day closed trading net plus current
-same-product floating P/L. The cross-product population targets up to 30 unique monitored clients
+product. The first candidate gate is a close within the rolling seven-day activity window. Before
+any product sleeve or factor is considered, the account must have both strictly positive lifetime
+comprehensive trading profit and strictly positive rolling-30-day comprehensive trading profit,
+each including current all-product floating P/L while excluding Balance funding/rebate movements,
+Credit, Charge, Correction and Bonus ledger movements. The rolling window must also contain at least five
+complete closed Positions/Tickets across at least three trading days. A passing account is then
+subject to the existing strictly positive rolling-30-day cost-adjusted same-product comprehensive
+P/L gate. The cross-product population targets up to 30 unique monitored clients
 and up to 70 unique reserve clients, not 30 clients per product; all hard-qualified sleeves belonging
 to a selected client remain visible. A non-empty qualified monitor population may proceed below the
 30-client target instead of weakening hard risk gates, while an empty population stops preflight.
@@ -95,7 +100,8 @@ live reconciliation and is removed when the source closes; restart never turns i
 Demo order. A uniquely recovered or already mapped Ticket remains eligible for reduction, close and
 risk management.
 
-After rolling-30-day cost-adjusted comprehensive-profit and non-compensable account-data gates,
+After the non-compensable account-level lifetime/recent comprehensive-profit and sample gates, then
+the rolling-30-day product-level cost-adjusted comprehensive-profit and account-data gates,
 every executable sleeve receives proportional base-weight input. Drawdown, holding, carry and
 recent-performance evidence are ranking warnings and score inputs, not a second eligibility filter.
 The adjusted score is not subject to a separate
@@ -116,7 +122,7 @@ Twelve-hour positions cannot add risk and 24-hour positions close and pause that
 
 Historical Tick delay replay is deferred from V0.1 because its cross-product validation cost is not
 yet accepted. It does not participate in score or hard eligibility, and missing Tick partitions do
-not reject a sleeve. The primary cost_profit_recent_coverage_carry_v4 score is 45% 30-day cost-adjusted
+not reject a sleeve. The primary cost_profit_recent_coverage_carry_v5 score is 45% 30-day cost-adjusted
 profit per copied trade, 25% recent seven-day cost-adjusted profit per copied trade, 15% copy-cost
 coverage and 15% carry quality. Source P/L is first normalized to USD, then scaled from the 30-day average closed
 execution size to the selected Demo product's actual minimum lot. Estimated cost is the product
@@ -391,15 +397,22 @@ each physical source remains one serial task per stage. Results merge in stable 
 order; any source failure rejects the complete build.
 Coverage records bounded stage timings for route discovery, feature scan, current state, risk,
 holding, factor history/scoring and total build time without exposing SQL or account identity.
-The v10 producer may migrate a same-trading-day v6, v7, v8 or v9 cache without repeating the 30-day
-database build only when the private universe is present and metadata plus coverage prove the exact
-complete eleven-route/nine-source set and complete carry-risk evidence. A legacy universe without
-carry-risk evidence forces a full rebuild. Migration preserves all existing hard-gate failures,
-applies the current seven-day/30-day after-cost evidence across the full cached universe,
-regenerates selection and positive-score weights, and stamps v10/v4 metadata. The next 05:15 schedule
-still performs a complete read-only database rebuild under the v10 model. A migration rebases sleeve
+The v11 producer accepts a same-day cache only when it contains the account-level lifetime/recent
+comprehensive-profit and complete-sample evidence in addition to exact complete eleven-route/
+nine-source coverage and carry-risk evidence. Any v10 or older universe without those account fields
+forces a complete read-only rebuild; missing evidence is never interpreted as profit. Rebuild and
+hourly ranking preserve all hard-gate failures, apply the account gates before product and factor
+logic, regenerate selection and positive-score weights, and stamp v11/v5 metadata. The next 05:15
+schedule still performs a complete read-only database rebuild under the v11 model. A rebuild rebases sleeve
 weights but remains a same-day restart: persisted source-position to Demo-Ticket ownership is
 restored and validated rather than cleared.
+Lifetime Balance/Credit ledger evidence is held in a private per-physical-source v1 cache containing
+only Login, cumulative raw ledger value and an immutable Deal/Ticket highwater. The first build
+backfills missing candidates; later complete builds query only records above the accepted highwater,
+while a newly active Login receives one bounded historical backfill. Each completed source is saved
+atomically, so a later source failure does not discard finished read-only evidence. Rolling-30-day
+Position/Ticket counts and close-day sets are accumulated inside the existing non-overlapping trade
+feature shards instead of repeating a second 30-day scan.
 MT5 polling intentionally reads non-trading ledger actions so each physical cursor can advance past
 them; those actions never change virtual positions, intraday trading P/L, dynamic weights or source
 signals. All MT5 Deals returned in one polling cycle are first applied to the source ledger and then
@@ -519,6 +532,14 @@ non-empty populations below the monitor target,
 single-consumption discovery scheduling, restart missed-add suppression and daily suspended-state
 preservation. They also require hourly pool persistence, unknown rather than zero restart evidence,
 idle source semantics and the bounded explicit Demo minimum-lot exception.
+Account-profitability regressions require lifetime and rolling-30-day comprehensive trading profit
+to remain strictly positive, exclude funding/Credit/rebate ledger actions, include all supported and
+unsupported product trading results plus current all-product floating P/L, and require five complete
+closed Positions/Tickets across three trading days. They also prove hourly ranking cannot revive an
+account that fails any one of these non-compensable gates.
+Cache regressions require first-use backfill, source highwater advancement, delta-only reuse,
+missing-Login backfill and adaptive Login-batch bisection without treating partial cache coverage as
+complete pool coverage.
 The minimum-lot budget regression also requires a tiny-weight active client to receive the 20%
 cycle-budget floor only under the explicit Demo switch, proves that a 0.69 USD copied loss does not
 exhaust that floor and preserves weight-proportional budgets elsewhere.
