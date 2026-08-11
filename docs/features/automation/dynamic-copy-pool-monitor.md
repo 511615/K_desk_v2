@@ -110,7 +110,9 @@ existing Ticket, a source close or reversal closes the old Ticket before any opp
 portfolio/client hard-stop can still reduce or close it. The exit-only record is removed only after
 all owned Demo Tickets are gone. Thus a pool filter can stop new risk without losing Ticket
 ownership or turning an existing model position into an unknown Demo position; any mapping mismatch
-still fails closed.
+still fails closed. A restart journal entry for a filtered account is discarded only when that
+account has no retained route and no owned Demo Ticket; such a stale monitor-only transition cannot
+produce a broker action and must not block the live event loop.
 
 After the non-compensable account-level lifetime/recent comprehensive-profit and sample gates, then
 the rolling-30-day product-level cost-adjusted comprehensive-profit and account-data gates,

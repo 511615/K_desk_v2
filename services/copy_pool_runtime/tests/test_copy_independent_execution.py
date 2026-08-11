@@ -1073,6 +1073,25 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             {612035003: position.source_key},
         )
 
+    def test_restart_drops_stale_pending_transition_for_unmanaged_filtered_client(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.routed_clients = {}
+        transition = {
+            "first_event": SimpleNamespace(account_key="ac_gb_mt5:954007"),
+            "last_event": SimpleNamespace(account_key="ac_gb_mt5:954007"),
+            "before_lots": 0.01,
+            "after_lots": 0.0,
+            "event_count": 1,
+            "first_risk_event": None,
+        }
+
+        retained, dropped = service._drop_unmanaged_pending_transitions(
+            [transition]
+        )
+
+        self.assertEqual(retained, [])
+        self.assertEqual(dropped, 1)
+
     def test_restart_without_demo_ticket_is_monitor_only_and_never_reopens(self) -> None:
         original = IndependentCopyBook()
         _action, position = original.observe_source_position(

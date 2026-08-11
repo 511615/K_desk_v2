@@ -1277,10 +1277,21 @@ class MultiSourceLiveService(LiveService):
         ) = self._sanitize_restarted_pending_transitions(
             self.pending_coalesced_transitions
         )
+        (
+            self.pending_coalesced_transitions,
+            dropped_unmanaged_transitions,
+        ) = self._drop_unmanaged_pending_transitions(
+            self.pending_coalesced_transitions
+        )
         if cancelled_pending_increases:
             self.log(
                 f"Cancelled {cancelled_pending_increases} pending risk increase(s) "
                 "after restart; source positions remain monitor-only."
+            )
+        if dropped_unmanaged_transitions:
+            self.log(
+                f"Dropped {dropped_unmanaged_transitions} stale pending transition(s) "
+                "for filtered clients with no owned Demo ticket."
             )
 
         account = self.mt.account()
@@ -3150,6 +3161,17 @@ class MultiSourceLiveService(LiveService):
             else:
                 retained.append(transition)
         return retained, cancelled
+
+    def _drop_unmanaged_pending_transitions(
+        self,
+        transitions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], int]:
+        retained = [
+            transition
+            for transition in transitions
+            if str(transition["last_event"].account_key) in self.routed_clients
+        ]
+        return retained, len(transitions) - len(retained)
 
     @staticmethod
     def _private_coalesced_transition(transition: Mapping[str, Any]) -> dict[str, Any]:
