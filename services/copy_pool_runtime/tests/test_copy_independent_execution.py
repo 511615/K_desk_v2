@@ -476,7 +476,7 @@ class IndependentExecutionServiceTests(unittest.TestCase):
 
         self.assertTrue(service.quote_allows_open("USDJPY"))
 
-    def test_external_conflict_only_blocks_its_own_product(self) -> None:
+    def test_external_position_does_not_block_model_on_the_same_product(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.mt = SimpleNamespace(
             all_foreign_positions=lambda products: (
@@ -486,11 +486,28 @@ class IndependentExecutionServiceTests(unittest.TestCase):
             all_pending_orders=lambda _products: (),
         )
 
-        self.assertEqual(
-            service._product_conflict_reason("XAUUSD"),
-            "execution_gate_blocked:external_position_conflict",
-        )
+        self.assertEqual(service._product_conflict_reason("XAUUSD"), "")
         self.assertEqual(service._product_conflict_reason("USDJPY"), "")
+
+    def test_external_position_is_observed_but_does_not_create_a_global_gate(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.current_targets = {"XAUUSD": 0.01}
+        service.last_error = ""
+        service.external_position_conflict = False
+        service.external_position_count = 0
+        service.pending_order_conflict = False
+        service.mt = SimpleNamespace(
+            all_foreign_positions=lambda _products: (
+                SimpleNamespace(symbol="XAUUSD"),
+                SimpleNamespace(symbol="XAUUSD"),
+            ),
+            all_pending_orders=lambda _products: (),
+        )
+
+        self.assertFalse(service.refresh_mt5_conflicts())
+        self.assertFalse(service.external_position_conflict)
+        self.assertEqual(service.external_position_count, 2)
+        self.assertEqual(service.last_error, "")
 
     def test_pending_order_conflict_is_reported_separately(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)

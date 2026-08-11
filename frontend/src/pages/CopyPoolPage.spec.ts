@@ -14,7 +14,11 @@ vi.mock('@tanstack/vue-query', () => ({
         available: true,
         stale: staleState.value,
         recovery: recoveryStateMock.value,
-        status: {},
+        status: {
+          externalPositionConflict: false,
+          externalPositionCount: 2,
+          pendingOrderConflict: false,
+        },
         demoAccount: {
           updatedAt: '2026-08-05T10:05:00+08:00',
           account: { login: '33304642', server: 'ACCMGlobal-Demo', balanceUsd: 9818.24, equityUsd: 9821.44, marginUsd: 120, freeMarginUsd: 9701.44, marginLevelPercent: 8184.53 },
@@ -155,6 +159,14 @@ describe('CopyPoolPage tier tabs', () => {
     expect(accountPanel.text()).not.toContain('500.00')
     expect(accountPanel.text()).toContain('余额/权益为账户事实，订单与盈亏明细仅本模型')
     expect(accountPanel.text()).toContain('本模型持仓盈亏')
+  })
+
+  it('shows external positions as isolated instead of an execution conflict', () => {
+    const wrapper = mount(CopyPoolPage)
+
+    expect(wrapper.text()).toContain('外部仓位隔离')
+    expect(wrapper.text()).toContain('已隔离 2 笔')
+    expect(wrapper.text()).not.toContain('无外部仓位冲突')
   })
 
   it('switches account lists by current tier without exposing aliases or source-only closes', async () => {

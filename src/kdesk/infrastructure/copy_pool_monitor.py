@@ -1175,6 +1175,7 @@ class CopyPoolFileSnapshotRepository:
             "terminalTradeAllowed": _bool(row.get("terminal_trade_allowed")),
             "liveExecutionAuthorized": _bool(row.get("live_execution_authorized")),
             "externalPositionConflict": _bool(row.get("external_position_conflict")),
+            "externalPositionCount": _int(row.get("external_position_count")),
             "pendingOrderConflict": _bool(row.get("pending_order_conflict")),
             "lastError": str(row.get("last_error") or ""),
             "logicalRoutesScanned": _int(row.get("logical_routes_scanned")),

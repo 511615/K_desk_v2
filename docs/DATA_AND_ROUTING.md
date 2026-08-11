@@ -55,6 +55,9 @@ and per-product `exposures`; internal composite keys and order comments do not e
 open positions and trading Deals owned by copy-model Magic `26072801` and its approved Comment
 namespace. The 8777 adapter rejects any legacy row without explicit `strategy_owned=true`, so manual
 orders and other EAs cannot enter the model position count, floating P/L or Position history.
+Producer status publishes `external_position_count` as observation-only evidence while keeping
+`external_position_conflict=false`; the 8777 projection exposes this as `externalPositionCount`.
+Pending-order conflict remains independently projected and may still block new model risk.
 The public pool retains delay compatibility columns but V0.1 marks them
 `historical_delay_enabled=false` and `delay_factor_status=deferred_v0_1`; the producer does not read
 historical Tick partitions during its complete build. Cashflow-adjusted drawdown and holding-quality

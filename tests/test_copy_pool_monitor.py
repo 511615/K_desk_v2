@@ -57,6 +57,9 @@ def make_snapshot(root: Path) -> Path:
             "cycle_pnl_usd": 3.62,
             "terminal_trade_allowed": True,
             "live_execution_authorized": True,
+            "external_position_conflict": False,
+            "external_position_count": 2,
+            "pending_order_conflict": False,
             "logical_routes_scanned": 11,
             "logical_routes_expected": 11,
             "logical_routes_selected": 1,
@@ -404,6 +407,8 @@ def test_copy_pool_reader_projects_detailed_account_identity(tmp_path: Path) -> 
     )
 
     assert payload["available"] is True
+    assert payload["status"]["externalPositionConflict"] is False
+    assert payload["status"]["externalPositionCount"] == 2
     assert payload["routeCoverage"] == {"linked": 1, "total": 1}
     row = payload["pool"][0]
     assert row["clientAlias"] == "C001"
