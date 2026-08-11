@@ -2585,6 +2585,7 @@ def summarize_copy_followers(rows: list[dict], current_account: str = "") -> tup
 
 def account_copy_origins_payload(login: str, filters: dict | None = None) -> dict:
     filters = filters or {}
+    relationship_mode = normalize_text(filters.get("_relationship")) == "1"
     login = normalize_text(login)
     if not login or not re.fullmatch(r"\d+", login):
         raise ValueError("账号格式无效")
@@ -2601,9 +2602,10 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         login,
         *(normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")),
     )
-    cached = account_cache_get(cache_key)
-    if cached is not None:
-        return cached
+    if not relationship_mode:
+        cached = account_cache_get(cache_key)
+        if cached is not None:
+            return cached
     rows = query_db_trades(login, platform=platform, server=server, start=start, end=end, limit=50000)
     # A broad overlap predicate can fill the safety page with older positions before the selected
     # opening-time window. Retry without the analytical cap only when that page is saturated.
@@ -2622,9 +2624,10 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         for order_id in copy_trade_order_ids(row)
     ))
     if not order_ids:
-        return account_cache_set(cache_key, {
+        payload = {
             "ok": True, "account": login, "detected": False, "orderIds": [], "origins": [], "primaryOrigin": None,
-        })
+        }
+        return payload if relationship_mode else account_cache_set(cache_key, payload)
     sources = [source for source in MYSQL_SOURCES if source_allowed(source, platform=platform, server=server)]
     candidates: list[dict] = []
     errors: list[str] = []
@@ -2737,7 +2740,7 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
                 except Exception as exc:
                     origin.update({"followers": [], "followerOrders": [], "followerSummary": {}, "followerDiscovery": {"error": str(exc)}})
                     errors.append(f"{origin['server']} 跟单人员查询: {exc}")
-    return account_cache_set(cache_key, {
+    payload = {
         "ok": True,
         "account": login,
         "detected": True,
@@ -2754,7 +2757,8 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
         "primaryOrigin": origins[0] if origins else None,
         "errors": errors[:5],
         "refreshedAt": now_text(),
-    })
+    }
+    return payload if relationship_mode else account_cache_set(cache_key, payload)
 
 
 
@@ -2779,30 +2783,36 @@ def account_copy_origins_payload(login: str, filters: dict | None = None) -> dic
 
 def account_copy_group_profit_payload(login: str, filters: dict | None = None) -> dict:
     filters = filters or {}
+    relationship_mode = normalize_text(filters.get("_relationship")) == "1"
     cache_key = (
         "copy-group-profit",
         normalize_text(login),
         *(normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")),
     )
-    cached = account_cache_get(cache_key)
-    if cached is not None:
-        return cached
+    if not relationship_mode:
+        cached = account_cache_get(cache_key)
+        if cached is not None:
+            return cached
     service = SignalCopyGroupService(sys.modules[__name__])
-    return account_cache_set(cache_key, service.payload(login, filters))
+    payload = service.payload(login, filters)
+    return payload if relationship_mode else account_cache_set(cache_key, payload)
 
 
 def account_ea_comment_profit_payload(login: str, filters: dict | None = None) -> dict:
     filters = filters or {}
+    relationship_mode = normalize_text(filters.get("_relationship")) == "1"
     cache_key = (
         "ea-comment-profit",
         normalize_text(login),
         *(normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")),
     )
-    cached = account_cache_get(cache_key)
-    if cached is not None:
-        return cached
+    if not relationship_mode:
+        cached = account_cache_get(cache_key)
+        if cached is not None:
+            return cached
     service = EaCommentGroupService(sys.modules[__name__])
-    return account_cache_set(cache_key, service.payload(login, filters))
+    payload = service.payload(login, filters)
+    return payload if relationship_mode else account_cache_set(cache_key, payload)
 
 
 def trade_pnl_values(row: dict) -> tuple[float, float]:

@@ -97,7 +97,8 @@ trigger a remote scan. Invalid graph shape and Kuzu failures do not expose inter
 and never injects evidence as HTML.
 `AccountRelationshipNetworkService` obtains the routed CRM hierarchy payload through the existing
 read-only legacy boundary. Same-CRM edges use its mapping-only legacy payload instead of a full
-trade-history dashboard read, and its aggregate query runs only for the seed account in one request.
+trade-history dashboard read. Relationship-only EA and Copy reads bypass the dashboard result cache,
+and its aggregate query runs only for the seed account in one request.
 
 ## Tests and acceptance
 

@@ -235,6 +235,13 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
         "account_shared_last_ip_payload",
     }
+    relationship_sources = {
+        "account_relationship_core_payload", "account_copy_origins_payload",
+        "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
+    }
+    for name, args in calls:
+        if name in relationship_sources:
+            assert args[1]["_relationship"] == "1"
 
 
 def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_path: Path) -> None:

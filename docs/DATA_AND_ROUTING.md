@@ -462,6 +462,9 @@ Same-CRM-user graph evidence uses the read-only legacy
 mapped trading-account identity, platform and server. Graph expansion must not call dashboard
 `risk-panels` or retain order history merely to discover this CRM relationship; the full dashboard
 continues to use its existing endpoint independently.
+Relationship-only EA and Copy calls pass an internal `_relationship=1` marker across the legacy
+bridge. That marker preserves the returned read-only evidence but bypasses the dashboard result cache;
+it is not a public API parameter and does not alter interactive dashboard caching.
 
 ## Safety
 
