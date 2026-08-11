@@ -38,8 +38,9 @@ While its background expansion is in progress, the overview overlays a transluce
 sweep. It appears only for the visible `后台扩散中` state, continues through polling, then hides when
 the task completes, fails or is idle. Its origin is continuously projected to the problem account's
 current canvas coordinate, including after zoom, pan, resize or graph relayout. The SVG uses the
-same non-uniform board coordinate plane as Canvas so wide graph boards do not introduce side-padding
-offset; it does not intercept canvas pointer, zoom or drag interaction.
+same dynamically sized pixel coordinate plane as Canvas. This avoids both square-letterboxing offset
+and non-uniform stretching: the scan fan remains circular on a wide board; it does not intercept
+canvas pointer, zoom or drag interaction.
 Scores are investigation priority, not a fraud or trading conclusion.
 
 ## API contract
