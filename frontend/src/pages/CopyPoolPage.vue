@@ -299,7 +299,7 @@ const gates = computed(() => [
   { label: '点差小于 1.00', value: number(status.value.spreadPrice, 2), ok: Number(status.value.spreadPrice) <= 1 },
   { label: '模拟账户允许交易', value: status.value.terminalTradeAllowed ? '已允许' : '已禁止', ok: Boolean(status.value.terminalTradeAllowed) },
   { label: '程序化下单已授权', value: status.value.liveExecutionAuthorized ? '已授权' : '未授权', ok: Boolean(status.value.liveExecutionAuthorized) },
-  { label: '无外部仓位冲突', value: status.value.externalPositionConflict ? '发现冲突' : '正常', ok: !status.value.externalPositionConflict },
+  { label: '外部仓位隔离', value: `已隔离 ${Number(status.value.externalPositionCount || 0)} 笔`, ok: !status.value.externalPositionConflict },
   { label: '无外部挂单冲突', value: status.value.pendingOrderConflict ? '发现冲突' : '正常', ok: !status.value.pendingOrderConflict },
 ])
 

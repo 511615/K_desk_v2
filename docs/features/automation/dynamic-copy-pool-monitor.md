@@ -8,7 +8,7 @@ code: [".env.example", "src/kdesk/settings.py", "src/kdesk/application/copy_pool
 tests: ["tests/test_copy_pool_monitor.py", "tests/test_copy_pool_runtime_recovery.py", "tests/test_production_versioning.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/src/copyPool.spec.ts", "frontend/src/beijingTime.spec.ts", "frontend/src/pages/CopyPoolPage.spec.ts", "services/copy_pool_runtime/tests/test_copy_manual_controls.py", "services/copy_pool_runtime/tests/test_copy_delay_replay_domain.py", "services/copy_pool_runtime/tests/test_copy_dynamic_pool_domain.py", "services/copy_pool_runtime/tests/test_copy_independent_execution.py", "services/copy_pool_runtime/tests/test_copy_pool_equity_reconstruction.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_domain.py", "services/copy_pool_runtime/tests/test_copy_pool_factor_service.py", "services/copy_pool_runtime/tests/test_copy_pool_history_adapter.py", "services/copy_pool_runtime/tests/test_copy_pool_history_repository.py", "services/copy_pool_runtime/tests/test_copy_pool_multisource.py", "services/copy_pool_runtime/tests/test_copy_quote_replay_cache.py", "services/copy_pool_runtime/tests/test_copy_trading_live.py"]
 depends_on: ["ACC-DETAIL-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-07
+last_verified_date: 2026-08-11
 ---
 
 # Dynamic copy-pool monitor
@@ -60,6 +60,11 @@ or reject a new order at runtime.
 Execution ownership is `account + source Position -> one or more Demo Tickets`. Customer opening,
 increasing, reducing, closing and reversing events affect only those mapped Tickets. Opposing
 customers remain independently open; net exposure is display and combination-risk evidence only.
+Manual and other-EA MT5 positions are observed as an isolated count but do not block this model's
+new positions, including on the same product. They never enter model sizing, P/L, Ticket ownership,
+close/flatten selection or current-copy tables because every strategy operation is restricted to
+Magic `26072801` and the approved fixed or `CPV2:` Comment namespace. A non-model pending order
+remains a new-risk gate because it can still become future account exposure.
 MT4 may replace the source Ticket after a partial close. When the authoritative open residual has
 the direction-consistent smaller lot and its Comment proves the prior Ticket (`from #<Ticket>`),
 the Producer rekeys that one source-position mapping to the replacement Ticket. It preserves the
@@ -253,6 +258,9 @@ client loss-budget use, source Position to Demo Ticket mappings,
 per-product quotes, gross long/short, net and locked exposure, equity history, database latency,
 strategy P/L, recent source/risk/order events and the current execution gates. Search
 and filters are presentation-only and never affect the copier.
+The execution-gate row reports non-model positions as `外部仓位隔离` with their observed count; this
+is a healthy informational state, not a conflict. Pending non-model orders remain a separate
+blocking gate.
 The scheduling event stream is an entry-signal view: it shows source opening events only. Source-only
 reductions and closes remain in the API/event ledger and the position/history panels, but are omitted
 from this stream so an exit from a position that was never copied cannot look like a missed Demo

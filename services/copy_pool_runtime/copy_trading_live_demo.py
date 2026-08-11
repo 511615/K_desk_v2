@@ -1155,6 +1155,7 @@ class LiveService:
         self.pending_source_snapshot: dict[tuple[int, int, str], float] | None = None
         self.pending_source_snapshot_count = 0
         self.external_position_conflict = False
+        self.external_position_count = 0
         self.pending_order_conflict = False
         self._last_public_status: dict[str, Any] | None = None
 
@@ -1411,6 +1412,7 @@ class LiveService:
             "terminal_trade_allowed": bool(self.mt.terminal().trade_allowed),
             "live_execution_authorized": bool(self.args.enable_live_trading),
             "external_position_conflict": self.external_position_conflict,
+            "external_position_count": getattr(self, "external_position_count", 0),
             "pending_order_conflict": self.pending_order_conflict,
             "last_error": self.last_error,
         }
@@ -1536,16 +1538,20 @@ class LiveService:
         )
 
     def refresh_mt5_conflicts(self) -> bool:
-        self.external_position_conflict = bool(self.mt.foreign_positions())
+        foreign_positions = tuple(self.mt.foreign_positions())
+        self.external_position_count = len(foreign_positions)
+        # Foreign/manual positions are observed but isolated from strategy
+        # sizing, P/L, ownership and execution through Magic/comment filters.
+        self.external_position_conflict = False
         self.pending_order_conflict = bool(self.mt.pending_orders())
-        if self.external_position_conflict or self.pending_order_conflict:
-            conflicts: list[str] = []
-            if self.external_position_conflict:
-                conflicts.append("external XAUUSD position")
-            if self.pending_order_conflict:
-                conflicts.append("XAUUSD pending order")
-            self.last_error = f"Exposure conflict detected ({', '.join(conflicts)}); new risk is blocked."
+        if self.pending_order_conflict:
+            self.last_error = (
+                "Exposure conflict detected (XAUUSD pending order); "
+                "new risk is blocked."
+            )
             return True
+        if self.last_error.startswith("Exposure conflict detected ("):
+            self.last_error = ""
         return False
 
     def log_order(self, action: str, before: float, target: float, result: Any | None) -> None:

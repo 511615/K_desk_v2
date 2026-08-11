@@ -260,6 +260,9 @@ client Demo loss budgets, sanitized source Position/Demo Ticket mappings and per
 long/short/net/locked exposure,
 dense mixed-account fixtures where non-model Magic/Comment positions and Deals must be absent from
 the Producer snapshot, 8777 response, Vue position count, floating P/L and Position-level history,
+and same-product non-model open positions must remain observable without blocking a model open or
+reversal. Pending non-model orders must continue to block new risk, and model close/flatten tests
+must prove that foreign Tickets are untouched,
 detailed Login/platform/server projection without raw private-state structures and strict `C001`
 alias redirects to the compatible platform/server-aware account page. Frontend tests cover detailed
 account labels, Chinese operational labels and chart geometry. Browser acceptance uses an isolated

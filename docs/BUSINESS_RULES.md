@@ -89,6 +89,10 @@
   MT4 partial-close residual (`COMMENT` references the former Ticket) may rekey the same-direction,
   smaller source Position while preserving its owned Demo Ticket and original entry deadline; it is
   a reduction, never a new entry or inferred ownership claim.
+- MT5 positions not owned by copy-model Magic `26072801` and its approved Comment namespace are
+  isolated from model sizing, P/L, Ticket ownership and close/flatten operations. Their presence,
+  including on the same product, does not block model entry. A non-model pending order remains a
+  new-risk gate until it is removed or becomes an observable position.
 - The explicit Demo minimum-lot exception has stable ownership. Once a qualifying source Position
   owns a minimum lot, later reconciliations preserve that Ticket while eligibility remains true.
   Same-direction siblings may own independent Tickets in the explicit Demo mode. Eight open

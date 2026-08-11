@@ -2225,17 +2225,14 @@ class MultiSourceLiveService(LiveService):
         }
 
     def _product_conflict_reason(self, product: str) -> str:
-        """Limit foreign-position and pending-order conflicts to this product."""
-        foreign_reader = getattr(self.mt, "all_foreign_positions", None)
+        """Block pending orders only; foreign positions are ownership-isolated."""
         pending_reader = getattr(self.mt, "all_pending_orders", None)
-        if callable(foreign_reader) and callable(pending_reader):
-            if tuple(foreign_reader((product,))):
-                return "execution_gate_blocked:external_position_conflict"
+        if callable(pending_reader):
             if tuple(pending_reader((product,))):
                 return "execution_gate_blocked:pending_order_conflict"
             return ""
         return (
-            "execution_gate_blocked:external_position_conflict"
+            "execution_gate_blocked:pending_order_conflict"
             if self.refresh_mt5_conflicts()
             else ""
         )
@@ -3381,16 +3378,18 @@ class MultiSourceLiveService(LiveService):
 
     def refresh_mt5_conflicts(self) -> bool:
         managed = set(self.current_targets)
-        self.external_position_conflict = bool(self.mt.all_foreign_positions(managed))
+        foreign_positions = tuple(self.mt.all_foreign_positions(managed))
+        self.external_position_count = len(foreign_positions)
+        self.external_position_conflict = False
         self.pending_order_conflict = bool(self.mt.all_pending_orders(managed))
-        if self.external_position_conflict or self.pending_order_conflict:
-            labels: list[str] = []
-            if self.external_position_conflict:
-                labels.append("managed-product external position")
-            if self.pending_order_conflict:
-                labels.append("managed-product pending order")
-            self.last_error = f"Exposure conflict detected ({', '.join(labels)}); new risk is blocked."
+        if self.pending_order_conflict:
+            self.last_error = (
+                "Exposure conflict detected (managed-product pending order); "
+                "new risk is blocked."
+            )
             return True
+        if self.last_error.startswith("Exposure conflict detected ("):
+            self.last_error = ""
         return False
 
     def log_product_order(

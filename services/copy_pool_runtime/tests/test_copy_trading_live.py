@@ -589,20 +589,23 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(service.mt.moves, [0.0, -0.01])
         self.assertEqual(service.mt.signed_position(), -0.01)
 
-    def test_foreign_position_allows_close_but_blocks_reversal_open(self) -> None:
+    def test_foreign_position_does_not_block_model_open(self) -> None:
         service = LiveService.__new__(LiveService)
         service.mt = FakeMt5Executor(0.01, foreign=True)
         service.current_target = -0.01
         service.last_error = ""
         service.external_position_conflict = False
+        service.external_position_count = 0
         service.pending_order_conflict = False
         service.quote_allows_open = lambda: True
         service.log_order = lambda *_args: None
 
         service.execute_target(-0.01, "TEST")
 
-        self.assertEqual(service.mt.moves, [0.0])
-        self.assertIn("Exposure conflict", service.last_error)
+        self.assertEqual(service.mt.moves, [-0.01])
+        self.assertFalse(service.external_position_conflict)
+        self.assertEqual(service.external_position_count, 1)
+        self.assertEqual(service.last_error, "")
 
     def test_open_gates_block_spread_quote_age_and_database_staleness(self) -> None:
         service = LiveService.__new__(LiveService)
