@@ -209,6 +209,27 @@ def test_relationship_evidence_can_use_the_remaining_discovery_budget() -> None:
     assert timed_out == {"source": "copyGroups", "status": "timeout", "reason": "来源查询超过 0.01 秒预算"}
 
 
+def test_relationship_evidence_reuses_automation_for_a_shared_current_last_ip_cohort() -> None:
+    calls: list[str] = []
+
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        calls.append(name)
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call)
+    try:
+        result = service.build_with_budget(
+            "200", {"platform": "MT5", "server": "AC CN MT5"},
+            remaining_seconds=1, include_automation=False,
+        )
+    finally:
+        service.close()
+
+    assert set(calls) == {"account_relationship_core_payload", "account_crm_ib_relationship_payload"}
+    skipped = {item["source"] for item in result["coverage"] if item["status"] == "skipped"}
+    assert skipped == {"eaGroups", "copyOrigins", "copyGroups"}
+
+
 def test_relationship_evidence_keeps_top_ib_members_collapsed_but_exposes_direct_ib_accounts() -> None:
     def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
         if name == "account_crm_ib_relationship_payload":
@@ -359,6 +380,7 @@ def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account
             *,
             remaining_seconds: float,
             include_ib_aggregate: bool,
+            include_automation: bool,
         ) -> dict[str, Any]:
             self.calls.append((login, include_ib_aggregate))
             subject = {

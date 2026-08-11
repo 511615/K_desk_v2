@@ -62,6 +62,10 @@ trade-history payload for a graph node.
 EA and Copy evidence retain their normal relationship facts but are marked internally as
 relationship-only reads, bypassing the legacy dashboard result cache so completed nodes do not
 accumulate large payloads in 8777.
+When a node belongs to an already-read current-LastIP cohort, the cohort representative's EA/Copy
+evidence is reused: sibling nodes continue CRM and LastIP expansion but skip duplicate heavy EA/Copy
+reads. Source coverage records the skipped reads and reason, so this optimisation is never presented
+as an individual automation query.
 It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
 through Kuzu and removes it before returning. It never writes AC, DBG, MT4, MT5, CRM or K_desk SQLite.
 The CRM hierarchy read resolves account-to-CRM-user, direct parent IB and accounts owned by that

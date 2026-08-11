@@ -465,6 +465,9 @@ continues to use its existing endpoint independently.
 Relationship-only EA and Copy calls pass an internal `_relationship=1` marker across the legacy
 bridge. That marker preserves the returned read-only evidence but bypasses the dashboard result cache;
 it is not a public API parameter and does not alter interactive dashboard caching.
+Within one discovered current-LastIP cohort, only the representative account runs EA and Copy
+discovery. Sibling accounts retain their CRM and LastIP reads and return explicit skipped-source
+coverage; the graph does not silently claim that their individual automation history was queried.
 
 ## Safety
 

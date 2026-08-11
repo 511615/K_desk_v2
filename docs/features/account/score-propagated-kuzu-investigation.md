@@ -99,6 +99,9 @@ and never injects evidence as HTML.
 read-only legacy boundary. Same-CRM edges use its mapping-only legacy payload instead of a full
 trade-history dashboard read. Relationship-only EA and Copy reads bypass the dashboard result cache,
 and its aggregate query runs only for the seed account in one request.
+For a current-LastIP cohort, EA/Copy discovery is performed by the representative account; sibling
+accounts still expand through CRM and LastIP evidence but report their skipped automation source
+coverage explicitly.
 
 ## Tests and acceptance
 

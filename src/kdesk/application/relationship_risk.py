@@ -97,6 +97,7 @@ class AccountRelationshipRiskService:
                     account_filters,
                     remaining_seconds=source_budget,
                     include_ib_aggregate=account_key == root_key,
+                    include_automation=account_key == root_key or account_key not in known_shared_ip_members,
                 )
                 if callable(budgeted_build)
                 else self._evidence_network.build(account_login, account_filters)

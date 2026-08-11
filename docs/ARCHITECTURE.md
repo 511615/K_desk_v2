@@ -56,6 +56,9 @@ lane, so a timed-out EA, Copy or CRM call cannot accumulate a new orphan thread 
 account. Same-CRM evidence uses a mapping-only legacy source; it does not retain complete dashboard
 trade history for every expanded account. Relationship-only Copy and EA calls bypass the legacy
 dashboard cache, so their per-account payloads can be released after graph evidence is composed.
+For accounts already in a current-LastIP cohort, root-account EA/Copy evidence acts as the cohort
+representative and sibling nodes skip those duplicate heavy reads while continuing CRM/LastIP
+propagation. The explicit skipped coverage records this optimisation.
 Kuzu is materialized only once after discovery, avoiding per-hop local graph allocation, but
 native Kuzu execution runs in a short-lived, single-concurrency child process rather than 8777. The
 parent terminates that child after four seconds and falls back to the same capped pure propagation

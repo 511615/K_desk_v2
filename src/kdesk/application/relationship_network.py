@@ -50,6 +50,7 @@ class AccountRelationshipNetworkService:
         *,
         remaining_seconds: float,
         include_ib_aggregate: bool = True,
+        include_automation: bool = True,
     ) -> dict[str, Any]:
         """Read one account's evidence without exceeding the caller's remaining deadline."""
         source_timeout_seconds = min(self._source_timeout_seconds, max(float(remaining_seconds), 0.001))
@@ -59,15 +60,18 @@ class AccountRelationshipNetworkService:
             # not suitable for every node in an unbounded graph expansion.  This relationship
             # path needs only the CRM account mapping, which the dedicated source returns.
             "sameName": ("account_relationship_core_payload", login, relationship_filters),
-            "copyOrigins": ("account_copy_origins_payload", login, relationship_filters),
-            "copyGroups": ("account_copy_group_profit_payload", login, relationship_filters),
-            "eaGroups": ("account_ea_comment_profit_payload", login, relationship_filters),
             "crmIb": (
                 "account_crm_ib_relationship_payload",
                 login,
                 {**relationship_filters, "includeIbAggregate": include_ib_aggregate},
             ),
         }
+        if include_automation:
+            requests.update({
+                "copyOrigins": ("account_copy_origins_payload", login, relationship_filters),
+                "copyGroups": ("account_copy_group_profit_payload", login, relationship_filters),
+                "eaGroups": ("account_ea_comment_profit_payload", login, relationship_filters),
+            })
         payloads: dict[str, dict[str, Any]] = {}
         coverage: list[dict[str, str]] = []
         futures = {
@@ -92,6 +96,21 @@ class AccountRelationshipNetworkService:
                 "source": source, "status": "timeout",
                 "reason": f"来源查询超过 {source_timeout_seconds:g} 秒预算",
             })
+        if not include_automation:
+            coverage.extend([
+                {
+                    "source": "eaGroups", "status": "skipped",
+                    "reason": "同当前 LastIP 群组已由代表账户完成 EA 关系读取，避免对同一会话群组重复加载完整订单特征",
+                },
+                {
+                    "source": "copyOrigins", "status": "skipped",
+                    "reason": "同当前 LastIP 群组已由代表账户完成跟单关系读取，避免对同一会话群组重复加载完整订单特征",
+                },
+                {
+                    "source": "copyGroups", "status": "skipped",
+                    "reason": "同当前 LastIP 群组已由代表账户完成跟单组读取，避免对同一会话群组重复加载完整订单特征",
+                },
+            ])
 
         builder = _EvidenceGraphBuilder(login, filters)
         builder.add_same_name(payloads.get("sameName", {}))
