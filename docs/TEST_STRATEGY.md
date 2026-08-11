@@ -99,7 +99,10 @@ trade-history dashboard payload. Relationship-only EA/Copy/CRM calls must bypass
 cache so multi-hop snapshots do not retain a full payload per account. Every visible relation edge
 must retain a readable type label. Current-LastIP cohort siblings must reuse their representative's
 EA/Copy read and expose an explicit skipped-coverage reason while CRM/LastIP propagation continues.
-must retain a readable type label. The graph surface uses one native
+The global overview's radar scan must remain visible and rotate only while the poll status is
+`后台扩散中`, hide at completion, failure and idle states, and keep canvas pointer, wheel and drag
+interaction available.
+The graph surface uses one native
 high-DPI Canvas with a detached 3x raster scene cache: pan and wheel zoom must coalesce input to at most
 one cache-copy redraw per animation frame, apply camera coordinates rather than CSS `translate3d`/`scale`,
 and avoid re-drawing static nodes, edges and text during gestures. A node drag may draw only its active

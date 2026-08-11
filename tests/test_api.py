@@ -259,6 +259,10 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function queuePoll" in page.text
     assert "data.inProgress" in page.text
     assert "后台扩散中：已处理" in page.text
+    assert "关系扩散扫描中" in page.text
+    assert "MutationObserver" in page.text
+    assert "repeatCount=\"indefinite\"" in page.text
+    assert "pointerEvents:'none'" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text

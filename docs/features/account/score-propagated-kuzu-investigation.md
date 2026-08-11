@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/k
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-10
+last_verified_date: 2026-08-11
 ---
 
 # Score-propagated Kuzu relationship investigation
@@ -34,6 +34,9 @@ same parent IB remain in their actual evidence family. Each evidence-family sele
 relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
+While its background expansion is in progress, the overview overlays a translucent rotating radar
+sweep. It appears only for the visible `后台扩散中` state, continues through polling, then hides when
+the task completes, fails or is idle; it does not intercept canvas pointer, zoom or drag interaction.
 Scores are investigation priority, not a fraud or trading conclusion.
 
 ## API contract

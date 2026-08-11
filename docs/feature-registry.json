@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "43b0d4be5414",
+  "registryVersion": "1fdc6da2efd5",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -132,7 +132,7 @@
         "TOX-POSITION-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-10",
+      "last_verified_date": "2026-08-11",
       "document": "docs/features/account/score-propagated-kuzu-investigation.md"
     },
     {
