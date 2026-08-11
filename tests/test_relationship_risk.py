@@ -323,3 +323,22 @@ def test_relationship_risk_caps_kuzu_projection_before_materialization() -> None
     assert projections[0][0] <= 400
     assert projections[0][1] <= 1_200
     assert result["truncated"] is True
+
+
+def test_relationship_risk_returns_scored_fallback_when_kuzu_projection_is_unavailable() -> None:
+    def unavailable_projection(
+        _entities: list[dict[str, Any]], _relationships: list[dict[str, Any]], _threshold: float,
+    ) -> dict[str, Any]:
+        raise RuntimeError("Kuzu projection timed out")
+
+    service = AccountRelationshipRiskService(
+        _EvidenceNetwork(), unavailable_projection, lambda _login, _filters: {"peers": [], "coverage": []},
+    )
+
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert result["source"] == "risk-propagation-fallback"
+    assert any(
+        item["source"] == "kuzuProjection" and item["status"] == "failed"
+        for item in result["coverage"]
+    )

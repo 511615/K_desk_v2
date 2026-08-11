@@ -35,9 +35,11 @@ aggregated response to a temporary local Kuzu graph once, reads it and deletes i
 MT5 same-IP peers are same-server `LastIP` matches only. Each source has a six-second wait budget,
 the LastIP follow-up has a separately clamped three-second client/database timeout, and total discovery
 has a 12-second budget, returning partial coverage when exceeded. The temporary Kuzu write is limited
-to 400 selected entities and 1,200 selected relationships. `include_toxic=true` enables the existing
-all-platform five-second open-and-close sync matcher for up to two high-score accounts. It never writes
-AC, DBG, MT4, MT5, CRM or authoritative K_desk SQLite data.
+to 400 selected entities and 1,200 selected relationships and runs in an isolated local child process
+with a four-second hard deadline; the parent falls back to pure in-process scoring if the child is busy,
+fails or times out. `include_toxic=true` enables the existing all-platform five-second open-and-close
+sync matcher for up to two high-score accounts. It never writes AC, DBG, MT4, MT5, CRM or authoritative
+K_desk SQLite data.
 `ACC-REL-003` separately reads an operator-created direct-account evidence file at
 `KDESK_KUZU_RISK_DB` (default `runtime/<profile>/relationship_risk_graph.kuzu`). It is likewise a
 non-authoritative read-only projection. Runtime scoring reads only local Kuzu `Entity` and

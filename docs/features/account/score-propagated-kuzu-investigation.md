@@ -65,7 +65,10 @@ its MySQL connect/read timeout is capped at the same boundary. The fixed 2,000-n
 expansion caps, source timeout or discovery budget set `truncated=true` rather than claiming complete
 coverage. The final request-scoped Kuzu projection is additionally capped at 400 entities and 1,200
 relationships, ordered by subject then propagated investigation score; cap application also sets
-`truncated=true`.
+`truncated=true`. Kuzu's native temporary graph is executed in one short-lived child process at a time,
+with a four-second hard deadline. A busy, failed or timed-out child is terminated and the server returns
+the same capped result from the pure propagation scorer with a `kuzuProjection` coverage failure instead
+of retaining native Kuzu memory in the 8777 process.
 CRM hierarchy adds explanatory ownership/direct-parent/top-group bridges at `0.05`; these preserve
 the auditable path without allowing a large distribution tree to amplify risk. The separately verified
 direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. A top-IB
@@ -89,8 +92,9 @@ read-only legacy boundary. Its aggregate query runs only for the seed account in
 ## Tests and acceptance
 
 Unit tests cover recursive source expansion, one final Kuzu materialization, bounded same-IP timeout,
-Kuzu projection caps, threshold stopping, noisy-OR, de-duplication, cycles, same-IP and Toxic evidence
-ledger construction, and risk colour. Repository tests cover request-scoped Kuzu materialization/readback.
+Kuzu projection caps and process timeout termination, threshold stopping, noisy-OR, de-duplication,
+cycles, same-IP and Toxic evidence ledger construction, and risk colour. Repository tests cover
+request-scoped Kuzu materialization/readback.
 API tests cover account-route replacement, page request targeting and invalid thresholds. Source tests use
 mocks; they make no live writes.
 

@@ -383,4 +383,6 @@ five seconds; opposite directions additionally require at least 80% lot similari
 limits account discovery to 100 and 12 seconds, limits each evidence source wait to six seconds and
 the MT5 shared-LastIP follow-up to three seconds, and limits opt-in Toxic checks to two high-score
 accounts. It caps the final temporary Kuzu projection at 400 entities and 1,200 relationships. It marks
-truncation or query-budget exhaustion.
+truncation or query-budget exhaustion. Native Kuzu materialization is isolated to one four-second child
+process; a busy, failed or timed-out materialization returns the capped pure propagation result with
+explicit coverage rather than affecting other account-service work.

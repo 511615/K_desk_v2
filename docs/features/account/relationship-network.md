@@ -63,7 +63,10 @@ the follow-up MT5 same-server `LastIP` read has its own three-second budget and 
 as timed out when less request time remains. Late sources are returned as explicit partial coverage
 rather than blocking the page. Before request-scoped Kuzu materialization, the visible projection is
 bounded to 400 entities and 1,200 relationships, prioritizing the subject and highest propagated
-scores; exceeding either cap sets `truncated=true`.
+scores; exceeding either cap sets `truncated=true`. Native Kuzu materialization runs in a one-at-a-time
+child process with a four-second hard deadline, so a native allocation or stall cannot retain memory in
+the 8777 account-service process. If that child is busy, fails or times out, the response preserves the
+capped pure propagation result and records `kuzuProjection` coverage failure.
 `discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Every account evidence
 read uses the lesser of its six-second source budget and the remaining request-wide discovery budget,
 so a late source cannot extend a near-complete request by another full source timeout. Toxic checks are

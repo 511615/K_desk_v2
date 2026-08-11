@@ -140,7 +140,19 @@ class AccountRelationshipRiskService:
         projection_entities, projection_relationships, projection_truncated = self._bounded_projection(
             latest_scored["entities"], latest_scored["relationships"],
         )
-        scored = self._projection_scorer(projection_entities, projection_relationships, threshold)
+        try:
+            scored = self._projection_scorer(projection_entities, projection_relationships, threshold)
+            if not isinstance(scored, dict):
+                raise RuntimeError("Kuzu projection returned an invalid response")
+        except Exception as exc:
+            coverage.append({
+                "source": "kuzuProjection", "status": "failed", "reason": str(exc), "account": login,
+            })
+            scored = {
+                "source": "risk-propagation-fallback",
+                "account": login,
+                **propagate_scores(projection_entities, projection_relationships, threshold=threshold),
+            }
         discovery_truncated = bool(pending)
         scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated or projection_truncated
         scored["summary"]["discoveryAccountCount"] = len(visited)
