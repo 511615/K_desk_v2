@@ -229,6 +229,12 @@ production launcher while it remains off `main`. The development checkout is
 `main`, another Full verification from the production checkout and a pushed `main`. Only after the
 second verification may the 8777 account service or copy-pool Producer be restarted from `main`.
 Runtime snapshots, credentials, terminals and logs stay outside both Git histories.
+`start_prod.ps1` must not accept a listener merely because it uses the expected FastAPI module and
+port. It reads that listener's local `/health/ready` profile; a non-production or unreadable K_desk
+listener is stopped at its Uvicorn supervisor before the production process is started. The launcher
+then requires both web readiness checks plus the interactive/discovery Worker checks. This avoids a
+dev-profile 8777 process accepting durable K-line jobs while 8766 and the production Worker are
+absent.
 
 ## Release sequence
 

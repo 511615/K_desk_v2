@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "1fdc6da2efd5",
+  "registryVersion": "86c1c20348b6",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -582,6 +582,7 @@
         "src/kdesk/api/account_app.py",
         "src/kdesk/api/kline_app.py",
         "src/kdesk/worker/runner.py",
+        "scripts/start_prod.ps1",
         "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
         "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py",
         "legacy/tools/trade_kline_tool/API.md",
@@ -598,7 +599,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-07",
+      "last_verified_date": "2026-08-12",
       "document": "docs/features/kline/database-generation.md"
     },
     {

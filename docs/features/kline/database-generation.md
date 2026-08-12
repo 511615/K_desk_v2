@@ -4,11 +4,11 @@ title: Database K-line generation
 module: kline
 status: active
 apis: ["POST /api/kline/generate-from-db", "POST /api/uploads", "POST /api/jobs/{job_id}/generate", "GET /output/{name}"]
-code: [".env.example", "config/kline_quote_sources.example.json", "frontend/src/kdesk-theme.css", "frontend/src/pages/AccountPage.vue", "src/kdesk/domain/kline.py", "src/kdesk/application/kline_generation.py", "src/kdesk/application/kline_timeline_cache.py", "src/kdesk/infrastructure/quote_sources.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/API.md", "legacy/tools/trade_kline_tool/README.md"]
+code: [".env.example", "config/kline_quote_sources.example.json", "frontend/src/kdesk-theme.css", "frontend/src/pages/AccountPage.vue", "src/kdesk/domain/kline.py", "src/kdesk/application/kline_generation.py", "src/kdesk/application/kline_timeline_cache.py", "src/kdesk/infrastructure/quote_sources.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kline_app.py", "src/kdesk/worker/runner.py", "scripts/start_prod.ps1", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/API.md", "legacy/tools/trade_kline_tool/README.md"]
 tests: ["tests/test_api.py", "tests/test_kline.py", "tests/test_kline_timeline_cache.py", "tests/test_worker.py"]
 depends_on: ["JOB-RECOVERY-001", "ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-07
+last_verified_date: 2026-08-12
 ---
 
 # Database K-line generation
@@ -85,6 +85,11 @@ time and use hollow warning markers rather than moving to the next quote.
 Invalid uploads, unavailable quotes and unsafe paths fail explicitly. A failed symbol does not block
 accepted symbols; the job fails only when no symbol is accepted. Jobs survive web restart and retain
 structured failure details in the existing SQLite result JSON.
+The production launcher verifies any listener already occupying `8777` or `8766` through its local
+readiness profile before accepting it. A K_desk listener that is not the production profile is
+replaced together with its Uvicorn supervisor, then the complete production set (both web services,
+one interactive Worker and discovery Workers) must pass readiness. This prevents an accidentally
+started dev web process from accepting K-line jobs without a matching production Worker.
 An MT5 IPC initialization failure is reported as a structured source failure. The production launcher
 prevents the known stale-interactive-Terminal route by selecting the dedicated quote Terminal before
 the web and worker processes start.

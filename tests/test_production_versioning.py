@@ -29,3 +29,13 @@ def test_account_only_health_check_is_passed_as_a_named_switch() -> None:
 
     assert "@(& $healthScript -AccountOnly)" in launcher
     assert '$healthArguments += "-AccountOnly"' not in launcher
+
+
+def test_production_launcher_replaces_a_non_production_listener_before_accepting_the_port() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+
+    assert "Get-KDeskServiceMetadata" in launcher
+    assert '($metadata.profile -ne "prod")' in launcher
+    assert "Stop-Process -Id $rootProcess.ProcessId -Force" in launcher
+    assert "still unavailable after replacement" in launcher

@@ -87,6 +87,56 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 & $Python -m alembic -c (Join-Path $Root "alembic.ini") upgrade head
 if ($LASTEXITCODE -ne 0) { throw "Production database migration failed" }
 
+function Get-KDeskServiceMetadata {
+    param(
+        [Parameter(Mandatory = $true)][int]$Port
+    )
+
+    try {
+        return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health/ready" -TimeoutSec 2
+    } catch {
+        return $null
+    }
+}
+
+function Stop-NonProductionKDeskListener {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)][string]$ExpectedModule
+    )
+
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    foreach ($listener in $listeners) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+        if (-not $ExpectedModule -or $process.CommandLine -notlike "*$ExpectedModule*") {
+            throw "Port $Port is owned by an unexpected process: $($process.CommandLine)"
+        }
+        $metadata = Get-KDeskServiceMetadata -Port $Port
+        if ($null -eq $metadata -or -not $metadata.ok -or ($metadata.profile -ne "prod")) {
+            $profile = if ($null -eq $metadata) { "unavailable" } else { [string]$metadata.profile }
+            Write-Host "Replacing $Name listener on port $Port because its profile is '$profile', not production." -ForegroundColor Yellow
+            $rootProcess = $process
+            while ($rootProcess.ParentProcessId) {
+                $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($rootProcess.ParentProcessId)" -ErrorAction SilentlyContinue
+                if ($null -eq $parent -or $parent.CommandLine -notlike "*$ExpectedModule*") {
+                    break
+                }
+                $rootProcess = $parent
+            }
+            Stop-Process -Id $rootProcess.ProcessId -Force
+        }
+    }
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        if (-not @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).Count) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Port $Port is still unavailable after replacement."
+}
+
 function Start-KDeskProductionProcess {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -103,8 +153,12 @@ function Start-KDeskProductionProcess {
                     throw "Port $Port is owned by an unexpected process: $($process.CommandLine)"
                 }
             }
-            Write-Host "$Name already listening on port $Port"
-            return
+            $metadata = Get-KDeskServiceMetadata -Port $Port
+            if ($null -ne $metadata -and $metadata.ok -and ($metadata.profile -eq "prod")) {
+                Write-Host "$Name already listening on port $Port"
+                return
+            }
+            Stop-NonProductionKDeskListener -Name $Name -Port $Port -ExpectedModule $ExpectedModule
         }
     }
     Start-Process -FilePath $Python `
