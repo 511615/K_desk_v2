@@ -64,8 +64,9 @@ blank or unavailable; `A/TA` is rendered as `TA`. It never reads the local ledge
 local mark. `P` is blue,
 `T` amber, `TA` rose and `A` red; `T`/`TA`/`A` have an additional high-visibility ring. This badge
 is a local workflow mark, not a propagated score or a new risk conclusion.
-Account and IB nodes use a larger base radius than the first rollout so the in-node workflow marker,
-leaf badge and selected-node label remain legible at normal zoom.
+Account and IB nodes use a 2× larger base radius than the first rollout so the in-node database
+status, leaf badge and selected-node label remain legible at normal zoom. The node hit target grows
+with the rendered node size, so selecting a larger node does not require clicking its former centre.
 Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which

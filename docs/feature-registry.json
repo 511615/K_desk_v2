@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "4e8974864707",
+  "registryVersion": "57287a5c7b69",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -121,7 +121,6 @@
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_risk.py",
         "src/kdesk/domain/relationship_propagation.py",
-        "src/kdesk/infrastructure/database.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
         "src/kdesk/settings.py"
       ],

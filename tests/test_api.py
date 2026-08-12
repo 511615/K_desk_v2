@@ -286,6 +286,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "radarSweep.setAttribute('transform'" in page.text
     assert "radarSvg.setAttribute('viewBox'" in page.text
     assert "radarFan.setAttribute('d'" in page.text
+    assert "const NODE_SCALE=2" in page.text
+    assert "hitRadius=26/Math.max(view.scale,.1)" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text

@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/database.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
 last_verified_version: 2.1.0
@@ -50,10 +50,12 @@ same parent IB remain in their actual evidence family. Each evidence-family sele
 relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
-Account circles are slightly larger and include their local ledger action badge. Blank or `待定`
-actions render as `B`; `P`, `T`, `TA`, and `A` retain their stored shorthand, with a
-high-visibility ring for `T`, `TA`, and `A`. This local workflow badge is separate from both
-relationship evidence and propagated score.
+Account circles, IB glyphs, in-node status badges and terminal markers render at 2× the original
+canvas radius. Their click target scales with that visual size. The in-node badge reads only the
+routed risk-system database `Status`: blank or unavailable values render as `B`, while `P`, `T`,
+`TA`, and `A` retain their database shorthand, with a high-visibility ring for `T`, `TA`, and `A`.
+It never uses the local ledger action or local mark, and is separate from both relationship evidence
+and propagated score.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
