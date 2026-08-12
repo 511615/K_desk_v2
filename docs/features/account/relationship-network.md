@@ -40,7 +40,10 @@ an unexpanded node.
 Shape encodes entity state independently of score: a circle is a trading account, a hexagon is a concrete
 IB identity and a diamond is a threshold-stopped account. Arc-band color encodes evidence family,
 not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, same-name teal and
-Toxic rose. The page displays this mapping. Wheel zoom supports 10% through 250%; pointer-centred
+Toxic rose. The page displays this mapping and prints a short relationship label in each sufficiently
+wide arc-band. Selection never replaces that relation colour: it adds only a white dashed outline,
+so selecting a cluster cannot make unrelated evidence families appear to share the same colour.
+Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which
 relationship layer separates it from that account, then narrates the evidence-family route in business

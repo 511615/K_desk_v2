@@ -44,7 +44,9 @@ IB identities are hexagons and threshold-stopped accounts are green diamonds. A 
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
 this is distinct from a threshold-stopped node and explains a first-ring leaf. The enclosing relation
 band has a separate fixed palette (CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo,
-same-name teal and Toxic rose), shown in the UI. Zoom reaches 10% to permit every ring to fit; double
+same-name teal and Toxic rose), shown in the UI. Every sufficiently wide band carries its short
+relationship label. Selecting a cluster preserves its fixed relation colour and adds a white dashed
+outline instead of recolouring the band. Zoom reaches 10% to permit every ring to fit; double
 click re-fits the complete discovered graph.
 While its background expansion is in progress, the overview overlays a translucent rotating radar
 sweep. It appears only for the visible `后台扩散中` state, continues through polling, then hides when
