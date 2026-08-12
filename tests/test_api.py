@@ -293,6 +293,9 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function relationshipGroup" in page.text
     assert "function drawGroupBand" in page.text
     assert "function drawGroupLabel" in page.text
+    assert "function selectedBranch" in page.text
+    assert "function drawRelationEdge" in page.text
+    assert "后续扩散分支" in page.text
     assert "function relationTheme" in page.text
     assert "function nodeShape" in page.text
     assert "最低缩放 10%" in page.text

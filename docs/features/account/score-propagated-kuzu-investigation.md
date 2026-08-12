@@ -28,7 +28,9 @@ IB identity node once into concentric rings by logical account-depth. Within a r
 uses the full circumference rather than evidence-family sectors, so no discovered sibling is obscured
 by a coincident coordinate. Nodes sharing the same immediate evidence owner and family form a compact
 arc-band cluster, with visibly larger gaps between clusters; selecting a member highlights all members
-of that cluster. The overview reports its rendered node totals, has a deeper desktop canvas, initially
+of that cluster plus every already-discovered outward descendant. The highlighted branch draws one
+parent-to-child line per propagated relation, coloured and labelled with its evidence family. The overview
+reports its rendered node totals, has a deeper desktop canvas, initially
 fits all discovered rings, and re-fits after board resize. It shows the selected account's ancestry path
 rather than all edges. The lower detail view exposes that
 account's relationship families, evidence and peer accounts. It explains each layer as an account-to-

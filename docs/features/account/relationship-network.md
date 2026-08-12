@@ -27,7 +27,10 @@ depth. Nodes in each ring are distributed across the whole circle in determinist
 stacked into relationship-family sectors, so a high-cardinality relation cannot hide siblings behind one
 dot. Siblings that share both their evidence owner and evidence family are placed as a compact visual
 cluster with an enclosing arc-band; separate clusters have an angular gap. Selecting any member
-highlights the entire cluster while the detail panel remains focused on the selected account. The overview
+highlights the entire cluster and its complete discovered outward branch, while the detail panel remains
+focused on the selected account. Every highlighted parent-to-child segment is drawn in the fixed relation
+colour and carries a compact relation label, so the selected node's outer-ring descendants and their
+evidence family remain visible. The overview
 states the discovered-node and account totals, increases its desktop canvas height for deeper graphs,
 fits the initial view to the available board and re-fits after resize; it shows only the selected account's
 path instead of a full edge web. Selecting an overview account updates the detailed
