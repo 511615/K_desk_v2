@@ -25,9 +25,13 @@ The Kuzu page has a linked overview and detail view. The overview renders every 
 concrete IB-identity node exactly once in concentric rings by its logical account-to-account discovery
 depth. Nodes in each ring are distributed across the whole circle in deterministic order; they are not
 stacked into relationship-family sectors, so a high-cardinality relation cannot hide siblings behind one
-dot. The overview states the discovered-node and account totals, increases its desktop canvas height for
-deeper graphs, and shows only the selected account's path instead of a full edge web. Selecting an
-overview account updates the detailed account-to-evidence-to-peer view below.
+dot. Siblings that share both their evidence owner and evidence family are placed as a compact visual
+cluster with an enclosing arc-band; separate clusters have an angular gap. Selecting any member
+highlights the entire cluster while the detail panel remains focused on the selected account. The overview
+states the discovered-node and account totals, increases its desktop canvas height for deeper graphs,
+fits the initial view to the available board and re-fits after resize; it shows only the selected account's
+path instead of a full edge web. Selecting an overview account updates the detailed
+account-to-evidence-to-peer view below.
 The caption explicitly states whether the selected account is the problem-account start or which
 relationship layer separates it from that account, then narrates the evidence-family route in business
 terms. When an account has a direct relationship with the problem account, the displayed path uses that

@@ -26,8 +26,11 @@ There is no fixed hop limit: a node is visible when it has a contribution, but f
 its aggregate reaches the threshold. The overview projects every returned account node and concrete
 IB identity node once into concentric rings by logical account-depth. Within a ring, the stable layout
 uses the full circumference rather than evidence-family sectors, so no discovered sibling is obscured
-by a coincident coordinate; the overview also reports its rendered node totals. It shows the selected
-account's ancestry path rather than all edges. The lower detail view exposes that
+by a coincident coordinate. Nodes sharing the same immediate evidence owner and family form a compact
+arc-band cluster, with visibly larger gaps between clusters; selecting a member highlights all members
+of that cluster. The overview reports its rendered node totals, has a deeper desktop canvas, initially
+fits all discovered rings, and re-fits after board resize. It shows the selected account's ancestry path
+rather than all edges. The lower detail view exposes that
 account's relationship families, evidence and peer accounts. It explains each layer as an account-to-
 account business route from the problem account. A direct subject-to-account evidence edge takes priority
 over a longer ledger route in that presentation. For `直属上级 IB 本人交易账户`, the peer list is
