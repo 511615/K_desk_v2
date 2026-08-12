@@ -288,6 +288,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert 'id="overview"' in page.text
     assert "function accountDepth" in page.text
     assert "function renderOverview" in page.text
+    assert "function ringLayout" in page.text
+    assert "全部发现节点均单独布局" in page.text
     assert "function renderDetail" in page.text
     assert "function checkedLeaf" in page.text
     assert "已核查，无新增账户" in page.text

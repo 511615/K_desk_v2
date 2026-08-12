@@ -21,10 +21,13 @@ previous in-dialog fact graph is no longer the visible account relationship inte
 
 ## UI and behavior
 
-The Kuzu page has a linked overview and detail view. The overview renders account nodes in concentric
-rings by their logical account-to-account discovery depth, keeping descendants of the same strongest
-evidence family in one angular sector. It shows only the selected account's path, instead of a full
-edge web. Selecting an overview account updates the detailed account-to-evidence-to-peer view below.
+The Kuzu page has a linked overview and detail view. The overview renders every returned account and
+concrete IB-identity node exactly once in concentric rings by its logical account-to-account discovery
+depth. Nodes in each ring are distributed across the whole circle in deterministic order; they are not
+stacked into relationship-family sectors, so a high-cardinality relation cannot hide siblings behind one
+dot. The overview states the discovered-node and account totals, increases its desktop canvas height for
+deeper graphs, and shows only the selected account's path instead of a full edge web. Selecting an
+overview account updates the detailed account-to-evidence-to-peer view below.
 The caption explicitly states whether the selected account is the problem-account start or which
 relationship layer separates it from that account, then narrates the evidence-family route in business
 terms. When an account has a direct relationship with the problem account, the displayed path uses that
