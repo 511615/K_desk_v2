@@ -3907,7 +3907,7 @@ def query_same_name_logins(source: dict, account: str) -> list[str]:
 
 
 def account_crm_ib_relationship_payload(login: str, filters: dict | None = None) -> dict:
-    """Return the exact CRM-parent route and a collapsed top-IB aggregate for relationship graphs."""
+    """Return CRM routes plus a bounded, indexed direct-rebate branch for an IB owner."""
     filters = filters or {}
     login = normalize_text(login)
     platform = normalize_text(filters.get("platform")).upper()
@@ -3915,7 +3915,8 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
     include_ib_aggregate = bool(filters.get("includeIbAggregate", True))
     if not login.isdigit():
         raise ValueError("账号格式无效")
-    cache_key = ("crm-ib-relationship", login, platform, server, include_ib_aggregate)
+    # Version the key: pre-IB-branch payloads must not suppress the new direct-rebate read.
+    cache_key = ("crm-ib-relationship-v2", login, platform, server, include_ib_aggregate)
     cached = account_cache_get(cache_key)
     if cached is not None:
         return cached
@@ -3968,6 +3969,42 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                                 "server": normalize_text(account_source.get("server") or account_source.get("name")),
                             })
 
+                    # This is intentionally *not* a top-IB tree scan.  It asks one
+                    # indexed question: which trading accounts have actually produced
+                    # direct rebate records for the current CRM user?  Grouping returns
+                    # a single graph edge per account rather than raw rebate history.
+                    # The graph-wide 2,000-node guard remains authoritative; the extra
+                    # row reveals that this one IB branch exceeded its local safeguard.
+                    cur.execute(
+                        f"select trade_mt_login as Account, mt_server_code as ServerCode, "
+                        "count(distinct coalesce(trade_mt_deal, trade_mt_ticket)) as RebateOrderCount, "
+                        "max(create_time) as LastRebateAt "
+                        f"from `{crm_schema}`.`rebate_task_detail` "
+                        "where rebate_ib_id = %s "
+                        "group by trade_mt_login, mt_server_code "
+                        # Do not order this potentially broad group.  The exact IB-ID
+                        # index can stop at the 2,001st distinct account; deterministic
+                        # recency ordering would force a full temporary/filesort scan.
+                        "limit 2001",
+                        (crm_user_id,),
+                    )
+                    own_ib_rows = cur.fetchall() or []
+                    own_ib_direct_rebate_truncated = len(own_ib_rows) > 2_000
+                    own_ib_direct_rebate_accounts: list[dict] = []
+                    for item in own_ib_rows[:2_000]:
+                        account = normalize_text(item.get("Account"))
+                        account_server_code = normalize_text(item.get("ServerCode"))
+                        account_source = source_for_crm_route(crm_schema, account_server_code)
+                        if not account or not account_source:
+                            continue
+                        own_ib_direct_rebate_accounts.append({
+                            "account": account,
+                            "platform": normalize_text(account_source.get("platform")),
+                            "server": normalize_text(account_source.get("server") or account_source.get("name")),
+                            "rebateOrderCount": mysql_int(item.get("RebateOrderCount")),
+                            "lastRebateAt": normalize_text(item.get("LastRebateAt")),
+                        })
+
                     top_ib_account_count = top_ib_client_count = 0
                     if top_ib_user_id and include_ib_aggregate:
                         cur.execute(
@@ -3990,6 +4027,12 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                         "topIbUserId": top_ib_user_id or "",
                         "directIbAccounts": direct_ib_accounts,
                         "directIbAccountTruncated": direct_ib_account_truncated,
+                        # A user is represented as an expandable IB node only when
+                        # direct-rebate evidence actually exists; an empty indexed probe
+                        # is merely a fast negative check, not an IB classification.
+                        "ownIbDirectRebateChecked": bool(own_ib_rows),
+                        "ownIbDirectRebateAccounts": own_ib_direct_rebate_accounts,
+                        "ownIbDirectRebateTruncated": own_ib_direct_rebate_truncated,
                         "topIbAggregateAvailable": include_ib_aggregate,
                         "topIbAccountCount": top_ib_account_count,
                         "topIbClientCount": top_ib_client_count,

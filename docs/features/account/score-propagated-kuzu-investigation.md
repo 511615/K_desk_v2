@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
 last_verified_version: 2.1.0
@@ -23,7 +23,7 @@ trial.
 ## UI and behavior
 
 There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
-its aggregate reaches the threshold. The overview projects account nodes only into concentric rings
+its aggregate reaches the threshold. The overview projects account nodes and concrete IB identity nodes into concentric rings
 by their logical account-depth and keeps each strongest evidence family in an angular sector. It
 shows the selected account's ancestry path rather than all edges. The lower detail view exposes that
 account's relationship families, evidence and peer accounts. It explains each layer as an account-to-
@@ -89,9 +89,14 @@ the same capped result from the pure propagation scorer with a `kuzuProjection` 
 of retaining native Kuzu memory in the 8777 process.
 CRM hierarchy adds explanatory ownership/direct-parent/top-group bridges at `0.05`; these preserve
 the auditable path without allowing a large distribution tree to amplify risk. The separately verified
-direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. A top-IB
-aggregate never emits all downline accounts: a downline account appears only through a separate
-independent evidence family already governed by this scorer.
+direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. If a
+discovered account's CRM user is an IB, the graph renders an explicit `IB {CRM user}` identity node.
+`ib_identity` is lossless because it only exposes that same business identity. Each actual direct-rebate
+payee is emitted once through `ib_direct_rebate` at `0.70`, then can continue normal IP, EA, Copy,
+CRM and rebate discovery if its score meets the selected threshold. The CRM source uses one grouped
+IB-ID query and returns at most 2,000 direct payees; an over-limit branch is explicitly marked
+truncated rather than silently omitted. A top-IB aggregate remains aggregate-only and never emits
+all historic downline accounts.
 
 ## Loading, empty and failure behavior
 

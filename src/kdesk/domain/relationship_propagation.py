@@ -21,6 +21,12 @@ RELATIONSHIP_STRENGTHS = {
     "top_ib_group": 0.05,
     # This is the verified shortcut to an IB user's own trading account, not the IB's downline.
     "ib_direct_account": 0.60,
+    # An account and the CRM IB identity that owns it are the same investigation subject.
+    # Keep this identity bridge lossless; the next business relationship still decays normally.
+    "ib_identity": 1.00,
+    # A direct rebate payee is a real, bounded IB branch.  It is intentionally not the
+    # broad top-IB aggregate, so it may continue normal evidence discovery when eligible.
+    "ib_direct_rebate": 0.70,
     "login_ip": 0.90,
     "ea_feature": 0.80,
     "copy_order": 0.80,
@@ -105,9 +111,18 @@ def propagate_scores(
             target_id = edge["target"] if edge["source"] == current_id else edge["source"]
             if target_id == subject_id:
                 continue
+            # IB identity and direct-rebate edges are directional discovery branches.
+            # Letting a role/payee feed its score straight back would artificially
+            # amplify the originating account or IB merely because the route is visible.
+            if edge["type"] in {"ib_identity", "ib_direct_rebate"} and edge["source"] != current_id:
+                continue
             target = state[target_id]
             strength = RELATIONSHIP_STRENGTHS.get(edge["type"], 0.30)
-            contribution = min(residual * strength * layer_decay, 99.99)
+            # Identity nodes only make a CRM role explicit.  Applying the normal per-hop
+            # decay here would make the score depend on whether the role is rendered,
+            # rather than on a new evidence family.
+            decay = 1.0 if edge["type"] == "ib_identity" else layer_decay
+            contribution = min(residual * strength * decay, 99.99)
             family = edge["type"]
             existing = target["ledger"].get(family)
             if existing and existing["contribution"] >= contribution:

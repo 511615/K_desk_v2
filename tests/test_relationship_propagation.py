@@ -62,3 +62,26 @@ def test_cycle_terminates_and_renders_high_scores_with_an_urgent_risk_color() ->
     assert len(payload["entities"]) == 3
     assert _node(payload, "account:seed")["riskColor"] == "#ef4444"
     assert _node(payload, "account:ip-peer")["riskColor"] == "#ef4444"
+
+
+def test_ib_identity_keeps_the_owner_score_and_direct_rebate_accounts_can_expand() -> None:
+    entities = [
+        {"id": "account:seed", "label": "100", "isSubject": True},
+        {"id": "account:ib-owner", "label": "200", "isSubject": False},
+        {"id": "ib_user:23840", "label": "IB 23840", "isSubject": False},
+        {"id": "account:rebate-person", "label": "300", "isSubject": False},
+    ]
+    relationships = [
+        {"id": "seed-owner", "source": "account:seed", "target": "account:ib-owner", "type": "same_crm_user"},
+        {"id": "owner-ib", "source": "account:ib-owner", "target": "ib_user:23840", "type": "ib_identity"},
+        {"id": "ib-person", "source": "ib_user:23840", "target": "account:rebate-person", "type": "ib_direct_rebate"},
+    ]
+
+    payload = propagate_scores(entities, relationships, threshold=20)
+
+    owner = _node(payload, "account:ib-owner")
+    ib = _node(payload, "ib_user:23840")
+    rebate_person = _node(payload, "account:rebate-person")
+    assert ib["score"] == owner["score"]
+    assert rebate_person["score"] >= 20
+    assert rebate_person["expandable"] is True

@@ -252,6 +252,35 @@ def test_relationship_evidence_keeps_top_ib_members_collapsed_but_exposes_direct
     assert any("600" in evidence for evidence in group_edge["evidence"])
 
 
+def test_relationship_evidence_exposes_an_ib_owner_and_all_direct_rebate_accounts() -> None:
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        if name == "account_crm_ib_relationship_payload":
+            return {"records": [{
+                "crmSchema": "crm", "platform": "MT5", "server": "AC CN MT5", "crmUserId": 23840,
+                "ownIbDirectRebateChecked": True,
+                "ownIbDirectRebateAccounts": [
+                    {"account": "300", "platform": "MT5", "server": "AC CN MT5", "rebateOrderCount": 4, "lastRebateAt": "2026-08-10 10:00:00"},
+                    {"account": "301", "platform": "MT4", "server": "AC CN MT4", "rebateOrderCount": 2, "lastRebateAt": "2026-08-09 10:00:00"},
+                ],
+            }]}
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call)
+    try:
+        result = service.build("200", {"platform": "MT5", "server": "AC CN MT5"})
+    finally:
+        service.close()
+
+    ib = next(entity for entity in result["entities"] if entity["type"] == "ib_user" and entity["label"] == "IB 23840")
+    members = {entity["label"] for entity in result["entities"] if entity["type"] == "account"}
+    identity = next(edge for edge in result["relationships"] if edge["type"] == "ib_identity")
+    rebate_edges = [edge for edge in result["relationships"] if edge["type"] == "ib_direct_rebate"]
+    assert {"200", "300", "301"}.issubset(members)
+    assert identity["target"] == ib["id"]
+    assert len(rebate_edges) == 2
+    assert any("返佣关联成交：4 笔" in item for item in rebate_edges[0]["evidence"])
+
+
 def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None:
     evidence = _EvidenceNetwork()
 
@@ -366,6 +395,48 @@ def test_relationship_risk_expands_a_direct_ib_owned_account_but_not_a_top_ib_ag
     assert "200" in {entity["label"] for entity in result["entities"]}
     assert "顶级 IB 900" in {entity["label"] for entity in result["entities"]}
     assert not any(entity.get("type") == "account" and entity.get("label") == "600" for entity in result["entities"])
+
+
+def test_relationship_risk_expands_direct_rebate_accounts_from_the_visible_ib_node() -> None:
+    class _DirectRebateEvidenceNetwork:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            self.calls.append(login)
+            subject = {
+                "id": f"account:{login}", "type": "account", "label": login,
+                "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+            }
+            if login == "100":
+                owner = {**subject, "id": "account:200", "label": "200", "isSubject": False}
+                return {
+                    "entities": [subject, owner],
+                    "relationships": [{"id": "owner", "source": subject["id"], "target": owner["id"], "type": "same_crm_user", "label": "同 CRM", "evidence": []}],
+                    "relationTypes": [{"id": "same_crm_user", "label": "同 CRM"}], "coverage": [],
+                }
+            if login == "200":
+                ib = {"id": "ib_user:23840", "type": "ib_user", "label": "IB 23840", "isSubject": False}
+                member = {**subject, "id": "account:300", "label": "300", "isSubject": False}
+                return {
+                    "entities": [subject, ib, member],
+                    "relationships": [
+                        {"id": "identity", "source": subject["id"], "target": ib["id"], "type": "ib_identity", "label": "IB 身份确认", "evidence": []},
+                        {"id": "rebate", "source": ib["id"], "target": member["id"], "type": "ib_direct_rebate", "label": "IB 直接返佣人员", "evidence": []},
+                    ],
+                    "relationTypes": [
+                        {"id": "ib_identity", "label": "IB 身份确认"},
+                        {"id": "ib_direct_rebate", "label": "IB 直接返佣人员"},
+                    ], "coverage": [],
+                }
+            return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
+
+    evidence = _DirectRebateEvidenceNetwork()
+    service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=20)
+
+    assert evidence.calls == ["100", "200", "300"]
+    assert {"IB 23840", "300"}.issubset({entity["label"] for entity in result["entities"]})
 
 
 def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account() -> None:

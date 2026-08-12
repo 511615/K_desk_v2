@@ -220,7 +220,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert payload["threshold"] == 12
     assert {item["id"] for item in payload["relationTypes"]} == {
         "same_crm_user", "login_ip", "ea_feature", "copy_order", "copy_group", "rebate",
-        "crm_owner", "direct_ib", "ib_owned_account", "ib_direct_account", "top_ib_group",
+        "crm_owner", "direct_ib", "ib_owned_account", "ib_direct_account", "ib_identity", "ib_direct_rebate", "top_ib_group",
         "toxic_sync_same", "toxic_sync_opposite",
     }
     assert {item["type"] for item in payload["relationships"]} == {
@@ -255,7 +255,9 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "关系路径说明" in page.text
     assert "问题账户的直属上级 IB 本人名下交易账户" in page.text
     assert "directSubjectEdge" in page.text
-    assert "type === 'ib_direct_account'" in page.text
+    assert "ib_direct_account','ib_direct_rebate" in page.text
+    assert "ib_direct_rebate" in page.text
+    assert "graphNodes" in page.text
     assert "function queuePoll" in page.text
     assert "data.inProgress" in page.text
     assert "后台扩散中：已处理" in page.text

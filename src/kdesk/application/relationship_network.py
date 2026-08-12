@@ -14,6 +14,8 @@ RELATION_TYPES = {
     "direct_ib": "\u76f4\u5c5e IB",
     "ib_owned_account": "IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
     "ib_direct_account": "\u76f4\u5c5e IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
+    "ib_identity": "IB \u8eab\u4efd\u786e\u8ba4",
+    "ib_direct_rebate": "IB \u76f4\u63a5\u8fd4\u4f63\u4eba\u5458",
     "top_ib_group": "\u9876\u7ea7 IB \u7fa4\u7ec4\uff08\u805a\u5408\uff09",
     "login_ip": "登录 IP",
     "ea_feature": "EA / 路由特征",
@@ -249,7 +251,7 @@ class _EvidenceGraphBuilder:
             )
 
     def add_crm_ib_relationship(self, payload: dict[str, Any]) -> None:
-        """Add exact CRM-parent accounts, but retain broad top-IB membership as one aggregate."""
+        """Add exact CRM routes and a bounded, expandable direct-rebate IB branch."""
         for record in _items(payload.get("records")):
             crm_user_id = _text(record.get("crmUserId"))
             if not crm_user_id:
@@ -269,6 +271,61 @@ class _EvidenceGraphBuilder:
                 [route, f"CRM \u7528\u6237\uff1a{crm_user_id}"],
                 key=f"crm-owner|{self.subject_id}|{crm_user_id_entity}",
             )
+
+            # A CRM user may itself be an IB.  Unlike a top-IB aggregate, these are
+            # concrete direct rebate payees.  The legacy source reads them in one
+            # indexed grouped query and the returned account nodes can enter normal
+            # IP/EA/copy/CRM/rebate discovery when their propagated score qualifies.
+            own_ib_members = _items(record.get("ownIbDirectRebateAccounts"))
+            if bool(record.get("ownIbDirectRebateChecked")):
+                own_ib_entity = self.add_entity(
+                    "ib_user",
+                    f"IB {crm_user_id}",
+                    detail=(
+                        f"该 CRM 用户为 IB；已读取 {len(own_ib_members)} 个直接返佣人员交易账户"
+                        + ("（结果达到安全上限，未完整展开）" if bool(record.get("ownIbDirectRebateTruncated")) else "")
+                    ),
+                    key=f"{_text(record.get('crmSchema'))}|{crm_user_id}",
+                )
+                self.add_relationship(
+                    "ib_identity",
+                    self.subject_id,
+                    own_ib_entity,
+                    "IB 身份确认",
+                    [
+                        f"当前交易账户所属 CRM 用户 {crm_user_id} 也是 IB。",
+                        "IB 身份节点不衰减传播分；其直接返佣人员按独立返佣关系继续计算。",
+                    ],
+                    key=f"ib-identity|{self.subject_id}|{own_ib_entity}",
+                )
+                for member in own_ib_members:
+                    account = _text(member.get("account"))
+                    platform = _text(member.get("platform"))
+                    server = _text(member.get("server"))
+                    if not account or not platform or not server:
+                        continue
+                    account_id = self.add_entity(
+                        "account",
+                        account,
+                        platform=platform,
+                        server=server,
+                        detail="IB 直接返佣人员交易账户",
+                    )
+                    if account_id == self.subject_id:
+                        continue
+                    self.add_relationship(
+                        "ib_direct_rebate",
+                        own_ib_entity,
+                        account_id,
+                        "IB 直接返佣人员",
+                        [
+                            f"IB CRM 用户：{crm_user_id}",
+                            _route_text(platform, server),
+                            _number_text(member.get("rebateOrderCount")) and f"返佣关联成交：{_number_text(member.get('rebateOrderCount'))} 笔",
+                            _text(member.get("lastRebateAt")) and f"最近返佣记录：{_text(member.get('lastRebateAt'))}",
+                        ],
+                        key=f"ib-direct-rebate|{own_ib_entity}|{account_id}",
+                    )
 
             direct_ib_user_id = _text(record.get("directIbUserId"))
             direct_ib_entity = ""
