@@ -124,7 +124,7 @@ class KuzuRiskGraphRepository:
             try:
                 connection.execute(
                     "CREATE NODE TABLE Entity(id STRING, kind STRING, label STRING, platform STRING, server STRING, "
-                    "detail STRING, subject BOOL, PRIMARY KEY(id))"
+                    "detail STRING, database_status STRING, subject BOOL, PRIMARY KEY(id))"
                 )
                 connection.execute(
                     "CREATE REL TABLE Evidence(FROM Entity TO Entity, id STRING, kind STRING, label STRING, evidence STRING)"
@@ -132,7 +132,7 @@ class KuzuRiskGraphRepository:
                 for entity in entities:
                     connection.execute(
                         "CREATE (:Entity {id: $id, kind: $kind, label: $label, platform: $platform, server: $server, "
-                        "detail: $detail, subject: $subject})",
+                        "detail: $detail, database_status: $database_status, subject: $subject})",
                         {
                             "id": str(entity.get("id") or ""),
                             "kind": str(entity.get("type") or ""),
@@ -140,6 +140,7 @@ class KuzuRiskGraphRepository:
                             "platform": str(entity.get("platform") or ""),
                             "server": str(entity.get("server") or ""),
                             "detail": str(entity.get("detail") or ""),
+                            "database_status": str(entity.get("databaseStatus") or ""),
                             "subject": bool(entity.get("isSubject")),
                         },
                     )
@@ -216,12 +217,12 @@ class KuzuRiskGraphRepository:
             {
                 "id": str(row[0]), "type": str(row[1]), "label": str(row[2]),
                 "platform": str(row[3] or ""), "server": str(row[4] or ""),
-                "detail": str(row[5] or ""), "isSubject": bool(row[6]),
+                "detail": str(row[5] or ""), "databaseStatus": str(row[6] or ""), "isSubject": bool(row[7]),
             }
             for row in self._rows(
                 connection,
                 "MATCH (entity:Entity) RETURN entity.id, entity.kind, entity.label, entity.platform, "
-                "entity.server, entity.detail, entity.subject",
+                "entity.server, entity.detail, entity.database_status, entity.subject",
             )
         ]
 

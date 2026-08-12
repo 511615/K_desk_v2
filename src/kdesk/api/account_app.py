@@ -220,23 +220,6 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
 
-    def with_local_relationship_actions(payload: dict) -> dict:
-        """Add the current local ledger action without mutating a cached expansion payload."""
-        entities = payload.get("entities")
-        if not isinstance(entities, list):
-            return payload
-        account_labels = [str(item.get("label", "")) for item in entities if isinstance(item, dict) and item.get("type") == "account"]
-        actions = database.actions_by_account(account_labels)
-        return {
-            **payload,
-            "entities": [
-                {
-                    **item,
-                    "localAction": actions.get(str(item.get("label", "")), ""),
-                } if isinstance(item, dict) and item.get("type") == "account" else item
-                for item in entities
-            ],
-        }
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
             config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
@@ -488,7 +471,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             threshold,
             include_toxic,
         )
-        return await run_in_threadpool(with_local_relationship_actions, payload)
+        return payload
 
     @app.get("/kuzu-demo", response_class=HTMLResponse)
     async def kuzu_demo_page() -> HTMLResponse:
@@ -516,7 +499,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Kuzu 风险图谱未配置")
         try:
             payload = await run_in_threadpool(kuzu_risk.graph, threshold)
-            return await run_in_threadpool(with_local_relationship_actions, payload)
+            return payload
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Kuzu 风险图谱数据不存在") from exc
         except (RuntimeError, ValueError):

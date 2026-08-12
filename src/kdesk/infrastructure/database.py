@@ -178,23 +178,6 @@ class Database:
             row = session.scalar(select(AccountRow).where(AccountRow.account == str(login)).order_by(AccountRow.updated_at.desc()))
             return _to_domain(row) if row else None
 
-    def actions_by_account(self, accounts: list[str] | set[str] | tuple[str, ...]) -> dict[str, str]:
-        """Return the newest local ledger action for each requested account without scanning the ledger."""
-        requested = sorted({str(account).strip() for account in accounts if str(account).strip()})
-        actions: dict[str, str] = {}
-        # SQLite has a conservative bound on variables; Kuzu result pages can contain up to 2,000 nodes.
-        for offset in range(0, len(requested), 900):
-            batch = requested[offset:offset + 900]
-            with self._session_factory() as session:
-                rows = session.execute(
-                    select(AccountRow.account, AccountRow.action)
-                    .where(AccountRow.account.in_(batch))
-                    .order_by(AccountRow.account, AccountRow.updated_at.desc())
-                ).all()
-            for account, action in rows:
-                actions.setdefault(str(account), str(action or ""))
-        return actions
-
     def save_account(self, record: LedgerRecord, *, operation: str, before: dict | None = None) -> LedgerRecord:
         after = record.to_legacy()
         before = before or {}

@@ -1085,6 +1085,21 @@ class RiskPanelTests(unittest.TestCase):
         self.assertEqual(panel["sameName"][0]["localStatus"], "M")
         self.assertNotEqual(panel["sameName"][0]["localStatus"], "观察中")
 
+    def test_relationship_core_carries_database_statuses_without_local_ledger_marks(self):
+        source = {"server": "Live", "platform": "MT5", "kind": "mt5_deals"}
+        with patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "query_same_name_accounts", return_value=[
+                 {"account": "900001", "source": source}, {"account": "900002", "source": source},
+             ]), \
+             patch.object(app, "query_mt5_database_statuses", return_value={"900001": "TA", "900002": "P"}) as status_query:
+            payload = app.account_relationship_core_payload("900001", {"platform": "MT5", "server": "Live"})
+
+        panels = payload["riskPanels"]
+        self.assertEqual(panels["databaseStatus"], "TA")
+        self.assertEqual([row["databaseStatus"] for row in panels["sameName"]], ["TA", "P"])
+        status_query.assert_called_once()
+        self.assertEqual(set(status_query.call_args.args[1]), {"900001", "900002"})
+
     def test_mt4_risk_panel_uses_mt4_finance_and_shows_current_account(self):
         finance = {
             "currency": "USD", "displayCurrency": "USD", "balance": 100, "equity": 95,

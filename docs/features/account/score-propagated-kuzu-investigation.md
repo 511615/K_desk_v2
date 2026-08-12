@@ -82,9 +82,9 @@ The screen defaults to `include_toxic=false`; operators explicitly select the ch
 high-cost cross-platform order match. It returns `inProgress` and processed/pending account counts
 while the single-flight background expansion runs, then entities with `score`,
 `hops`, `expandable`, `riskLevel`, `riskColor`, and
-`scoreLedger`, alongside coverage and truncation. Account entities additively expose `localAction`,
-resolved from the newest indexed local ledger record for only the rendered account labels; it never
-changes the cached expansion payload. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
+`scoreLedger`, alongside coverage and truncation. Account entities additively expose `databaseStatus`,
+read from the account's routed MT4/MT5 risk-system database in the relationship-core status batch;
+it never uses a local ledger action or changes the cached expansion payload. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
 local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
 
 ## Data, routing and read-only constraints

@@ -160,6 +160,7 @@ class _EvidenceGraphBuilder:
         self.entities: list[dict[str, Any]] = []
         self.relationships: list[dict[str, Any]] = []
         self._entity_ids: set[str] = set()
+        self._entity_by_id: dict[str, dict[str, Any]] = {}
         self._relationship_ids: set[str] = set()
         self.subject_id = self.add_entity(
             "account",
@@ -177,15 +178,19 @@ class _EvidenceGraphBuilder:
         platform: str = "",
         server: str = "",
         detail: str = "",
+        database_status: str = "",
         is_subject: bool = False,
         key: str = "",
     ) -> str:
         stable_key = key or "|".join((entity_type, label, platform, server))
         entity_id = f"{entity_type}:{stable_key}"
         if entity_id in self._entity_ids:
+            existing = self._entity_by_id[entity_id]
+            if entity_type == "account" and database_status and not _text(existing.get("databaseStatus")):
+                existing["databaseStatus"] = database_status
             return entity_id
         self._entity_ids.add(entity_id)
-        self.entities.append({
+        entity = {
             "id": entity_id,
             "type": entity_type,
             "label": label,
@@ -193,8 +198,17 @@ class _EvidenceGraphBuilder:
             "server": server,
             "detail": detail,
             "isSubject": is_subject,
-        })
+        }
+        if entity_type == "account":
+            entity["databaseStatus"] = database_status
+        self.entities.append(entity)
+        self._entity_by_id[entity_id] = entity
         return entity_id
+
+    def set_database_status(self, entity_id: str, database_status: Any) -> None:
+        status = _text(database_status)
+        if status and entity_id in self._entity_by_id:
+            self._entity_by_id[entity_id]["databaseStatus"] = status
 
     def add_relationship(
         self,
@@ -222,6 +236,7 @@ class _EvidenceGraphBuilder:
 
     def add_same_name(self, payload: dict[str, Any]) -> None:
         panels = _mapping(payload.get("riskPanels"))
+        self.set_database_status(self.subject_id, panels.get("databaseStatus"))
         if not panels.get("available"):
             return
         for row in _items(panels.get("sameName")):
@@ -236,6 +251,7 @@ class _EvidenceGraphBuilder:
                 platform=platform,
                 server=server,
                 detail=_account_detail(row),
+                database_status=_text(row.get("databaseStatus")),
             )
             self.add_relationship(
                 "same_crm_user",

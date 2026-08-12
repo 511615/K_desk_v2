@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "17f176d61af0",
+  "registryVersion": "4e8974864707",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -55,7 +55,7 @@
         "src/kdesk/application/relationship_risk.py",
         "src/kdesk/api/account_app.py",
         "src/kdesk/api/kuzu_risk_page.py",
-        "src/kdesk/infrastructure/database.py",
+        "src/kdesk/infrastructure/kuzu_risk_graph.py",
         "legacy/apps/problem_account_registry/app.py"
       ],
       "tests": [

@@ -4,7 +4,7 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/database.py", "legacy/apps/problem_account_registry/app.py"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
 last_verified_version: 2.1.0
@@ -58,8 +58,10 @@ not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, 
 Toxic rose. The page displays this mapping and prints a short relationship label in each sufficiently
 wide arc-band. Selection never replaces that relation colour: it adds only a white dashed outline,
 so selecting a cluster cannot make unrelated evidence families appear to share the same colour.
-Each trading-account circle also has a small local-mark badge. It reads the local ledger's `action`
-value, using `B` only when the value is blank or `待定`; `A/TA` is rendered as `TA`. `P` is blue,
+Each trading-account circle also has a small database-status badge. It reads the risk-system database
+`Status` returned by the account's actual MT4/MT5 database route, using `B` only when that status is
+blank or unavailable; `A/TA` is rendered as `TA`. It never reads the local ledger's `action` or
+local mark. `P` is blue,
 `T` amber, `TA` rose and `A` red; `T`/`TA`/`A` have an additional high-visibility ring. This badge
 is a local workflow mark, not a propagated score or a new risk conclusion.
 Account and IB nodes use a larger base radius than the first rollout so the in-node workflow marker,
@@ -90,9 +92,9 @@ counts; its members are not automatically emitted as account nodes or expanded f
 request key is still expanding, `inProgress=true` and `progress` report processed/pending account
 counts; the page polls that snapshot rather than holding a web request open. Each entity includes
 score, colour, hop count, expansion state and score ledger. Account entities additively include
-`localAction`, populated from the newest matching local K_desk ledger row through a bounded indexed
-lookup; cached expansion data is not mutated. The former evidence-only response is replaced by this
-contract.
+`databaseStatus`, read in the same bounded database-status batch as the CRM-account mapping for the
+account's actual route; cached expansion data is not mutated. The former evidence-only response is
+replaced by this contract.
 
 ## Data, routing and read-only constraints
 
@@ -100,8 +102,8 @@ The service first reads the selected account's bounded CRM, EA, Copy and rebate 
 each account whose propagated score still meets the threshold. For MT5 it also reads
 same-server peers sharing the current `LastIP`. When the Kuzu page asks for it, high-priority nodes
 are additionally checked through the existing all-platform Toxic synchronised open/close matcher.
-Same-CRM account discovery uses a mapping-only legacy payload and never uses the full dashboard
-trade-history payload for a graph node.
+Same-CRM account discovery uses a mapping-only legacy payload plus a bounded `Login/Status` lookup
+on that same route; it never uses the full dashboard trade-history payload for a graph node.
 EA and Copy evidence retain their normal relationship facts but are marked internally as
 relationship-only reads, bypassing the legacy dashboard result cache so completed nodes do not
 accumulate large payloads in 8777.

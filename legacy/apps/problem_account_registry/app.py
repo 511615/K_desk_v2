@@ -4363,8 +4363,15 @@ def account_relationship_core_payload(login: str, filters: dict | None = None) -
     ), None)
     if not source:
         return {"ok": True, "riskPanels": {"available": False, "reason": "当前服务器尚未配置 CRM 关系数据源"}}
+    source_rows = query_same_name_accounts(source, login)
+    accounts = [login, *(normalize_text(item.get("account")) for item in source_rows)]
+    try:
+        status_query = query_mt5_database_statuses if source.get("kind") == "mt5_deals" else query_mt4_database_statuses
+        database_statuses = status_query(source, accounts)
+    except Exception:
+        database_statuses = {}
     rows = []
-    for item in query_same_name_accounts(source, login):
+    for item in source_rows:
         item_source = item.get("source") or {}
         account = normalize_text(item.get("account"))
         if not account:
@@ -4373,11 +4380,13 @@ def account_relationship_core_payload(login: str, filters: dict | None = None) -
             "account": account,
             "platform": normalize_text(item_source.get("platform")),
             "server": normalize_text(item_source.get("server")),
+            "databaseStatus": database_statuses.get(account, ""),
         })
     return {
         "ok": True,
         "riskPanels": {
             "available": True,
+            "databaseStatus": database_statuses.get(login, ""),
             "sameName": rows,
         },
     }
