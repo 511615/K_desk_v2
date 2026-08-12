@@ -27,9 +27,12 @@ its aggregate reaches the threshold. The overview projects every returned accoun
 IB identity node once into concentric rings by logical account-depth. Within a ring, the stable layout
 uses the full circumference rather than evidence-family sectors, so no discovered sibling is obscured
 by a coincident coordinate. Nodes sharing the same immediate evidence owner and family form a compact
-arc-band cluster, with visibly larger gaps between clusters; selecting a member highlights all members
-of that cluster plus every already-discovered outward descendant. The highlighted branch draws one
-parent-to-child line per propagated relation, coloured and labelled with its evidence family. The overview
+arc-band cluster, with visibly larger gaps between clusters; selecting a member resolves all connected
+members of that evidence family in both directions for symmetric facts (CRM, LastIP, EA, Copy,
+rebate, same-name and Toxic), then highlights every already-discovered outward descendant of the whole group.
+Hierarchy and direct-IB-rebate facts remain source-to-target. The highlighted branch draws one
+parent-to-child line per propagated relation, coloured and labelled with its evidence family; a
+directional fact receives an arrowhead. The overview
 reports its rendered node totals, has a deeper desktop canvas, initially
 fits all discovered rings, and re-fits after board resize. It shows the selected account's ancestry path
 rather than all edges. The lower detail view exposes that
