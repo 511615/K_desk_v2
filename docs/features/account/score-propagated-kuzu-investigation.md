@@ -37,10 +37,11 @@ makes `直属上级 IB 本人账户` unambiguous: the target is the source accou
 person's own trading account, not that IB's client. The overview
 reports its rendered node totals, has a deeper desktop canvas, initially
 fits all discovered rings, and re-fits after board resize. It shows the selected account's ancestry path
-while retaining every returned node's deduplicated parent chain to the problem account. Hidden CRM
-and evidence entities are collapsed into the visible account-to-account segment and its relationship
-label, so no returned account is visually disconnected from the investigation root. An entity without
-a resolvable root route is withheld rather than displayed as an unexplained candidate. The lower detail view exposes that
+plus only that account's direct evidence cluster and outward descendants. Hidden CRM and evidence
+entities are collapsed into the visible account-to-account segment and its relationship label. Accounts
+that merely share the problem account as an ancestor are not connected or highlighted as if they had a
+direct relationship. An entity without a resolvable root route is withheld rather than displayed as an
+unexplained candidate. The lower detail view exposes that
 account's relationship families, evidence and peer accounts. It explains each layer as an account-to-
 account business route from the problem account. A direct subject-to-account evidence edge takes priority
 over a longer ledger route in that presentation. For `直属上级 IB 本人交易账户`, the peer list is

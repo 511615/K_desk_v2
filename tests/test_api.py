@@ -291,8 +291,7 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert 'id="overview"' in page.text
     assert "function accountDepth" in page.text
     assert "function relationEdgeLabel" in page.text
-    assert "function rootChainEdges" in page.text
-    assert "每个节点均显示至主账户的关联链路" in page.text
+    assert "仅显示当前账户与主账户的路径和直接关系" in page.text
     assert "function localAction" in page.text
     assert "function drawActionBadge" in page.text
     assert "直属上级 IB 本人账户" in page.text

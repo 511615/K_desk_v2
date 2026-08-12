@@ -35,13 +35,13 @@ relation colour and carries a compact relation label; a directional segment name
 `来源账号 → 目标账号（关系）` form and carries an arrowhead. In particular, a line named
 `直属上级 IB 本人账户` means the target is the source account's direct-superior IB's own trading
 account; it does not mean the target is a downline client.
-Every returned visible account or concrete IB node also renders its deduplicated parent chain back to
-the problem account, even when it is not the currently selected node. Intermediate CRM/evidence
-entities remain hidden, but their relationship type is retained on the visible account-to-account
-segment. Thus a returned node is never displayed as an unconnected candidate. The selected branch
-adds any cluster/outward evidence that is not already part of this root chain.
-If a malformed response cannot resolve a visible entity's parent chain to the problem account, that
-entity is withheld from the Canvas rather than being presented as an unexplained candidate.
+The overview intentionally renders only the selected account's local evidence cluster and its
+deduplicated parent chain back to the problem account. Intermediate CRM/evidence entities remain
+hidden, but their relationship type is retained on the visible account-to-account segment. Siblings
+that merely share the problem account as an ancestor are neither joined nor highlighted as each
+other's relation. If a malformed response cannot resolve a selected visible entity's parent chain to
+the problem account, that entity is withheld from the Canvas rather than being presented as an
+unexplained candidate.
 The overview
 states the discovered-node and account totals, increases its desktop canvas height for deeper graphs,
 fits the initial view to the available board and re-fits after resize; it shows only the selected account's
