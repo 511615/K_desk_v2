@@ -50,7 +50,7 @@ logger = logging.getLogger("kdesk.account")
 # Relationship discovery can start multiple read-only CRM/MT source calls. Keep this
 # request-scoped budget short so one broad account cluster cannot monopolise 8777.
 RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS = 30.0
-RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 3.0
+RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 6.0
 
 
 class CopyPoolControlsRequest(BaseModel):

@@ -73,9 +73,9 @@ close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`.
 recursively reads relations while a node remains at or above the selected threshold. The live account
 path has a 30-second request-wide discovery budget, a 48-account remote-expansion cap and a
 150-account direct-IB-branch cap; these return an explicitly truncated partial graph rather than
-allowing one broad cluster to block 8777. Each account evidence source has a three-second wait budget.
+allowing one broad cluster to block 8777. Each account evidence source has a six-second wait budget.
 Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read has its own
-three-second source timeout; a source failure is retained in coverage but does not stop later eligible
+six-second source timeout; a source failure is retained in coverage but does not stop later eligible
 accounts. A started same-server `LastIP` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
 launching duplicate scans. Accounts in the same current-LastIP cohort skip repeat LastIP reads.

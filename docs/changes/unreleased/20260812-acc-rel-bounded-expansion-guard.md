@@ -15,7 +15,7 @@ remote evidence for all score-eligible accounts without a request-wide deadline.
 branch could retain large graph payloads and source work in the 8777 account-service process.
 
 Live account investigation now has a 30-second discovery deadline, at most 48 remote account
-expansions, three-second evidence waits, a 150-account direct-IB branch limit, and a 120-node / 360-edge
+expansions, six-second evidence waits, a 150-account direct-IB branch limit, and a 120-node / 360-edge
 Kuzu projection limit. It returns the evidence already read with an explicit truncation message.
 
 ## Impact and compatibility

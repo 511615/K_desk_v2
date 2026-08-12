@@ -10,7 +10,11 @@ import kuzu
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
-from kdesk.api.account_app import create_account_app
+from kdesk.api.account_app import (
+    RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
+    RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
+    create_account_app,
+)
 from kdesk.api.kline_app import create_kline_app
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
 from kdesk.settings import Settings
@@ -38,6 +42,15 @@ def make_test_settings(tmp_path: Path) -> Settings:
         frontend_dist=tmp_path / "frontend" / "dist",
         ui_mode="vue",
     )
+
+
+def test_account_relationship_runtime_keeps_ea_read_budget_inside_the_global_deadline(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    assert RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS == 30.0
+    assert RELATIONSHIP_SOURCE_TIMEOUT_SECONDS == 6.0
+    assert app.state.relationship_risk._discovery_timeout_seconds == 30.0
+    assert app.state.relationship_network._source_timeout_seconds == 6.0
 
 
 def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:
