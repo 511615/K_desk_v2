@@ -13,11 +13,11 @@ SharedIpLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 ToxicLookup = Callable[[str, dict[str, str]], dict[str, Any]]
 ProgressCallback = Callable[[dict[str, Any]], None]
 
-MAX_ACCOUNT_EXPANSIONS = 2_000
+MAX_ACCOUNT_EXPANSIONS = 48
 MAX_TOXIC_CHECKS = 2
 MAX_SHARED_IP_SECONDS = 3.0
-MAX_KUZU_PROJECTION_ENTITIES = 400
-MAX_KUZU_PROJECTION_RELATIONSHIPS = 1_200
+MAX_KUZU_PROJECTION_ENTITIES = 120
+MAX_KUZU_PROJECTION_RELATIONSHIPS = 360
 BUILTIN_RELATION_TYPES = [
     {"id": "toxic_sync_same", "label": "Toxic 同向同步开平仓"},
     {"id": "toxic_sync_opposite", "label": "Toxic 反向同步开平仓"},
@@ -36,8 +36,13 @@ class AccountRelationshipRiskService:
         *,
         discovery_timeout_seconds: float | None = None,
         shared_ip_timeout_seconds: float = MAX_SHARED_IP_SECONDS,
+        max_account_expansions: int = MAX_ACCOUNT_EXPANSIONS,
     ) -> None:
-        if (discovery_timeout_seconds is not None and discovery_timeout_seconds <= 0) or shared_ip_timeout_seconds <= 0:
+        if (
+            (discovery_timeout_seconds is not None and discovery_timeout_seconds <= 0)
+            or shared_ip_timeout_seconds <= 0
+            or max_account_expansions < 1
+        ):
             raise ValueError("relationship query timeouts must be positive")
         self._evidence_network = evidence_network
         self._projection_scorer = projection_scorer
@@ -45,6 +50,7 @@ class AccountRelationshipRiskService:
         self._toxic_lookup = toxic_lookup
         self._discovery_timeout_seconds = discovery_timeout_seconds
         self._shared_ip_timeout_seconds = shared_ip_timeout_seconds
+        self._max_account_expansions = max_account_expansions
 
     def build(
         self,
@@ -71,7 +77,7 @@ class AccountRelationshipRiskService:
             if self._discovery_timeout_seconds is not None
             else None
         )
-        while pending and len(visited) < MAX_ACCOUNT_EXPANSIONS:
+        while pending and len(visited) < self._max_account_expansions:
             if deadline is not None and time.monotonic() >= deadline:
                 query_budget_exhausted = True
                 coverage.append({
@@ -210,7 +216,9 @@ class AccountRelationshipRiskService:
             "coverage": coverage,
             "limitations": [
                 "关系图按调查优先级扩散；分数用于排序和决定是否继续读取下一层，不是违规或欺诈结论。",
-                f"已实际扩展 {len(visited)} 个达到阈值的账户；队列剩余 {len(pending)} 个。当前已接入 CRM、同服务器 LastIP、EA、跟单、返佣和 Toxic 同步订单边。",
+                f"已实际扩展 {len(visited)} 个达到阈值的账户；队列剩余 {len(pending)} 个。"
+                + (f" 已达到安全账户扩散上限 {self._max_account_expansions}，保留当前图谱而不再启动更多远程读取。" if pending and len(visited) >= self._max_account_expansions else "")
+                + " 当前已接入 CRM、同服务器 LastIP、EA、跟单、返佣和 Toxic 同步订单边。",
                 f"Toxic 全平台同步订单检查已执行 {toxic_checks} 次；仅检查调查分数不低于 30 的账户，单次请求最多 {MAX_TOXIC_CHECKS} 次，避免对低分外围节点进行无界全库扫描。",
                 f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "关系扩散已完成：所有达到阈值的节点均已处理，或已达到安全节点上限。",
                 *[

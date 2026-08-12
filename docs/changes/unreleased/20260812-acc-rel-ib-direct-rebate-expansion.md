@@ -22,9 +22,10 @@ accounts continue the existing IP, EA, Copy, CRM, rebate and optional Toxic disc
 ## Impact and compatibility
 
 The CRM read is read-only and uses an exact `rebate_ib_id` index predicate. It groups raw rebate
-rows to one account edge, has no time-history export, and limits one IB branch to 2,000 account
-nodes. A branch that exceeds this safety limit is retained as explicitly truncated; the existing
-global node, scoring and Kuzu projection safeguards remain in effect. Top-IB aggregates remain
+rows to one account edge, has no time-history export, and limits one IB branch to 150 account
+nodes. A branch that exceeds this safety limit is retained as explicitly truncated. Live discovery
+also has a 30-second budget, a 48-account remote-expansion cap and a 120-node Kuzu projection cap;
+the existing global node and scoring safeguards remain in effect. Top-IB aggregates remain
 aggregate-only and do not emit broad historic downlines.
 
 Two directed graph relations are added: `ib_identity` is a lossless account-to-IB role projection,

@@ -439,6 +439,45 @@ def test_relationship_risk_expands_direct_rebate_accounts_from_the_visible_ib_no
     assert {"IB 23840", "300"}.issubset({entity["label"] for entity in result["entities"]})
 
 
+def test_relationship_risk_stops_a_broad_ib_branch_at_the_account_safety_cap() -> None:
+    class _BroadIbEvidenceNetwork:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            self.calls.append(login)
+            subject = {
+                "id": f"account:{login}", "type": "account", "label": login,
+                "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+            }
+            if login != "100":
+                return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
+            members = [
+                {**subject, "id": f"account:{member}", "label": str(member), "isSubject": False}
+                for member in range(200, 270)
+            ]
+            return {
+                "entities": [subject, *members],
+                "relationships": [
+                    {"id": f"rebate-{member['label']}", "source": subject["id"], "target": member["id"],
+                     "type": "ib_direct_rebate", "label": "IB 直接返佣人员", "evidence": []}
+                    for member in members
+                ],
+                "relationTypes": [{"id": "ib_direct_rebate", "label": "IB 直接返佣人员"}], "coverage": [],
+            }
+
+    evidence = _BroadIbEvidenceNetwork()
+    service = AccountRelationshipRiskService(
+        evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []},
+        max_account_expansions=12,
+    )
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=20)
+
+    assert len(evidence.calls) == 12
+    assert result["discoveryTruncated"] is True
+    assert "安全账户扩散上限 12" in result["limitations"][1]
+
+
 def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account() -> None:
     class _TrackingEvidenceNetwork:
         def __init__(self) -> None:

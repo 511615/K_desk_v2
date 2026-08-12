@@ -47,6 +47,11 @@ from kdesk.settings import settings as default_settings
 
 logger = logging.getLogger("kdesk.account")
 
+# Relationship discovery can start multiple read-only CRM/MT source calls. Keep this
+# request-scoped budget short so one broad account cluster cannot monopolise 8777.
+RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS = 30.0
+RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 3.0
+
 
 class CopyPoolControlsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -199,7 +204,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     compat_workbook = config.legacy_compat_dir / "problematic_accounts.xlsx"
     ledger = LedgerService(database, compatibility_workbook=compat_workbook)
     legacy = LegacyBridge(config)
-    relationship_network = AccountRelationshipNetworkService(legacy.call)
+    relationship_network = AccountRelationshipNetworkService(
+        legacy.call,
+        source_timeout_seconds=RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
+    )
     historical_funds = HistoricalFundsService(legacy.call)
     kuzu_demo = KuzuRelationshipDemoRepository(config.kuzu_demo_path) if config.kuzu_demo_path else None
     kuzu_risk = KuzuRiskGraphRepository(config.kuzu_risk_path or config.runtime_dir / "relationship_risk_graph.kuzu")
@@ -208,6 +216,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         kuzu_risk.score_projection,
         lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
         lambda login, filters: _toxic_sync_payload(legacy, login, filters),
+        discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
     )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
     copy_pool = CopyPoolMonitorService(

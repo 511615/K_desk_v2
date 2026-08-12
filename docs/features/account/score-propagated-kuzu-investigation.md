@@ -70,18 +70,19 @@ Seed score is 100. An edge forwards `residual × relation strength × 0.96`; dup
 family retains its maximum, while independent families combine with noisy-OR. Same CRM is `0.95`,
 current LastIP `0.90`, EA and Copy order `0.80`, Copy group `0.75`, rebate `0.70`, Toxic same/open
 close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`. The live path
-recursively reads relations while a node remains at or above the selected threshold. It has no
-request-wide timer or shallow-hop limit; the 2,000-node and 10,000-score-expansion safety caps are
-the only graph-wide stops. Each account evidence source has a six-second wait budget.
+recursively reads relations while a node remains at or above the selected threshold. The live account
+path has a 30-second request-wide discovery budget, a 48-account remote-expansion cap and a
+150-account direct-IB-branch cap; these return an explicitly truncated partial graph rather than
+allowing one broad cluster to block 8777. Each account evidence source has a three-second wait budget.
 Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read has its own
-six-second source timeout; a source failure is retained in coverage but does not stop later eligible
+three-second source timeout; a source failure is retained in coverage but does not stop later eligible
 accounts. A started same-server `LastIP` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
 launching duplicate scans. Accounts in the same current-LastIP cohort skip repeat LastIP reads.
 Each legacy evidence family has one shared local execution lane, preventing timed-out sources from
-accumulating unbounded worker threads. The fixed 2,000-node and 10,000-score-expansion caps set
-`truncated=true` rather than claiming complete
-coverage. The final request-scoped Kuzu projection is additionally capped at 400 entities and 1,200
+accumulating unbounded worker threads. The fixed 2,000-node and 10,000-score-expansion caps remain
+as secondary graph guards and set `truncated=true` rather than claiming complete coverage. The final
+request-scoped Kuzu projection is additionally capped at 120 entities and 360
 relationships, ordered by subject then propagated investigation score; cap application also sets
 `truncated=true`. Kuzu's native temporary graph is executed in one short-lived child process at a time,
 with a four-second hard deadline. A busy, failed or timed-out child is terminated and the server returns
@@ -94,7 +95,7 @@ discovered account's CRM user is an IB, the graph renders an explicit `IB {CRM u
 `ib_identity` is lossless because it only exposes that same business identity. Each actual direct-rebate
 payee is emitted once through `ib_direct_rebate` at `0.70`, then can continue normal IP, EA, Copy,
 CRM and rebate discovery if its score meets the selected threshold. The CRM source uses one grouped
-IB-ID query and returns at most 2,000 direct payees; an over-limit branch is explicitly marked
+IB-ID query and returns at most 150 direct payees; an over-limit branch is explicitly marked
 truncated rather than silently omitted. A top-IB aggregate remains aggregate-only and never emits
 all historic downline accounts.
 

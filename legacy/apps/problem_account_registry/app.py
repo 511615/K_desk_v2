@@ -3916,7 +3916,7 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
     if not login.isdigit():
         raise ValueError("账号格式无效")
     # Version the key: pre-IB-branch payloads must not suppress the new direct-rebate read.
-    cache_key = ("crm-ib-relationship-v2", login, platform, server, include_ib_aggregate)
+    cache_key = ("crm-ib-relationship-v3", login, platform, server, include_ib_aggregate)
     cached = account_cache_get(cache_key)
     if cached is not None:
         return cached
@@ -3973,8 +3973,9 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                     # indexed question: which trading accounts have actually produced
                     # direct rebate records for the current CRM user?  Grouping returns
                     # a single graph edge per account rather than raw rebate history.
-                    # The graph-wide 2,000-node guard remains authoritative; the extra
-                    # row reveals that this one IB branch exceeded its local safeguard.
+                    # The graph-wide account guard remains authoritative.  A much smaller
+                    # branch limit keeps one IB from materialising thousands of otherwise
+                    # unrelated query candidates into the 8777 process at once.
                     cur.execute(
                         f"select trade_mt_login as Account, mt_server_code as ServerCode, "
                         "count(distinct coalesce(trade_mt_deal, trade_mt_ticket)) as RebateOrderCount, "
@@ -3985,13 +3986,13 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                         # Do not order this potentially broad group.  The exact IB-ID
                         # index can stop at the 2,001st distinct account; deterministic
                         # recency ordering would force a full temporary/filesort scan.
-                        "limit 2001",
+                        "limit 151",
                         (crm_user_id,),
                     )
                     own_ib_rows = cur.fetchall() or []
-                    own_ib_direct_rebate_truncated = len(own_ib_rows) > 2_000
+                    own_ib_direct_rebate_truncated = len(own_ib_rows) > 150
                     own_ib_direct_rebate_accounts: list[dict] = []
-                    for item in own_ib_rows[:2_000]:
+                    for item in own_ib_rows[:150]:
                         account = normalize_text(item.get("Account"))
                         account_server_code = normalize_text(item.get("ServerCode"))
                         account_source = source_for_crm_route(crm_schema, account_server_code)
