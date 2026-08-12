@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/database.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
 last_verified_version: 2.1.0
@@ -32,7 +32,9 @@ members of that evidence family in both directions for symmetric facts (CRM, Las
 rebate, same-name and Toxic), then highlights every already-discovered outward descendant of the whole group.
 Hierarchy and direct-IB-rebate facts remain source-to-target. The highlighted branch draws one
 parent-to-child line per propagated relation, coloured and labelled with its evidence family; a
-directional fact receives an arrowhead. The overview
+directional fact receives an arrowhead and names both endpoints in `来源 → 目标（关系）` form. This
+makes `直属上级 IB 本人账户` unambiguous: the target is the source account's direct-superior IB
+person's own trading account, not that IB's client. The overview
 reports its rendered node totals, has a deeper desktop canvas, initially
 fits all discovered rings, and re-fits after board resize. It shows the selected account's ancestry path
 rather than all edges. The lower detail view exposes that
@@ -44,6 +46,10 @@ same parent IB remain in their actual evidence family. Each evidence-family sele
 relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
+Account circles are slightly larger and include their local ledger action badge. Blank or `待定`
+actions render as `B`; `P`, `T`, `TA`, and `A` retain their stored shorthand, with a
+high-visibility ring for `T`, `TA`, and `A`. This local workflow badge is separate from both
+relationship evidence and propagated score.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
@@ -72,8 +78,10 @@ The screen defaults to `include_toxic=false`; operators explicitly select the ch
 high-cost cross-platform order match. It returns `inProgress` and processed/pending account counts
 while the single-flight background expansion runs, then entities with `score`,
 `hops`, `expandable`, `riskLevel`, `riskColor`, and
-`scoreLedger`, alongside coverage and truncation. `GET /api/kuzu-risk/graph?threshold=1..100`
-remains a static local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
+`scoreLedger`, alongside coverage and truncation. Account entities additively expose `localAction`,
+resolved from the newest indexed local ledger record for only the rendered account labels; it never
+changes the cached expansion payload. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
+local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
 
 ## Data, routing and read-only constraints
 

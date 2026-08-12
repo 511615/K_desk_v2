@@ -219,6 +219,24 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
     )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
+
+    def with_local_relationship_actions(payload: dict) -> dict:
+        """Add the current local ledger action without mutating a cached expansion payload."""
+        entities = payload.get("entities")
+        if not isinstance(entities, list):
+            return payload
+        account_labels = [str(item.get("label", "")) for item in entities if isinstance(item, dict) and item.get("type") == "account"]
+        actions = database.actions_by_account(account_labels)
+        return {
+            **payload,
+            "entities": [
+                {
+                    **item,
+                    "localAction": actions.get(str(item.get("label", "")), ""),
+                } if isinstance(item, dict) and item.get("type") == "account" else item
+                for item in entities
+            ],
+        }
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
             config.copy_pool_output_dir or config.legacy_output / "copy_live_demo_capital10k"
@@ -464,12 +482,13 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         threshold: float = Query(12, ge=1, le=100),
         include_toxic: bool = Query(False),
     ):
-        return relationship_expansion.get_or_start(
+        payload = relationship_expansion.get_or_start(
             _safe_login(login),
             legacy_filters(request.query_params),
             threshold,
             include_toxic,
         )
+        return await run_in_threadpool(with_local_relationship_actions, payload)
 
     @app.get("/kuzu-demo", response_class=HTMLResponse)
     async def kuzu_demo_page() -> HTMLResponse:
@@ -496,7 +515,8 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         if kuzu_risk is None:
             raise HTTPException(status_code=404, detail="Kuzu 风险图谱未配置")
         try:
-            return await run_in_threadpool(kuzu_risk.graph, threshold)
+            payload = await run_in_threadpool(kuzu_risk.graph, threshold)
+            return await run_in_threadpool(with_local_relationship_actions, payload)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Kuzu 风险图谱数据不存在") from exc
         except (RuntimeError, ValueError):

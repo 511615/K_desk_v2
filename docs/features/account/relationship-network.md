@@ -4,7 +4,7 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/database.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
 last_verified_version: 2.1.0
@@ -31,7 +31,10 @@ first resolves the selected evidence-family cluster bidirectionally for symmetri
 LastIP, EA, Copy, rebate, same-name and Toxic), then highlights every discovered outward child of that whole
 cluster. The detail panel remains focused on the selected account. Hierarchy and direct-IB-rebate
 relations retain their source-to-target direction. Every highlighted segment is drawn in the fixed
-relation colour and carries a compact relation label; directional segments also carry an arrowhead.
+relation colour and carries a compact relation label; a directional segment names both endpoints in
+`来源账号 → 目标账号（关系）` form and carries an arrowhead. In particular, a line named
+`直属上级 IB 本人账户` means the target is the source account's direct-superior IB's own trading
+account; it does not mean the target is a downline client.
 The overview
 states the discovered-node and account totals, increases its desktop canvas height for deeper graphs,
 fits the initial view to the available board and re-fits after resize; it shows only the selected account's
@@ -48,6 +51,10 @@ not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, 
 Toxic rose. The page displays this mapping and prints a short relationship label in each sufficiently
 wide arc-band. Selection never replaces that relation colour: it adds only a white dashed outline,
 so selecting a cluster cannot make unrelated evidence families appear to share the same colour.
+Each trading-account circle also has a small local-mark badge. It reads the local ledger's `action`
+value, using `B` only when the value is blank or `待定`; `A/TA` is rendered as `TA`. `P` is blue,
+`T` amber, `TA` rose and `A` red; `T`/`TA`/`A` have an additional high-visibility ring. This badge
+is a local workflow mark, not a propagated score or a new risk conclusion.
 Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which
@@ -73,8 +80,10 @@ counts; its members are not automatically emitted as account nodes or expanded f
 `relationships`, `relationTypes`, `summary`, source `coverage` and limitations. While the same
 request key is still expanding, `inProgress=true` and `progress` report processed/pending account
 counts; the page polls that snapshot rather than holding a web request open. Each entity includes
-score, colour, hop count, expansion state and score ledger. The former evidence-only response is
-replaced by this contract.
+score, colour, hop count, expansion state and score ledger. Account entities additively include
+`localAction`, populated from the newest matching local K_desk ledger row through a bounded indexed
+lookup; cached expansion data is not mutated. The former evidence-only response is replaced by this
+contract.
 
 ## Data, routing and read-only constraints
 

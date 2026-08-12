@@ -16,6 +16,7 @@ from kdesk.api.account_app import (
     create_account_app,
 )
 from kdesk.api.kline_app import create_kline_app
+from kdesk.domain.ledger import LedgerRecord
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
 from kdesk.settings import Settings
 
@@ -219,6 +220,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     monkeypatch.setattr(LegacyBridge, "call", fake_call)
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
+        app.state.database.import_account(LedgerRecord.from_mapping({"account": "302360", "action": "TA"}))
         response = client.get("/api/accounts/by-login/302360/relationship-network?platform=MT5&server=DBG%20MT5")
         payload = response.json()
         deadline = time.monotonic() + 1
@@ -243,6 +245,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert any(item["source"] == "copyGroups" and item["status"] == "failed" for item in payload["coverage"])
     assert "调查优先级" in payload["limitations"][0]
     assert all("score" in item and "riskColor" in item for item in payload["entities"])
+    assert next(item for item in payload["entities"] if item["label"] == "302360")["localAction"] == "TA"
     assert {name for name, _args in calls} == {
         "account_relationship_core_payload", "account_copy_origins_payload",
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
@@ -287,6 +290,10 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
     assert 'id="overview"' in page.text
     assert "function accountDepth" in page.text
+    assert "function relationEdgeLabel" in page.text
+    assert "function localAction" in page.text
+    assert "function drawActionBadge" in page.text
+    assert "直属上级 IB 本人账户" in page.text
     assert "function renderOverview" in page.text
     assert "function ringLayout" in page.text
     assert "全部发现节点均单独布局" in page.text
