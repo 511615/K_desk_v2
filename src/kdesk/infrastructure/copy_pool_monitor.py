@@ -211,6 +211,14 @@ class CopyPoolFileSnapshotRepository:
 
     def _public_recovery(self, raw: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
         state = self._recovery_state(raw.get("state"))
+        heartbeat = _iso_datetime(raw.get("heartbeat_at"))
+        recovery_heartbeat_stale = (
+            state == "running"
+            and heartbeat is not None
+            and (datetime.now(UTC) - heartbeat.astimezone(UTC)).total_seconds() > 15.0
+        )
+        if recovery_heartbeat_stale:
+            state = "failed"
         revision = str(request.get("revision") or "")
         public = {
             "revision": revision,
@@ -223,7 +231,11 @@ class CopyPoolFileSnapshotRepository:
             "heartbeatAt": _nullable_timestamp(raw.get("heartbeat_at")),
             "producerUnavailable": self._producer_unavailable(),
         }
-        error_code = str(raw.get("error_code") or "")
+        error_code = (
+            "recovery_heartbeat_stale"
+            if recovery_heartbeat_stale
+            else str(raw.get("error_code") or "")
+        )
         if state == "failed" and REASON_CODE_RE.fullmatch(error_code):
             public["errorCode"] = error_code
         return public
@@ -684,7 +696,13 @@ class CopyPoolFileSnapshotRepository:
             _read_json(self.demo_account_path), status, limit=order_limit
         )
 
-        declared_stale = _bool(status.get("runtime_snapshot_stale")) or (
+        failed_or_rebuilding_phase = str(status.get("phase") or "") in {
+            "pool_rebuild_failed",
+            "pool_rebuilding",
+            "rebuilding",
+            "reconnecting",
+        }
+        declared_stale = failed_or_rebuilding_phase or _bool(status.get("runtime_snapshot_stale")) or (
             "data_fresh" in status and not _bool(status.get("data_fresh"))
         )
         return {

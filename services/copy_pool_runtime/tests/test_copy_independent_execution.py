@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -424,6 +427,94 @@ class FakeHedgingMt:
 
 
 class IndependentExecutionServiceTests(unittest.TestCase):
+    def test_daily_rebuild_heartbeat_does_not_reopen_completed_recovery(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            service.status_path = root / "status.json"
+            service.runtime_recovery_status_path = root / "runtime_recovery_status.json"
+            service.status_path.write_text("{}", encoding="utf-8")
+            service.runtime_recovery_status_path.write_text(
+                json.dumps(
+                    {
+                        "revision": "done-revision",
+                        "state": "synchronized",
+                        "requested_at": NOW.isoformat(),
+                        "heartbeat_at": NOW.isoformat(),
+                        "completed_at": NOW.isoformat(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            service.runtime_recovery_revision = "done-revision"
+            service.runtime_recovery_requested_at = NOW.isoformat()
+            service.portfolio = SimpleNamespace(cursors={}, positions={})
+            service.db = SimpleNamespace(sources={})
+
+            service._write_runtime_heartbeat("rebuilding")
+
+            recovery = json.loads(
+                service.runtime_recovery_status_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(recovery["state"], "synchronized")
+            status = json.loads(service.status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status["phase"], "rebuilding")
+
+    def test_refresh_targets_isolates_one_product_risk_calculation_failure(self) -> None:
+        service = MultiSourceLiveService.__new__(MultiSourceLiveService)
+        service.portfolio = SimpleNamespace(
+            targets=lambda _equity: {
+                "AUDCAD": (0.02, 0.02, 0.0),
+                "XAUUSD": (0.01, 0.01, 0.0),
+            }
+        )
+        service.current_targets = {"AUDCAD": 0.0, "XAUUSD": 0.0}
+        service.current_target = 0.0
+        service.cycle_baseline_pnl = 0.0
+        service.cycle_loss_limit = lambda: 100.0
+        service.product_target_errors = {}
+        service.log = lambda *_args: None
+
+        class Mt:
+            @staticmethod
+            def account() -> object:
+                return SimpleNamespace(equity=10_000.0)
+
+            @staticmethod
+            def marked_pnl(_start: object) -> float:
+                return 0.0
+
+            @staticmethod
+            def signed_positions() -> dict[str, float]:
+                return {}
+
+            @staticmethod
+            def symbol(_product: str) -> object:
+                return SimpleNamespace(
+                    volume_min=0.01, volume_step=0.01, volume_max=1.0
+                )
+
+            @staticmethod
+            def stress_loss_per_lot(_product: str, _move: float) -> float:
+                return 100.0
+
+            @staticmethod
+            def margin_per_lot(_side: float, product: str) -> float:
+                if product == "AUDCAD":
+                    raise RuntimeError("MT5 margin calculation failed")
+                return 100.0
+
+        service.mt = Mt()
+
+        service._refresh_targets()
+
+        self.assertEqual(service.current_targets["AUDCAD"], 0.0)
+        self.assertEqual(service.current_targets["XAUUSD"], 0.01)
+        self.assertEqual(
+            service.product_target_errors,
+            {"AUDCAD": "product_risk_calculation_unavailable"},
+        )
+
     def test_spread_rejection_evidence_captures_account_currency_cost_and_quote(self) -> None:
         service = MultiSourceLiveService.__new__(MultiSourceLiveService)
         service.mt = SimpleNamespace(

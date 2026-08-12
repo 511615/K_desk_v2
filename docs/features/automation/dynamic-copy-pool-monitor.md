@@ -390,6 +390,20 @@ source snapshot before it can re-enter its normal live gates. The recovery remai
 dashboard remains stale until those gates finish; `synchronized` means the Producer has actually
 returned to live, not merely that 8777 accepted the request.
 
+A recovery revision is terminal once it reaches `synchronized` or `failed`; the daily rebuild
+heartbeat cannot reopen that revision as `running`. If a running recovery stops producing its
+one-second heartbeat for more than fifteen seconds, 8777 projects it as
+`failed / recovery_heartbeat_stale`, keeps the data banner stale and enables the operator to queue a
+new idempotent recovery. `pool_rebuild_failed`, rebuilding and reconnecting phases are stale even
+when the ordinary public snapshot heartbeat is still being written. A rebuild exception completes
+an active recovery as `failed / synchronization_failed` instead of leaving the button disabled.
+
+Product target refresh is fault-isolated. If MT5 cannot calculate margin or stress for one product,
+that product receives a zero executable target and the bounded
+`product_risk_calculation_unavailable` diagnostic; other products and the live data loop continue.
+One unpriced or temporarily unavailable symbol therefore cannot leave the entire pool permanently
+in `pool_rebuild_failed`.
+
 ## Data, routing and read-only constraints
 
 The monitor reads local files from `KDESK_COPY_POOL_OUTPUT_DIR`, defaulting to

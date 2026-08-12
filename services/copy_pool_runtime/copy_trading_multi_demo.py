@@ -317,6 +317,7 @@ class MultiSourceLiveService(LiveService):
         self.runtime_recovery_status_path = self.output_dir / "runtime_recovery_status.json"
         self.runtime_recovery_revision = ""
         self.runtime_recovery_requested_at = ""
+        self.product_target_errors: dict[str, str] = {}
         self.last_intraday_refresh = 0.0
         self.last_rebuild_attempt = 0.0
         self.last_discovery_attempt = 0.0
@@ -540,7 +541,20 @@ class MultiSourceLiveService(LiveService):
         })
         atomic_json(self.status_path, payload)
         revision = getattr(self, "runtime_recovery_revision", "")
-        if revision:
+        recovery_active = False
+        if revision and self.runtime_recovery_status_path.exists():
+            try:
+                recovery = json.loads(
+                    self.runtime_recovery_status_path.read_text(encoding="utf-8")
+                )
+                recovery_active = (
+                    isinstance(recovery, Mapping)
+                    and str(recovery.get("revision") or "") == revision
+                    and str(recovery.get("state") or "") in {"queued", "running"}
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                recovery_active = False
+        if recovery_active:
             self._write_runtime_recovery_status(
                 "running",
                 revision=revision,
@@ -1694,7 +1708,12 @@ class MultiSourceLiveService(LiveService):
     ) -> None:
         if state not in {"queued", "running", "synchronized", "failed"}:
             raise ValueError("Invalid runtime recovery state.")
-        if error_code not in {"", "invalid_request", "connection_reset_failed"}:
+        if error_code not in {
+            "",
+            "invalid_request",
+            "connection_reset_failed",
+            "synchronization_failed",
+        }:
             error_code = "connection_reset_failed"
         now = beijing_now().isoformat()
         successful_sources = 0
@@ -2928,10 +2947,25 @@ class MultiSourceLiveService(LiveService):
             symbol = self.mt.symbol(product)
             step = float(symbol.volume_step)
             minimum = float(symbol.volume_min)
+            try:
+                max_lots = self.product_lot_cap(product, cycle)
+            except Exception as exc:
+                errors = getattr(self, "product_target_errors", {})
+                code = "product_risk_calculation_unavailable"
+                if errors.get(product) != code:
+                    self.log(
+                        f"Disabled {product} target because its MT5 risk calculation "
+                        f"is unavailable ({type(exc).__name__})."
+                    )
+                errors[product] = code
+                self.product_target_errors = errors
+                max_lots = 0.0
+            else:
+                getattr(self, "product_target_errors", {}).pop(product, None)
             proposed[product] = hysteresis_target(
                 raw.get(product, 0.0),
                 self.current_targets.get(product, 0.0),
-                max_lots=self.product_lot_cap(product, cycle),
+                max_lots=max_lots,
                 enter_lots=minimum,
                 exit_lots=minimum / 2.0,
                 lot_step=step,
@@ -3840,6 +3874,25 @@ class MultiSourceLiveService(LiveService):
             self.bootstrap()
         except Exception:
             self.phase = "pool_rebuild_failed"
+            revision = getattr(self, "runtime_recovery_revision", "")
+            if revision:
+                current_state = ""
+                try:
+                    current = json.loads(
+                        self.runtime_recovery_status_path.read_text(encoding="utf-8")
+                    )
+                    if isinstance(current, Mapping) and str(current.get("revision") or "") == revision:
+                        current_state = str(current.get("state") or "")
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    current_state = ""
+                if current_state in {"queued", "running"}:
+                    self._write_runtime_recovery_status(
+                        "failed",
+                        revision=revision,
+                        requested_at=getattr(self, "runtime_recovery_requested_at", "")
+                        or beijing_now().isoformat(),
+                        error_code="synchronization_failed",
+                    )
             raise
         self.phase = "recovery_shadow"
         self.shadow_started = time.monotonic()

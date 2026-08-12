@@ -1063,7 +1063,7 @@ def test_dashboard_marks_declared_runtime_snapshot_stale_and_projects_recovery(
     repository.recovery_status_path.write_text(json.dumps({
         "revision": "recovery-1",
         "state": "reconnecting",
-        "heartbeat_at": "2026-08-10T01:02:00+00:00",
+        "heartbeat_at": datetime.now().astimezone().isoformat(),
     }), encoding="utf-8")
 
     payload = repository.dashboard(timeline_limit=30, event_limit=10, order_limit=10)
@@ -1072,6 +1072,46 @@ def test_dashboard_marks_declared_runtime_snapshot_stale_and_projects_recovery(
     assert payload["sourceAgeSeconds"] < 5.0
     assert payload["recovery"]["state"] == "running"
     assert payload["recovery"]["revision"] == "recovery-1"
+
+
+def test_dashboard_marks_failed_pool_phase_stale_without_waiting_for_heartbeat_age(
+    tmp_path: Path,
+) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+    status = json.loads(repository.status_path.read_text(encoding="utf-8"))
+    status["updated_at_beijing"] = datetime.now().astimezone().isoformat()
+    status["phase"] = "pool_rebuild_failed"
+    status.pop("runtime_snapshot_stale", None)
+    status.pop("data_fresh", None)
+    repository.status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    payload = repository.dashboard(timeline_limit=30, event_limit=10, order_limit=10)
+
+    assert payload["stale"] is True
+
+
+def test_dashboard_expires_recovery_when_its_running_heartbeat_stops(
+    tmp_path: Path,
+) -> None:
+    output = make_snapshot(tmp_path)
+    repository = CopyPoolFileSnapshotRepository(output)
+    repository.recovery_request_path.write_text(json.dumps({
+        "action": "reconnect_and_sync",
+        "revision": "stuck-recovery",
+        "requested_at": "2026-08-10T01:01:00+00:00",
+        "source": "8777-local-ui",
+    }), encoding="utf-8")
+    repository.recovery_status_path.write_text(json.dumps({
+        "revision": "stuck-recovery",
+        "state": "running",
+        "heartbeat_at": "2026-08-10T01:02:00+00:00",
+    }), encoding="utf-8")
+
+    payload = repository.dashboard(timeline_limit=30, event_limit=10, order_limit=10)
+
+    assert payload["recovery"]["state"] == "failed"
+    assert payload["recovery"]["errorCode"] == "recovery_heartbeat_stale"
 
 
 def test_dashboard_recovery_maps_legacy_completion_to_contract_state(tmp_path: Path) -> None:
