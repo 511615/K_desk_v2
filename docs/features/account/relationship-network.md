@@ -33,7 +33,10 @@ fits the initial view to the available board and re-fits after resize; it shows 
 path instead of a full edge web. Selecting an overview account updates the detailed
 account-to-evidence-to-peer view below.
 Node fill is a strict propagated-score gradient: the problem account is red, then high-score red,
-orange and lighter low-score nodes; a node stopped by the threshold is green regardless of score.
+orange, gold and yellow-green low-score nodes; a node stopped by the threshold is green regardless of
+score. A completed account with no discovered account child retains its score colour but receives a
+large dark-green `叶` badge, meaning it was queried and is a terminal investigation leaf rather than
+an unexpanded node.
 Shape encodes entity state independently of score: a circle is a trading account, a hexagon is a concrete
 IB identity and a diamond is a threshold-stopped account. Arc-band color encodes evidence family,
 not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, same-name teal and
