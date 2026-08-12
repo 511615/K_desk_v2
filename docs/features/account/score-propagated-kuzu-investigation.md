@@ -39,6 +39,11 @@ same parent IB remain in their actual evidence family. Each evidence-family sele
 relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
+The score fill and visual identity are kept independent: account circles use the strict score gradient,
+IB identities are hexagons and threshold-stopped accounts are green diamonds. The enclosing relation
+band has a separate fixed palette (CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo,
+same-name teal and Toxic rose), shown in the UI. Zoom reaches 10% to permit every ring to fit; double
+click re-fits the complete discovered graph.
 While its background expansion is in progress, the overview overlays a translucent rotating radar
 sweep. It appears only for the visible `后台扩散中` state, continues through polling, then hides when
 the task completes, fails or is idle. Its origin is continuously projected to the problem account's

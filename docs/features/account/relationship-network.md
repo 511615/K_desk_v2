@@ -32,6 +32,13 @@ states the discovered-node and account totals, increases its desktop canvas heig
 fits the initial view to the available board and re-fits after resize; it shows only the selected account's
 path instead of a full edge web. Selecting an overview account updates the detailed
 account-to-evidence-to-peer view below.
+Node fill is a strict propagated-score gradient: the problem account is red, then high-score red,
+orange and lighter low-score nodes; a node stopped by the threshold is green regardless of score.
+Shape encodes entity state independently of score: a circle is a trading account, a hexagon is a concrete
+IB identity and a diamond is a threshold-stopped account. Arc-band color encodes evidence family,
+not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, same-name teal and
+Toxic rose. The page displays this mapping. Wheel zoom supports 10% through 250%; pointer-centred
+zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which
 relationship layer separates it from that account, then narrates the evidence-family route in business
 terms. When an account has a direct relationship with the problem account, the displayed path uses that
