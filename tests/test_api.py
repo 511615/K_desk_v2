@@ -330,6 +330,10 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function drawRelationEdge" in page.text
     assert "relationshipGroup(to)" in page.text
     assert "selectedEdgeKey" in page.text
+    assert "expandedRelationGroups" in page.text
+    assert "展开当前关系群组" in page.text
+    assert "合并当前关系群组" in page.text
+    assert "群组成员" in page.text
     assert page.text.count("function renderOverview") == 1
     assert "function relationTheme" in page.text
     assert "function nodeShape" in page.text

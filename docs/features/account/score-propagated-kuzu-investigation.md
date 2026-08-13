@@ -153,6 +153,9 @@ Optional start/end datetime filters are forwarded to the read-only relationship 
 both blank means full history. Clicking a copy relation stores the selected edge and highlights both
 endpoints with a white dashed overlay without changing the relationship colour.
 Grouped representative edges also include a visible member count in their relationship label.
+Selecting an account uses the same grouped-edge policy as the overview: one relation line represents
+one parent/type community. The detail relation control can explicitly expand that community to show
+member edges, then merge it again without rerunning the database scan.
 
 ## Loading, empty and failure behavior
 
