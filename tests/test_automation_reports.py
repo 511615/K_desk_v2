@@ -137,7 +137,7 @@ def ea_payload() -> dict:
             "classification": "exact_ea",
             "countedAsEa": True,
             "expertId": 42,
-            "matchRule": "同服务器要求 Comment 与 ExpertID/MAGIC 同时相同；跨服务器按 Comment 相同匹配。",
+            "matchRule": "同平台所有服务器按完整 Comment 相同聚合；ExpertID/MAGIC 仅作为每笔订单的辅助证据。",
             "database": "DBG",
             "platform": "MT4",
             "server": "DBG MT4 CN1",

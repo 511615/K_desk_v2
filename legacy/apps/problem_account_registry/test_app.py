@@ -1645,7 +1645,7 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(groups[0]["peerAccounts"], 0)
         self.assertTrue(any("尚未找到其他账号" in item for item in groups[0]["limitations"]))
 
-    def test_ea_match_evidence_requires_expert_on_same_server_and_explains_every_match(self):
+    def test_ea_match_evidence_uses_comment_on_same_server_and_keeps_expert_as_evidence(self):
         seed = {
             **app.ea_comment_identity("GOLDFORGE", 777555),
             "originPlatform": "MT5",
@@ -1657,11 +1657,15 @@ class OrderListTests(unittest.TestCase):
         )
         self.assertEqual(
             same_server["matchClue"],
-            "同服务器：Comment「GOLDFORGE」相同，ExpertID 777555 相同",
+            "同服务器：Comment「GOLDFORGE」相同（ExpertID 777555）",
         )
-        self.assertIsNone(app.ea_match_evidence(
+        different_expert = app.ea_match_evidence(
             seed, {"platform": "MT5", "server": "AC GB MT5"}, 777000,
-        ))
+        )
+        self.assertEqual(
+            different_expert["matchClue"],
+            "同服务器：Comment「GOLDFORGE」相同（ExpertID 777000）",
+        )
 
         cross_server = app.ea_match_evidence(
             seed, {"platform": "MT5", "server": "DBG CN MT5"}, 123456,
@@ -1677,7 +1681,44 @@ class OrderListTests(unittest.TestCase):
         mt4_match = app.ea_match_evidence(
             mt4_seed, {"platform": "MT4", "server": "DBG MT4 CN1"}, 42,
         )
-        self.assertIn("MAGIC 42 相同", mt4_match["matchClue"])
+        self.assertIn("MAGIC 42", mt4_match["matchClue"])
+
+    def test_ea_groups_aggregate_one_comment_across_expert_ids(self):
+        runtime = SimpleNamespace(
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+        )
+        service = app.EaCommentGroupService(runtime)
+        seed_a = {
+            **app.ea_comment_identity("手动下单3", 119713, ea_hint=True),
+            "originDatabase": "AC", "originPlatform": "MT5", "originServer": "AC CN MT5",
+        }
+        seed_b = {
+            **app.ea_comment_identity("手动下单3", 103899, ea_hint=True),
+            "originDatabase": "DBG", "originPlatform": "MT5", "originServer": "DBG CN MT5",
+        }
+        def record(account, expert_id, profit):
+            return {
+                "signatureKey": seed_a["signatureKey"], "account": account, "comment": "手动下单3",
+                "database": "AC", "platform": "MT5", "server": "AC CN MT5", "source": "AC CN MT5",
+                "ticket": str(expert_id), "symbol": "XAUUSD", "openTime": "2026-08-13 06:08:48",
+                "closeTime": "2026-08-13 06:09:05", "volume": 0.16, "grossProfit": profit,
+                "commission": 0, "swap": 0, "taxes": 0, "netProfit": profit, "currency": "USD",
+                "isCentAccount": False, "matchedExpertId": expert_id,
+                "matchClue": f"同服务器：Comment「手动下单3」相同（ExpertID {expert_id}）",
+            }
+        groups = service._build_groups(
+            [seed_a, seed_b],
+            [record("247026", 119713, 3.68), record("201234", 103899, 8.12)],
+            "247026", source={"platform": "MT5", "server": "AC CN MT5"},
+        )
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["comment"], "手动下单3")
+        self.assertEqual(groups[0]["totals"]["accounts"], 2)
+        self.assertEqual({row["account"] for row in groups[0]["members"]}, {"247026", "201234"})
+        self.assertEqual(groups[0]["peerAccounts"], 1)
 
     def test_ea_dynamic_numeric_comment_query_uses_indexable_prefix_pattern(self):
         exact, dynamic = app.ea_comment_query_plan([

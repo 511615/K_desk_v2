@@ -68,7 +68,8 @@ def test_production_process_guards_skip_uninspectable_system_processes() -> None
     stopper = (root / "scripts" / "stop_prod.ps1").read_text(encoding="utf-8")
 
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in launcher
-    assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in health_check
+    assert "ConvertFrom-Json" in health_check
+    assert "runtime\\prod\\workers" in health_check
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper
 
 

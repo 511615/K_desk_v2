@@ -341,7 +341,10 @@ def ea_comment_identity(comment: object, expert_id: object = "", *, ea_hint: boo
     return {
         **result,
         "comment": value,
-        "signatureKey": f"exact:{value.casefold()}:{expert}",
+        # An exact Comment is the EA lookup key. ExpertID/MAGIC varies between
+        # accounts and is retained only as row-level evidence, never as a
+        # second grouping key.
+        "signatureKey": f"exact:{value.casefold()}",
         "signatureType": "exact-comment",
         "commentFamily": "",
         "expertId": expert,
@@ -358,8 +361,6 @@ def ea_match_evidence(seed: dict, target: dict, matched_expert_id: object) -> di
     matched_expert = _integer(matched_expert_id)
     dynamic = seed.get("signatureType") == "dynamic-template"
     possible_route = seed.get("classification") == "possible_copy_route"
-    if same_server and not possible_route and matched_expert != expected_expert:
-        return None
     if dynamic and not possible_route and expected_expert > 0 and matched_expert != expected_expert:
         return None
 
@@ -370,9 +371,8 @@ def ea_match_evidence(seed: dict, target: dict, matched_expert_id: object) -> di
     if same_server:
         clue = f"同服务器：{comment_label}「{comment_value}」相同"
         scope = "same-server-comment"
-        if not possible_route:
-            clue += f"，{expert_label} {expected_expert} 相同"
-            scope = "same-server-comment-expert"
+        if matched_expert > 0:
+            clue += f"（{expert_label} {matched_expert}）"
     else:
         clue = f"跨服务器：{comment_label}「{comment_value}」相同"
         scope = "cross-server-comment"
@@ -1424,6 +1424,15 @@ class EaCommentGroupService:
         limitations: list[str] | None = None,
     ) -> list[dict]:
         r = self.runtime
+        unique_seeds: list[dict] = []
+        seen_signatures: set[str] = set()
+        for seed in seeds:
+            signature = r.normalize_text(seed.get("signatureKey")).casefold()
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            unique_seeds.append(seed)
+        seeds = unique_seeds
         members = self._summarize_records(records, current_account)
         by_signature: dict[str, list[dict]] = defaultdict(list)
         for member in members:
@@ -1464,7 +1473,7 @@ class EaCommentGroupService:
                     "无有效开仓 Comment 时，同服务器至少共享 5 个完整 ExpertID，双向覆盖率至少 80%，且开仓时间、品种和方向一致；仅标记为可能是跟单路由。"
                     if seed.get("signatureType") == "expert-sequence"
                     else (
-                        "同服务器要求 Comment 与 ExpertID/MAGIC 同时相同；跨服务器按 Comment 相同匹配。"
+                        "同平台所有服务器按完整 Comment 相同聚合；ExpertID/MAGIC 仅作为每笔订单的辅助证据。"
                         if seed.get("signatureType") != "dynamic-template"
                         else (
                             "疑似跟单路由按结构模板匹配，不计入 EA 汇总。"
@@ -1514,10 +1523,17 @@ class EaCommentGroupService:
         r = self.runtime
         merged: dict[str, dict] = {}
         for seed in seeds:
+            signature = r.normalize_text(seed.get("signatureKey"))
+            # Exact Comments are global within a platform lookup: the same
+            # Comment must be one group even when its seed orders came from
+            # different logical servers. Dynamic templates remain scoped to
+            # their origin server because their variable suffix is not an
+            # exact EA identity.
+            origin_scope = "" if seed.get("signatureType") == "exact-comment" else r.normalize_text(seed.get("originServer")).casefold()
             key = "|".join([
                 r.normalize_text(seed.get("originPlatform")).casefold(),
-                r.normalize_text(seed.get("originServer")).casefold(),
-                r.normalize_text(seed.get("signatureKey")),
+                origin_scope,
+                signature,
             ])
             if key not in merged:
                 merged[key] = dict(seed)

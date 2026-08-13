@@ -16,8 +16,9 @@ last_verified_date: 2026-08-13
 ## Purpose and user entry
 
 The EA query next to copy query finds accounts using the same opening EA Comment and compares their
-profit and costs. Same-server members must also match MT5 ExpertID or MT4 MAGIC; cross-server exact
-named Comments remain comparable without requiring the platform-local identifier.
+profit and costs. One exact Comment is one group across every configured server on the selected
+platform. MT5 ExpertID and MT4 MAGIC are retained as per-order evidence only; they never split or
+exclude an exact-Comment member.
 The same dialog also retains structurally identified copy-route comments for investigation, labelled
 `可能是跟单路由`; they are evidence rows, not EA conclusions.
 When an MT5 account has EA execution evidence but no usable opening Comment, a separate same-server
@@ -29,8 +30,8 @@ evidence and never an EA-family conclusion.
 Groups list EA identity, database/server, accounts, profitable/losing counts, orders, lots and
 profit components. Dynamic groups may contain AC and DBG members in one table; every member carries
 its own database, platform and server, and account links retain that route.
-Every member also lists its observed ExpertID/MAGIC values and a Chinese match clue that states
-whether the row matched by same-server Comment plus identifier or by cross-server Comment.
+Every member also lists its observed ExpertID/MAGIC values and a Chinese match clue that states the
+exact Comment and the observed platform identifier, with the member's own server shown separately.
 Every EA group is an independent native disclosure section. Groups start expanded; selecting the
 group header collapses or expands only that group without issuing another request or changing the
 page-local payload cache.
@@ -78,8 +79,8 @@ The selected source identifies opening-Comment seeds. Optional `start` and `end`
 seed selection and peer aggregation by opening time. Every seed first performs an exact full-Comment
 read across configured physical sources on the same platform. MT5 uses only opening deals (`Entry=0`)
 and the Comment index; MT4 uses a bounded observed interval because COMMENT and MAGIC are not
-independently indexed. Same-server exact candidates match Comment and ExpertID/MAGIC; cross-server
-exact candidates match Comment. Dynamic fallback starts only when all exact providers completed
+independently indexed. Exact candidates on every server match the complete Comment only; ExpertID/MAGIC
+is evidence, not a membership gate. Dynamic fallback starts only when all exact providers completed
 successfully and fewer than two valid routed accounts remain for that seed. Provider failure is
 reported and never converted into a dynamic fallback.
 
@@ -130,8 +131,8 @@ EA grouping is isolated in `ea_comment_group.py` and exposed through the compati
 ## Tests and acceptance
 
 Tests cover all listed route and dynamic-EA templates, unknown-format learning, system/contact
-exclusions, exact-before-dynamic ordering, provider-error suppression, same-server identifier
-enforcement, cross-server evidence, MT4 MAGIC, AC index shards, member totals, UI labels and workbook
+exclusions, exact-before-dynamic ordering, provider-error suppression, cross-server exact-Comment
+aggregation, MT4 MAGIC evidence, AC index shards, member totals, UI labels and workbook
 EA-only KPIs. They also verify that a selected opening-time range is passed to subject-order reads,
 carried into peer seeds and rendered in the indexed MT5 opening-deal query. DBG CN MT5 account `2013674` remains the route-format regression: its `@8@...@7`
 structure must be displayed as `可能是跟单路由`, must not contribute to `eaSummary`, and must retain
