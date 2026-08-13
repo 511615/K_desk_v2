@@ -68,6 +68,8 @@ the clicked follower/master pair and lists the matched master and follower order
 keeps the identified master as the centre and shows every follower discovered by the existing copy
 query. It reuses the current page filters and does not add an unbounded order payload to the graph
 response or hold the expansion worker.
+The relationship-name mapping is defined once in the initial page script, so line labels, evidence
+cards, relationship-path narration and the loading/control wording cannot diverge at runtime.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;

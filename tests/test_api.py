@@ -296,6 +296,9 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "Toxic 同向开平仓时间匹配" in page.text
     assert "Toxic 反向开平仓时间匹配" in page.text
     assert "包含 Toxic 同向/反向开平仓时间匹配（较慢）" in page.text
+    assert "copy_order:'同步订单'" not in page.text
+    assert "包含 Toxic 同步订单（较慢）" not in page.text
+    assert page.text.count("const relationNames=") == 0
     assert "copyInspector" in page.text
     assert "fetchCopyInspection" in page.text
     assert "跟单订单明细" in page.text

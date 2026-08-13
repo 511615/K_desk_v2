@@ -84,6 +84,8 @@ line opens a modal without restarting or blocking graph expansion. The first tab
 read-only Copy-origin payload for the follower endpoint and shows only that line's follower-to-master
 matched orders: master order, follower order, symbol, open/close time, volume and P/L. The second tab
 uses the same identified master and payload to show its complete discovered follower-account summary.
+The label, detail card, slow-query control and loading state all use this same explicit vocabulary;
+the page does not retain the ambiguous `同步订单` wording or override labels after the initial render.
 Both tabs retain the page platform/server/symbol/time filters, state when the current scope has no
 row-level evidence and never write to an account, trade, database or MT service.
 Wheel zoom supports 10% through 250%; pointer-centred
