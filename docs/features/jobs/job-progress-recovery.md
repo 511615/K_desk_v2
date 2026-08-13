@@ -61,6 +61,9 @@ Readiness binds process ownership to the production runtime, not merely to a por
 `.venv`. A mismatch is replaced before jobs can be accepted.
 Process discovery skips unrelated protected Windows processes; a permission-denied system process
 cannot abort K_desk stop/start recovery.
+Each Worker publishes a short-lived JSON marker under `runtime/prod/workers` while alive. Production
+health checks use these queue-specific markers when Windows process command-line inspection is
+restricted, so readiness cannot silently pass without an interactive or discovery consumer.
 
 ## Business rules and units
 

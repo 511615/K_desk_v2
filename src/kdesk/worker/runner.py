@@ -104,6 +104,20 @@ class Worker:
         self.queue = queue
         self.kinds = self.QUEUE_KINDS.get(queue)
         self.running = True
+        self.worker_marker = settings.runtime_dir / "workers" / f"{queue}-{os.getpid()}.json"
+
+    def _write_worker_marker(self) -> None:
+        self.worker_marker.parent.mkdir(parents=True, exist_ok=True)
+        self.worker_marker.write_text(
+            json.dumps({"pid": os.getpid(), "profile": self.settings.profile, "queue": self.queue}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _remove_worker_marker(self) -> None:
+        try:
+            self.worker_marker.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _generator(self) -> Path:
         return self.settings.legacy_root / "tools" / "trade_kline_tool" / "generate_trade_kline_from_statement.py"
@@ -588,7 +602,7 @@ class Worker:
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
 
-    def run(self, *, once: bool = False, poll_seconds: float = 0.7) -> None:
+    def _run_loop(self, *, once: bool = False, poll_seconds: float = 0.7) -> None:
         self.database.create_schema()
         self.database.recover_interrupted_jobs(
             kinds=self.kinds,
@@ -626,6 +640,13 @@ class Worker:
                 )
             if once:
                 return
+
+    def run(self, *, once: bool = False, poll_seconds: float = 0.7) -> None:
+        self._write_worker_marker()
+        try:
+            self._run_loop(once=once, poll_seconds=poll_seconds)
+        finally:
+            self._remove_worker_marker()
 
 
 def main() -> None:

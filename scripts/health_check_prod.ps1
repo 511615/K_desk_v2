@@ -30,13 +30,14 @@ foreach ($check in $checks) {
 }
 
 if (-not $AccountOnly) {
-    $expectedPython = (Resolve-Path (Join-Path $PSScriptRoot "..\.venv\Scripts\python.exe")).Path
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
-        $_.CommandLine -like "*--profile prod*" -and $_.ExecutablePath -eq $expectedPython
+    $workerDirectory = Join-Path $Root "runtime\prod\workers"
+    $markers = @(Get-ChildItem -LiteralPath $workerDirectory -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_ | Get-Content -Raw | ConvertFrom-Json } catch { $null }
+    } | Where-Object {
+        $_ -and $_.profile -eq 'prod' -and $_.pid -and (Get-Process -Id ([int]$_.pid) -ErrorAction SilentlyContinue)
     })
     foreach ($queue in @("interactive", "discovery")) {
-        $count = @($processes | Where-Object { $_.CommandLine -like "*--queue $queue*" }).Count
+        $count = @($markers | Where-Object { $_.queue -eq $queue }).Count
         [pscustomobject]@{
             Name = "Production $queue worker"
             Ready = $count -gt 0

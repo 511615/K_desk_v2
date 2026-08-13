@@ -70,3 +70,14 @@ def test_production_process_guards_skip_uninspectable_system_processes() -> None
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in launcher
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in health_check
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper
+
+
+def test_worker_runtime_heartbeat_markers_are_used_for_queue_readiness() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runner = (root / "src" / "kdesk" / "worker" / "runner.py").read_text(encoding="utf-8")
+    health_check = (root / "scripts" / "health_check_prod.ps1").read_text(encoding="utf-8")
+
+    assert "worker_marker" in runner
+    assert "workers" in runner
+    assert "ConvertFrom-Json" in health_check
+    assert "runtime\\prod\\workers" in health_check
