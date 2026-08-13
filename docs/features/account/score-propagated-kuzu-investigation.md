@@ -55,7 +55,10 @@ canvas radius. Their click target scales with that visual size. The in-node badg
 routed risk-system database `Status`: blank or unavailable values render as `B`, while `P`, `T`,
 `TA`, and `A` retain their database shorthand, with a high-visibility ring for `T`, `TA`, and `A`.
 It never uses the local ledger action or local mark, and is separate from both relationship evidence
-and propagated score.
+and propagated score. A left-side extensible `风险表` presently provides one risk item: all rendered
+account nodes with database status `T`, `TA` or `A`. It is a sorted status index, not an additional
+risk calculation. Clicking a row selects the identical rendered node, highlighting only that node's
+existing graph path and local relation evidence.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;

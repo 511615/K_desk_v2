@@ -67,6 +67,12 @@ is a local workflow mark, not a propagated score or a new risk conclusion.
 Account and IB nodes use a 2× larger base radius than the first rollout so the in-node database
 status, leaf badge and selected-node label remain legible at normal zoom. The node hit target grows
 with the rendered node size, so selecting a larger node does not require clicking its former centre.
+The overview has a left-side extensible `风险表`. Its first risk item is deliberately narrow: it lists
+only rendered trading accounts whose routed database status is `T`, `TA` or `A`, ordered by propagated
+score then account number. Each row shows account, database status, relationship layer and score;
+selecting it selects and highlights the same graph node and existing graph path. No relationship,
+score or expansion inference is added by this table. Empty graphs and graphs without those statuses
+state this explicitly. Future risk items may add rows to this table without changing this status rule.
 Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which

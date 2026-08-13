@@ -288,6 +288,10 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "radarFan.setAttribute('d'" in page.text
     assert "const NODE_SCALE=2" in page.text
     assert "hitRadius=26/Math.max(view.scale,.1)" in page.text
+    assert 'id="riskTable"' in page.text
+    assert "function riskStatusAccounts" in page.text
+    assert "function renderRiskTable" in page.text
+    assert "['T','TA','A'].includes(databaseStatus(node))" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
