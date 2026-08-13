@@ -79,6 +79,13 @@ means the relationship came from matched copy-trading open and/or close orders; 
 group, but does not by itself prove every order was copied. Toxic edges are explicitly labeled as
 `Toxic 同向开平仓时间匹配` or `Toxic 反向开平仓时间匹配`, and the optional slow-query control says
 `包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
+Every visible `跟单订单匹配（开仓/平仓）` line is an on-demand evidence control. Clicking the
+line opens a modal without restarting or blocking graph expansion. The first tab reads the existing
+read-only Copy-origin payload for the follower endpoint and shows only that line's follower-to-master
+matched orders: master order, follower order, symbol, open/close time, volume and P/L. The second tab
+uses the same identified master and payload to show its complete discovered follower-account summary.
+Both tabs retain the page platform/server/symbol/time filters, state when the current scope has no
+row-level evidence and never write to an account, trade, database or MT service.
 Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which

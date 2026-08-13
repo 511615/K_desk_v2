@@ -20,6 +20,10 @@ The old detail page's copy query lists detected source accounts and their matche
 ## UI and behavior
 
 Each source is shown separately with matching ratio, source order samples and linked follower details.
+The relationship-network copy-edge inspector may also consume this same payload on demand. It keeps
+the clicked follower/master pair in its first tab and the identified master with all discovered
+followers in its second tab; it does not create a second matching implementation or preload the
+complete order detail into the relationship graph.
 The dialog provides optional opening-time start/end controls shared by CPT and Signal results.
 Blank dates retain complete-history behavior; an end earlier than the start is rejected before any
 request. The selected range is included in the page-local cache key; explicit account refresh or

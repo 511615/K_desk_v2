@@ -63,6 +63,11 @@ Edge captions and detail explanations use explicit evidence names: `跟单订单
 for matched copy-trading open/close orders, `跟单来源组匹配` for a shared identified source group,
 and `Toxic 同向开平仓时间匹配` / `Toxic 反向开平仓时间匹配` for same-direction or opposite-direction
 Toxic open/close time matches. The optional control is named `包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
+Clicking a visible copy-order edge opens an on-demand, read-only modal. Its first tab is scoped to
+the clicked follower/master pair and lists the matched master and follower orders. Its second tab
+keeps the identified master as the centre and shows every follower discovered by the existing copy
+query. It reuses the current page filters and does not add an unbounded order payload to the graph
+response or hold the expansion worker.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
