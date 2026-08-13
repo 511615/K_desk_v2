@@ -16,7 +16,7 @@ creating serial waves across the configured source routes.
 ## Impact
 
 The exact Comment and dynamic fallback stages now issue up to 12 bounded, read-only source reads in
-parallel. MT5 position completion uses 5,000-position batches rather than 300-position batches,
+parallel. MT5 position completion uses 1,000-position batches rather than 300-position batches,
 reducing round trips while retaining complete position/deal reconstruction. Query semantics, source
 routing, result fields and remote permissions are unchanged.
 
