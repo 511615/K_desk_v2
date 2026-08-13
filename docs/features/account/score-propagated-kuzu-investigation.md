@@ -146,6 +146,13 @@ IB-ID query and returns at most 150 direct payees; an over-limit branch is expli
 truncated rather than silently omitted. A top-IB aggregate remains aggregate-only and never emits
 all historic downline accounts.
 
+The overview renderer groups identical relationship branches into one representative path edge,
+while the detail panel retains member-level evidence. Every rendered node keeps its ancestry path
+back to the subject. Ring captions are positioned on their actual ring and empty rings are omitted.
+Optional start/end datetime filters are forwarded to the read-only relationship endpoint; leaving
+both blank means full history. Clicking a copy relation stores the selected edge and highlights both
+endpoints with a white dashed overlay without changing the relationship colour.
+
 ## Loading, empty and failure behavior
 
 The page shows Kuzu loading status, polls the background snapshot and reports processed/pending

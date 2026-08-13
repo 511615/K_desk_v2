@@ -305,8 +305,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "该单主的全部跟单账户" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
-    assert 'id="rangeStart"' in page.text
-    assert 'id="rangeEnd"' in page.text
+    assert "rangeStart.id='rangeStart'" in page.text
+    assert "rangeEnd.id='rangeEnd'" in page.text
     assert '留空=全历史' in page.text
     assert "query.set('start',rangeStart.value.replace('T',' '))" in page.text
     assert "query.set('end',rangeEnd.value.replace('T',' '))" in page.text
