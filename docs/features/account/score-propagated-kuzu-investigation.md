@@ -156,6 +156,7 @@ Grouped representative edges also include a visible member count in their relati
 Selecting an account uses the same grouped-edge policy as the overview: one relation line represents
 one parent/type community. The detail relation control can explicitly expand that community to show
 member edges, then merge it again without rerunning the database scan.
+The coloured community band is also a direct click target for the same expand/merge action.
 
 ## Loading, empty and failure behavior
 
