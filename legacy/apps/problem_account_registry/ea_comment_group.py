@@ -52,6 +52,7 @@ _DYNAMIC_DISCOVERY_CACHE_TTL = 60.0
 _DYNAMIC_DISCOVERY_CACHE: dict[tuple, tuple[float, frozenset[tuple[str, str]]]] = {}
 _DYNAMIC_DISCOVERY_CACHE_LOCK = threading.Lock()
 _GLOBAL_COMMENT_QUERY_MAX_WORKERS = 12
+_MT5_POSITION_QUERY_BATCH_SIZE = 5000
 _EXPERT_SEQUENCE_MIN_SHARED = 5
 _EXPERT_SEQUENCE_MIN_OVERLAP = 0.80
 _EXPERT_SEQUENCE_TIME_TOLERANCE_SECONDS = 2.0
@@ -1307,7 +1308,7 @@ class EaCommentGroupService:
         position_ids = sorted({int(key[1]) for key in positions if key[1].isdigit()})
         with r.mysql_trade_connect(source) as conn:
             with conn.cursor() as cur:
-                for batch in _batches(position_ids):
+                for batch in _batches(position_ids, _MT5_POSITION_QUERY_BATCH_SIZE):
                     position_placeholders = ",".join(["%s"] * len(batch))
                     cur.execute(
                         f"""

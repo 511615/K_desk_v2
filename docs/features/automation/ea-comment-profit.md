@@ -86,6 +86,8 @@ successfully and fewer than two valid routed accounts remain for that seed. Prov
 reported and never converted into a dynamic fallback.
 The global exact stage uses up to 12 independent read-only source workers, then the page-local and
 short server response caches reuse the completed result for the same account and filters.
+MT5 position completion uses bounded 5,000-position batches to avoid hundreds of round trips for a
+high-order account while retaining complete position/deal reconstruction.
 
 Fallback uses a bounded stable-prefix read and validates every candidate against the complete
 normalized template before MT5 Position or MT4 ticket reconstruction. The local ignored SQLite file
