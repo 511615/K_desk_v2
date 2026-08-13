@@ -152,6 +152,7 @@ back to the subject. Ring captions are positioned on their actual ring and empty
 Optional start/end datetime filters are forwarded to the read-only relationship endpoint; leaving
 both blank means full history. Clicking a copy relation stores the selected edge and highlights both
 endpoints with a white dashed overlay without changing the relationship colour.
+Grouped representative edges also include a visible member count in their relationship label.
 
 ## Loading, empty and failure behavior
 
