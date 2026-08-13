@@ -4,6 +4,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$expectedDatabase = Join-Path $Root "runtime\prod\kdesk.sqlite"
 
 $checks = @(
     @{ Name = "Account production"; Url = "http://127.0.0.1:8777/health/ready" }
@@ -16,7 +18,12 @@ if (-not $AccountOnly) {
 foreach ($check in $checks) {
     try {
         $response = Invoke-RestMethod -Uri $check.Url -TimeoutSec 10
-        [pscustomobject]@{ Name = $check.Name; Ready = $response.ok; Status = $response.status; Url = $check.Url }
+        $runtimeDatabase = if ($check.Name -eq "K-line production") { [string]$response.workerQueue } else { [string]$response.database }
+        $profileReady = $check.Name -eq "K-line production" -or $response.profile -eq "prod"
+        $runtimeReady = $runtimeDatabase -and ([IO.Path]::GetFullPath($runtimeDatabase) -eq [IO.Path]::GetFullPath($expectedDatabase))
+        $ready = [bool]$response.ok -and $profileReady -and $runtimeReady
+        $status = if ($ready) { $response.status } elseif (-not $profileReady) { "profile is not prod" } elseif (-not $runtimeReady) { "runtime database mismatch: $runtimeDatabase" } else { [string]$response.status }
+        [pscustomobject]@{ Name = $check.Name; Ready = $ready; Status = $status; Url = $check.Url }
     } catch {
         [pscustomobject]@{ Name = $check.Name; Ready = $false; Status = $_.Exception.Message; Url = $check.Url }
     }

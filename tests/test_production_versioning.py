@@ -36,6 +36,26 @@ def test_production_launcher_replaces_a_non_production_listener_before_accepting
     launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
 
     assert "Get-KDeskServiceMetadata" in launcher
-    assert '($metadata.profile -ne "prod")' in launcher
+    assert '($metadata.profile -ne "prod")' in launcher or 'if ($Port -eq 8777 -and $metadata.profile -ne "prod")' in launcher
     assert "Stop-Process -Id $rootProcess.ProcessId -Force" in launcher
     assert "still unavailable after replacement" in launcher
+
+
+def test_production_launcher_verifies_listener_owner_and_runtime_database() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+
+    assert "Get-KDeskSupervisorProcess" in launcher
+    assert "Test-KDeskProductionListener" in launcher
+    assert "$supervisor.ExecutablePath -ne $Python" in launcher
+    assert "$metadata.workerQueue" in launcher
+    assert "$metadata.database" in launcher
+
+
+def test_production_health_check_rejects_a_service_using_another_runtime_queue() -> None:
+    root = Path(__file__).resolve().parents[1]
+    health_check = (root / "scripts" / "health_check_prod.ps1").read_text(encoding="utf-8")
+
+    assert '$expectedDatabase = Join-Path $Root "runtime\\prod\\kdesk.sqlite"' in health_check
+    assert "$response.workerQueue" in health_check
+    assert "$response.database" in health_check

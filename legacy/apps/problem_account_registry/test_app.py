@@ -1608,6 +1608,43 @@ class OrderListTests(unittest.TestCase):
                     "system_excluded",
                 )
 
+    def test_ea_comment_classifier_keeps_meaningful_chinese_comment_when_mt5_marks_expert(self):
+        result = app.classify_ea_comment("手动下单3", ea_hint=True)
+
+        self.assertEqual(result["classification"], "exact_ea")
+        self.assertTrue(result["countedAsEa"])
+        self.assertIn("Comment", result["classificationEvidence"])
+
+    def test_ea_groups_keep_the_current_account_when_no_comment_peer_exists(self):
+        runtime = SimpleNamespace(
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            mysql_datetime_text=lambda value: str(value or ""),
+        )
+        service = app.EaCommentGroupService(runtime)
+        seed = {
+            **app.ea_comment_identity("手动下单3", 103899, ea_hint=True),
+            "originDatabase": "AC", "originPlatform": "MT5", "originServer": "AC CN MT5",
+            "currentOrders": 1, "currentVolume": 0.16, "currentNetProfit": -8.96,
+        }
+        record = {
+            "signatureKey": seed["signatureKey"], "account": "247026", "comment": "手动下单3",
+            "database": "AC", "platform": "MT5", "server": "AC CN MT5", "source": "AC CN MT5",
+            "ticket": "744751865", "symbol": "XAUUSD", "openTime": "2026-08-13 06:08:48",
+            "closeTime": "2026-08-13 06:09:05", "volume": 0.16, "grossProfit": -8.96,
+            "commission": 0, "swap": 0, "taxes": 0, "netProfit": -8.96, "currency": "USD",
+            "isCentAccount": False, "matchedExpertId": 103899,
+            "matchClue": "同服务器：Comment「手动下单3」相同，ExpertID 103899 相同",
+        }
+
+        groups = service._build_groups([seed], [record], "247026", source={"platform": "MT5", "server": "AC CN MT5"})
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["members"][0]["account"], "247026")
+        self.assertEqual(groups[0]["peerAccounts"], 0)
+        self.assertTrue(any("尚未找到其他账号" in item for item in groups[0]["limitations"]))
+
     def test_ea_match_evidence_requires_expert_on_same_server_and_explains_every_match(self):
         seed = {
             **app.ea_comment_identity("GOLDFORGE", 777555),

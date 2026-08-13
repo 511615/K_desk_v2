@@ -8,7 +8,7 @@ code: ["legacy/apps/problem_account_registry/ea_comment_group.py", "legacy/apps/
 tests: ["legacy/apps/problem_account_registry/test_app.py", "tests/test_api.py", "tests/test_automation_reports.py"]
 depends_on: ["ACC-SEARCH-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-04
+last_verified_date: 2026-08-13
 ---
 
 # EA comment group profit
@@ -50,6 +50,12 @@ groups remain expandable with their own member profit, order and cost detail and
 as excluded from the EA summary.
 Long ExpertID sequences are compacted to eight samples plus the complete count in the page table;
 the API and workbook retain the complete observed identifier list.
+An EA-execution order with a meaningful original opening Comment remains visible even when it has no
+other routed account peer. That group contains the current account, exposes `peerAccounts=0`, and
+states `当前账号已使用此 Comment，尚未找到其他账号`; it is an evidence result, not a risk conclusion.
+The EA workbook is intentionally a plain two-sheet data export: `EA汇总` and `EA明细`. It contains
+only column headers and result rows, with no title blocks, colors, conditional formatting, formulas
+or explanatory worksheet.
 
 ## API contract
 
@@ -59,6 +65,7 @@ It additively exposes group `expertId` and `matchRule`, plus member `expertIds`,
 Classification fields are additive: `classification`, `classificationLabel`, `countedAsEa`,
 `normalizedTemplate`, `stablePrefix`, `classificationEvidence` and `classificationSource`.
 `eaSummary` excludes possible copy routes; `possibleCopyRouteSummary` reports them separately.
+Groups additively expose `peerAccounts`, the number of other accounts in that Comment group.
 No-comment sequence groups additively expose `signatureType=expert-sequence`, `sharedExpertIds` and
 an `expertSequence` object containing the enforced minimum shared count, overlap threshold, time
 tolerance and full-group shared count.
@@ -136,6 +143,9 @@ identify accounts `2014201`, `2014202`, `2014137` and `2014195` through complete
 direction agreement, label the result `可能是跟单路由`, return no provider error and keep
 `eaSummary.groups=0`. Tests reject same-prefix-only IDs, fewer than five shared IDs, one-time batches,
 wrong direction and less than 80% bilateral overlap.
+AC CN MT5 account `247026` is the single-account Comment regression: its Expert orders with original
+Comments `手动下单1/2/3` must remain queryable and exportable even before another account uses the
+same Comment.
 
 ## Compatibility and deprecation
 

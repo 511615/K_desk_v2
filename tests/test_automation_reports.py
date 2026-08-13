@@ -217,18 +217,24 @@ def test_ea_report_preserves_account_ids_and_profit_reconciliation() -> None:
     )
     workbook = load_workbook(BytesIO(content), data_only=False)
 
-    assert workbook.sheetnames == ["EA汇总", "EA账户明细", "导出说明"]
-    assert workbook["EA汇总"]["A1"].value == "EA Comment 收益汇总 - 账号 700002"
-    detail_sheet = workbook["EA账户明细"]
-    assert detail_sheet["G4"].value == "700002"
-    assert detail_sheet["G4"].data_type == "s"
-    assert detail_sheet["B4"].value == "42"
-    assert "MAGIC 42 相同" in detail_sheet["C4"].value
-    assert detail_sheet["O4"].value == 18
-    assert detail_sheet["P4"].value == "=ROUND(O4-SUM(K4:N4),2)"
-    assert detail_sheet.tables["EaAccountDetails"].ref == "A3:V4"
-    assert workbook["导出说明"]["B5"].value == "净盈亏 = 毛盈亏 + 手续费/Fee + 利息/Swap + 税费。"
-    assert "Signal" not in workbook["导出说明"]["B5"].value
+    assert workbook.sheetnames == ["EA汇总", "EA明细"]
+    assert workbook["EA汇总"]["A1"].value == "EA Comment"
+    detail_sheet = workbook["EA明细"]
+    assert detail_sheet["G2"].value == "700002"
+    assert detail_sheet["G2"].data_type == "s"
+    assert detail_sheet["B2"].value == "42"
+    assert "MAGIC 42 相同" in detail_sheet["C2"].value
+    assert detail_sheet["O2"].value == 18
+
+
+def test_ea_report_is_a_plain_two_sheet_data_export() -> None:
+    content = build_ea_profit_report(ea_payload(), {"platform": "MT4", "server": "DBG MT4 CN1"})
+    workbook = load_workbook(BytesIO(content), data_only=False)
+
+    assert workbook.sheetnames == ["EA汇总", "EA明细"]
+    assert workbook["EA汇总"]["A1"].value == "EA Comment"
+    assert workbook["EA汇总"]["A1"].fill.fill_type is None
+    assert workbook["EA明细"]["G2"].value == "700002"
 
 
 def test_ea_report_excludes_possible_copy_routes_from_headline_kpis_but_keeps_detail() -> None:
@@ -245,8 +251,7 @@ def test_ea_report_excludes_possible_copy_routes_from_headline_kpis_but_keeps_de
     workbook = load_workbook(BytesIO(build_ea_profit_report(payload, {})), data_only=False)
 
     summary = workbook["EA汇总"]
-    assert summary["A7"].value == 1
-    assert summary["D7"].value == 1
-    assert summary["A12"].value == "[可能是跟单路由] 1/521/{SOURCE_ID}"
-    detail_values = [workbook["EA账户明细"].cell(row, 1).value for row in range(4, 6)]
+    assert summary.max_row == 3
+    assert summary["A3"].value == "[可能是跟单路由] 1/521/{SOURCE_ID}"
+    detail_values = [workbook["EA明细"].cell(row, 1).value for row in range(2, 4)]
     assert "[可能是跟单路由] 1/521/{SOURCE_ID}" in detail_values

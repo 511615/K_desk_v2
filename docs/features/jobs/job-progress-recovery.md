@@ -8,7 +8,7 @@ code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "sr
 tests: ["tests/test_api.py", "tests/test_ledger.py", "tests/test_worker.py", "frontend/src/pushDiscovery.spec.ts", "frontend/src/frontendUpdate.spec.ts", "frontend/src/bonusDiscovery.spec.ts", "frontend/src/positionRiskDiscovery.spec.ts", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: []
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-07
+last_verified_date: 2026-08-13
 ---
 
 # Persistent job progress and recovery
@@ -55,6 +55,10 @@ Jobs and events are stored in SQLite. Workers may call only governed read-only r
 Production launcher configuration is inherited by the web and Worker child processes. K-line jobs
 therefore use the same dedicated read-only quote Terminal after a controlled service restart; a
 stale interactive Terminal is not an implicit Worker fallback.
+Readiness binds process ownership to the production runtime, not merely to a port or FastAPI module:
+8777 must report `profile=prod` and the production `kdesk.sqlite`; 8766 must report that same file as
+`workerQueue`; each listener's Uvicorn supervisor must originate from the current main worktree's
+`.venv`. A mismatch is replaced before jobs can be accepted.
 
 ## Business rules and units
 

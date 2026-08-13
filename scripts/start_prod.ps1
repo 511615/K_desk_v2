@@ -99,6 +99,51 @@ function Get-KDeskServiceMetadata {
     }
 }
 
+function Get-KDeskSupervisorProcess {
+    param(
+        [Parameter(Mandatory = $true)]$Process,
+        [Parameter(Mandatory = $true)][string]$ExpectedModule
+    )
+
+    $supervisor = $Process
+    while ($supervisor.ParentProcessId) {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($supervisor.ParentProcessId)" -ErrorAction SilentlyContinue
+        if ($null -eq $parent -or $parent.CommandLine -notlike "*$ExpectedModule*") {
+            break
+        }
+        $supervisor = $parent
+    }
+    return $supervisor
+}
+
+function Test-KDeskProductionListener {
+    param(
+        [Parameter(Mandatory = $true)][int]$Port,
+        [Parameter(Mandatory = $true)]$Process,
+        [Parameter(Mandatory = $true)][string]$ExpectedModule
+    )
+
+    if ($Process.CommandLine -notlike "*$ExpectedModule*") {
+        throw "Port $Port is owned by an unexpected process: $($Process.CommandLine)"
+    }
+    $metadata = Get-KDeskServiceMetadata -Port $Port
+    if ($null -eq $metadata -or -not $metadata.ok) {
+        return $false
+    }
+    if ($Port -eq 8777 -and $metadata.profile -ne "prod") {
+        return $false
+    }
+    $runtimeDatabase = if ($Port -eq 8766) { [string]$metadata.workerQueue } else { [string]$metadata.database }
+    if (-not $runtimeDatabase -or [IO.Path]::GetFullPath($runtimeDatabase) -ne [IO.Path]::GetFullPath($env:KDESK_DATABASE)) {
+        return $false
+    }
+    $supervisor = Get-KDeskSupervisorProcess -Process $Process -ExpectedModule $ExpectedModule
+    if ($supervisor.ExecutablePath -ne $Python -or $supervisor.CommandLine -notlike "*$Root*") {
+        return $false
+    }
+    return $true
+}
+
 function Stop-NonProductionKDeskListener {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -112,18 +157,12 @@ function Stop-NonProductionKDeskListener {
         if (-not $ExpectedModule -or $process.CommandLine -notlike "*$ExpectedModule*") {
             throw "Port $Port is owned by an unexpected process: $($process.CommandLine)"
         }
-        $metadata = Get-KDeskServiceMetadata -Port $Port
-        if ($null -eq $metadata -or -not $metadata.ok -or ($metadata.profile -ne "prod")) {
+        if (-not (Test-KDeskProductionListener -Port $Port -Process $process -ExpectedModule $ExpectedModule)) {
+            $metadata = Get-KDeskServiceMetadata -Port $Port
+            $runtimeDatabase = if ($Port -eq 8766) { [string]$metadata.workerQueue } else { [string]$metadata.database }
             $profile = if ($null -eq $metadata) { "unavailable" } else { [string]$metadata.profile }
-            Write-Host "Replacing $Name listener on port $Port because its profile is '$profile', not production." -ForegroundColor Yellow
-            $rootProcess = $process
-            while ($rootProcess.ParentProcessId) {
-                $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($rootProcess.ParentProcessId)" -ErrorAction SilentlyContinue
-                if ($null -eq $parent -or $parent.CommandLine -notlike "*$ExpectedModule*") {
-                    break
-                }
-                $rootProcess = $parent
-            }
+            Write-Host "Replacing $Name listener on port $Port because profile '$profile', runtime '$runtimeDatabase', or launcher ownership is not production." -ForegroundColor Yellow
+            $rootProcess = Get-KDeskSupervisorProcess -Process $process -ExpectedModule $ExpectedModule
             Stop-Process -Id $rootProcess.ProcessId -Force
         }
     }
@@ -147,14 +186,11 @@ function Start-KDeskProductionProcess {
     if ($Port -gt 0) {
         $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
         if ($listeners.Count -gt 0) {
-            foreach ($listener in $listeners) {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
-                if (-not $ExpectedModule -or $process.CommandLine -notlike "*$ExpectedModule*") {
-                    throw "Port $Port is owned by an unexpected process: $($process.CommandLine)"
-                }
-            }
-            $metadata = Get-KDeskServiceMetadata -Port $Port
-            if ($null -ne $metadata -and $metadata.ok -and ($metadata.profile -eq "prod")) {
+            $productionListeners = @($listeners | Where-Object {
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)"
+                Test-KDeskProductionListener -Port $Port -Process $process -ExpectedModule $ExpectedModule
+            })
+            if ($productionListeners.Count -eq $listeners.Count) {
                 Write-Host "$Name already listening on port $Port"
                 return
             }

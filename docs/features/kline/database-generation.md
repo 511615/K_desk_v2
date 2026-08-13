@@ -86,10 +86,12 @@ Invalid uploads, unavailable quotes and unsafe paths fail explicitly. A failed s
 accepted symbols; the job fails only when no symbol is accepted. Jobs survive web restart and retain
 structured failure details in the existing SQLite result JSON.
 The production launcher verifies any listener already occupying `8777` or `8766` through its local
-readiness profile before accepting it. A K_desk listener that is not the production profile is
-replaced together with its Uvicorn supervisor, then the complete production set (both web services,
-one interactive Worker and discovery Workers) must pass readiness. This prevents an accidentally
-started dev web process from accepting K-line jobs without a matching production Worker.
+readiness runtime and current main-worktree Uvicorn supervisor before accepting it. 8777 must report
+`profile=prod` and production `kdesk.sqlite`; 8766 must report that same file as `workerQueue`.
+A K_desk listener with another runtime, owner or unreadable readiness is replaced together with its
+Uvicorn supervisor, then the complete production set (both web services, one interactive Worker and
+discovery Workers) must pass readiness. This prevents an accidentally started old/dev web process
+from accepting K-line jobs without a matching production Worker.
 An MT5 IPC initialization failure is reported as a structured source failure. The production launcher
 prevents the known stale-interactive-Terminal route by selecting the dedicated quote Terminal before
 the web and worker processes start.

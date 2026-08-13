@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "57287a5c7b69",
+  "registryVersion": "5c58311ca677",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -214,7 +214,7 @@
         "ACC-SEARCH-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-04",
+      "last_verified_date": "2026-08-13",
       "document": "docs/features/automation/ea-comment-profit.md"
     },
     {
@@ -560,7 +560,7 @@
       ],
       "depends_on": [],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-07",
+      "last_verified_date": "2026-08-13",
       "document": "docs/features/jobs/job-progress-recovery.md"
     },
     {

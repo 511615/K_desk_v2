@@ -305,6 +305,11 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "该单主的全部跟单账户" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
+    assert 'id="rangeStart"' in page.text
+    assert 'id="rangeEnd"' in page.text
+    assert '留空=全历史' in page.text
+    assert "query.set('start',rangeStart.value.replace('T',' '))" in page.text
+    assert "query.set('end',rangeEnd.value.replace('T',' '))" in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
     assert 'id="overview"' in page.text
     assert "function accountDepth" in page.text
@@ -323,6 +328,8 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function relationshipCluster" in page.text
     assert "function isDirectedRelation" in page.text
     assert "function drawRelationEdge" in page.text
+    assert "relationshipGroup(to)" in page.text
+    assert "selectedEdgeKey" in page.text
     assert page.text.count("function renderOverview") == 1
     assert "function relationTheme" in page.text
     assert "function nodeShape" in page.text
@@ -573,7 +580,7 @@ def test_copy_and_ea_profit_reports_download_from_the_main_service(tmp_path: Pat
     assert load_workbook(BytesIO(copy_response.content), read_only=True).sheetnames == ["单主汇总"]
     assert ea_response.status_code == 200
     assert 'filename="ea_profit_7798437_' in ea_response.headers["content-disposition"]
-    assert load_workbook(BytesIO(ea_response.content), read_only=True).sheetnames == ["EA汇总", "EA账户明细", "导出说明"]
+    assert load_workbook(BytesIO(ea_response.content), read_only=True).sheetnames == ["EA汇总", "EA明细"]
     filters = {"platform": "MT4", "server": "DBG MT4 CN1", "symbol": "", "start": "", "end": ""}
     assert sorted(name for name, _args in calls) == [
         "account_copy_origins_payload",

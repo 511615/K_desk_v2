@@ -403,71 +403,37 @@ def build_ea_profit_report(payload: dict, filters: dict, *, exported_at: str = "
     workbook = _base_workbook(f"EA 收益报表 - {account}")
     summary_sheet = workbook.active
     summary_sheet.title = "EA汇总"
-    _configure_sheet(summary_sheet)
     summary_headers = [
-        "EA", "查询账号EA标识", "数据库", "平台", "服务器", "账户数", "盈利账户", "亏损账户", "持平账户", "平仓订单", "手数",
-        "毛盈亏", "手续费/Fee", "利息/Swap", "税费", "净盈亏", "币种", "当前账号订单", "当前账号手数",
-        "当前账号净盈亏", "首次交易", "最后交易", "匹配规则", "数据限制",
+        "EA Comment", "EA标识", "数据库", "平台", "服务器", "账户数", "订单数", "手数",
+        "毛盈亏", "手续费/Fee", "利息/Swap", "税费", "净盈亏", "币种", "当前账号订单",
+        "当前账号净盈亏", "首次交易", "最后交易", "匹配规则",
     ]
-    _title(summary_sheet, f"EA Comment 收益汇总 - 账号 {account}", len(summary_headers))
-    row = _metadata(
-        summary_sheet, account, filters, _text(payload.get("refreshedAt")), exported_at, len(summary_headers)
-    )
     groups = payload.get("groups") if isinstance(payload.get("groups"), list) else []
-    ea_groups = [group for group in groups if group.get("countedAsEa", True)]
-    route_groups = [group for group in groups if group.get("classification") == "possible_copy_route"]
-    row = _section(summary_sheet, row, "范围概览", len(summary_headers))
-    kpis = [
-        ("EA Comment", len(ea_groups)),
-        ("可能是跟单路由", len(route_groups)),
-        ("EA 平仓订单", sum(_integer((group.get("totals") or {}).get("orders")) for group in ea_groups)),
-        ("EA 累计手数", sum(_number((group.get("totals") or {}).get("volume")) for group in ea_groups)),
-    ]
-    for index, (label, value) in enumerate(kpis):
-        column = 1 + index * 3
-        summary_sheet.cell(row, column, label).fill = LABEL_FILL
-        summary_sheet.cell(row, column).font = HEADER_FONT
-        summary_sheet.cell(row + 1, column, value).font = Font(name="Microsoft YaHei", bold=True, size=14, color="17365D")
-        summary_sheet.cell(row + 1, column).number_format = LOT_FORMAT if label == "累计手数" else COUNT_FORMAT
-    row += 3
-    row = _section(summary_sheet, row, "按 EA Comment 汇总", len(summary_headers))
-    summary_rows: list[list[object]] = []
-    limitations: list[str] = []
+    summary_sheet.append(summary_headers)
     for group in groups:
         totals = group.get("totals") or {}
-        group_limits = [_text(value) for value in (group.get("limitations") or []) if _text(value)]
-        if group.get("truncated"):
-            group_limits.append("命中记录达到安全上限")
-        limitations.extend(group_limits)
-        summary_rows.append([
+        summary_sheet.append([
             ("[可能是跟单路由] " if group.get("classification") == "possible_copy_route" else "")
             + _text(group.get("comment")), _text(group.get("expertId")),
             _text(group.get("database") or _joined(group.get("databases"), " / ")),
             _text(group.get("platform")), _text(group.get("server")),
-            _integer(totals.get("accounts")), _integer(totals.get("profitableAccounts")),
-            _integer(totals.get("losingAccounts")), _integer(totals.get("flatAccounts")),
-            _integer(totals.get("orders")), _number(totals.get("volume")), _number(totals.get("grossProfit")),
+            _integer(totals.get("accounts")), _integer(totals.get("orders")), _number(totals.get("volume")),
+            _number(totals.get("grossProfit")),
             _number(totals.get("commission")), _number(totals.get("swap")), _number(totals.get("taxes")),
             _number(totals.get("netProfit")), _text(totals.get("currency")), _integer(group.get("currentOrders")),
-            _number(group.get("currentVolume")), _number(group.get("currentNetProfit")),
-            _text(group.get("firstTime")), _text(group.get("lastTime")), _text(group.get("matchRule")),
-            "；".join(group_limits),
+            _number(group.get("currentNetProfit")), _text(group.get("firstTime")), _text(group.get("lastTime")),
+            _text(group.get("matchRule")),
         ])
-    _write_table(
-        summary_sheet, row, summary_headers, summary_rows, table_name="EaGroupSummary",
-        count_columns={6, 7, 8, 9, 10, 18}, lot_columns={11, 19}, money_columns={12, 13, 14, 15, 16, 20},
-    )
-    _set_widths(summary_sheet, [30, 16, 12, 11, 20, 11, 11, 11, 11, 12, 12, 14, 14, 14, 12, 14, 10, 14, 15, 18, 19, 19, 42, 38])
 
-    detail_sheet = workbook.create_sheet("EA账户明细")
-    _configure_sheet(detail_sheet)
+    detail_sheet = workbook.create_sheet("EA明细")
     detail_headers = [
         "EA", "EA标识", "匹配线索", "数据库", "平台", "服务器", "账户", "当前账号", "平仓订单", "手数", "毛盈亏", "手续费/Fee",
-        "利息/Swap", "税费", "净盈亏", "核对差异", "币种", "USC折算", "品种", "首次交易", "最后交易", "样例订单号",
+        "利息/Swap", "税费", "净盈亏", "币种", "USC折算", "品种", "首次交易", "最后交易", "样例订单号",
     ]
-    _title(detail_sheet, f"EA Comment 账户收益明细 - 账号 {account}", len(detail_headers))
-    detail_rows = [
-        [
+    detail_sheet.append(detail_headers)
+    for group in groups:
+        for member in (group.get("members") or []):
+            detail_sheet.append([
             ("[可能是跟单路由] " if group.get("classification") == "possible_copy_route" else "")
             + _text(group.get("comment")), _joined(member.get("expertIds")),
             _joined(member.get("matchClues"), "；") or _text(member.get("matchClue")),
@@ -476,33 +442,9 @@ def build_ea_profit_report(payload: dict, filters: dict, *, exported_at: str = "
             _text(member.get("account")), "是" if member.get("isCurrentAccount") else "否",
             _integer(member.get("orders")), _number(member.get("volume")), _number(member.get("grossProfit")),
             _number(member.get("commission")), _number(member.get("swap")), _number(member.get("taxes")),
-            _number(member.get("netProfit")), None, _text(member.get("currency")),
+            _number(member.get("netProfit")), _text(member.get("currency")),
             "是" if member.get("isCentAccount") else "否", _joined(member.get("symbols")),
             _text(member.get("firstTime")), _text(member.get("lastTime")), _joined(member.get("tickets")),
-        ]
-        for group in groups
-        for member in (group.get("members") or [])
-    ]
-    detail_start = 3
-    detail_end = _write_table(
-        detail_sheet, detail_start, detail_headers, detail_rows, table_name="EaAccountDetails",
-        account_columns={7, 22}, count_columns={9}, lot_columns={10}, money_columns={11, 12, 13, 14, 15},
-        check_columns={16}, current_account_column=8,
-    )
-    if detail_rows:
-        for row_index in range(detail_start + 1, detail_end + 1):
-            detail_sheet.cell(row_index, 16, f"=ROUND(O{row_index}-SUM(K{row_index}:N{row_index}),2)")
-    _set_widths(detail_sheet, [30, 16, 42, 12, 11, 20, 14, 10, 12, 12, 14, 14, 14, 12, 14, 12, 10, 10, 28, 19, 19, 34])
-
-    notes_sheet = workbook.create_sheet("导出说明")
-    errors = [_text(value) for value in (payload.get("errors") or []) if _text(value)]
-    _write_notes(
-        notes_sheet,
-        f"EA 收益报表说明 - 账号 {account}",
-        _text(payload.get("definition")),
-        "净盈亏 = 毛盈亏 + 手续费/Fee + 利息/Swap + 税费。",
-        errors,
-        limitations,
-    )
+            ])
     workbook.active = 0
     return _workbook_bytes(workbook)

@@ -1476,7 +1476,10 @@ class EaCommentGroupService:
                 "truncated": truncated,
                 "limitations": list(limitations or []),
             }
-            if group["totals"]["accounts"] >= 2:
+            group["peerAccounts"] = max(0, group["totals"]["accounts"] - (1 if current_member else 0))
+            if current_member and group["peerAccounts"] == 0:
+                group["limitations"].append("当前账号已使用此 Comment，尚未找到其他账号")
+            if group["totals"]["accounts"] >= 2 or current_member:
                 groups.append(group)
         groups.sort(key=lambda group: (-group["totals"]["accounts"], -group["totals"]["orders"], group["comment"].casefold()))
         return groups[:20]

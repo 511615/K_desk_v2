@@ -62,7 +62,7 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   and `expertSequence`; they remain excluded from `eaSummary`
 - `GET /api/accounts/by-login/{login}/copy-report.xlsx` - CPT/Signal group and follower profit
   workbook; consumes exactly the same optional filters as the JSON endpoints
-- `GET /api/accounts/by-login/{login}/ea-report.xlsx` - EA comment group and account profit workbook
+- `GET /api/accounts/by-login/{login}/ea-report.xlsx` - plain two-sheet (`EA汇总`, `EA明细`) EA Comment and account profit data workbook
 - `GET /api/accounts/by-login/{login}/login-ips`
 - `GET /api/accounts/by-login/{login}/orders`
 - `GET /api/account-lookup`
@@ -193,9 +193,9 @@ parameters, output names, `8777/8766` ports, iframe previews and direct chart li
 
 ## Operations
 
-- Start production: `pwsh -File D:\risk\K_desk_v2\scripts\start_prod.ps1`
-- Stop production: `pwsh -File D:\risk\K_desk_v2\scripts\stop_prod.ps1`
-- Health check: `pwsh -File D:\risk\K_desk_v2\scripts\health_check_prod.ps1`
-- Roll back: `pwsh -File D:\risk\K_desk_v2\scripts\rollback_to_legacy.ps1 -ConfirmRollback ROLLBACK-KDESK`
+- Start production: `pwsh -File D:\risk\K_desk_v2_main\scripts\start_prod.ps1`
+- Stop production: `pwsh -File D:\risk\K_desk_v2_main\scripts\stop_prod.ps1`
+- Health check: `pwsh -File D:\risk\K_desk_v2_main\scripts\health_check_prod.ps1`
+- Roll back: `pwsh -File D:\risk\K_desk_v2_main\scripts\rollback_to_legacy.ps1 -ConfirmRollback ROLLBACK-KDESK`
 
 All services bind only to localhost. MySQL, MT4 and MT5 integrations are outbound read-only data providers and do not add a K_desk listening port.
