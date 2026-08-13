@@ -51,6 +51,7 @@ _DYNAMIC_PRIMARY_SCHEMAS = {
 _DYNAMIC_DISCOVERY_CACHE_TTL = 60.0
 _DYNAMIC_DISCOVERY_CACHE: dict[tuple, tuple[float, frozenset[tuple[str, str]]]] = {}
 _DYNAMIC_DISCOVERY_CACHE_LOCK = threading.Lock()
+_GLOBAL_COMMENT_QUERY_MAX_WORKERS = 12
 _EXPERT_SEQUENCE_MIN_SHARED = 5
 _EXPERT_SEQUENCE_MIN_OVERLAP = 0.80
 _EXPERT_SEQUENCE_TIME_TOLERANCE_SECONDS = 2.0
@@ -1658,7 +1659,10 @@ class EaCommentGroupService:
             source_platform: {"records": [], "truncated": False, "limitations": [], "failed": False}
             for source_platform in exact_by_platform
         }
-        with ThreadPoolExecutor(max_workers=min(4, request_count or 1), thread_name_prefix="ea-comment") as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(_GLOBAL_COMMENT_QUERY_MAX_WORKERS, request_count or 1),
+            thread_name_prefix="ea-comment",
+        ) as executor:
             futures = {}
             for source_platform, target, seeds in exact_requests:
                 query = self._query_mt5 if target.get("kind") == "mt5_deals" else self._query_mt4
@@ -1709,7 +1713,10 @@ class EaCommentGroupService:
         for source_platform, seeds in fallback_by_platform.items():
             targets = self._exact_target_sources()
             dynamic_requests.extend((source_platform, target, seeds) for target in targets)
-        with ThreadPoolExecutor(max_workers=min(4, len(dynamic_requests) or 1), thread_name_prefix="ea-format") as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(_GLOBAL_COMMENT_QUERY_MAX_WORKERS, len(dynamic_requests) or 1),
+            thread_name_prefix="ea-format",
+        ) as executor:
             futures = {}
             for source_platform, target, seeds in dynamic_requests:
                 query = self._query_mt5 if target.get("kind") == "mt5_deals" else self._query_mt4_dynamic

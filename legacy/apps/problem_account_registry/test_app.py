@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import app
+import ea_comment_group
 
 
 class SourceNotesTests(unittest.TestCase):
@@ -1746,6 +1747,9 @@ class OrderListTests(unittest.TestCase):
 
         self.assertEqual(len(merged), 1)
         self.assertEqual({source["platform"] for source in service._exact_target_sources()}, {"MT4", "MT5"})
+
+    def test_global_exact_comment_lookup_has_parallel_source_budget(self):
+        self.assertGreaterEqual(ea_comment_group._GLOBAL_COMMENT_QUERY_MAX_WORKERS, 8)
 
     def test_ea_dynamic_numeric_comment_query_uses_indexable_prefix_pattern(self):
         exact, dynamic = app.ea_comment_query_plan([

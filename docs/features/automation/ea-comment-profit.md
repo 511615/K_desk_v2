@@ -84,6 +84,8 @@ indexed. Exact candidates match the complete Comment only; ExpertID/MAGIC is evi
 gate. Dynamic fallback starts only when all exact providers completed
 successfully and fewer than two valid routed accounts remain for that seed. Provider failure is
 reported and never converted into a dynamic fallback.
+The global exact stage uses up to 12 independent read-only source workers, then the page-local and
+short server response caches reuse the completed result for the same account and filters.
 
 Fallback uses a bounded stable-prefix read and validates every candidate against the complete
 normalized template before MT5 Position or MT4 ticket reconstruction. The local ignored SQLite file
