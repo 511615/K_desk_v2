@@ -162,6 +162,12 @@ one parent/type community. The detail relation control can explicitly expand tha
 member edges, then merge it again without rerunning the database scan.
 The coloured community band is also a direct click target for the same expand/merge action.
 
+Canvas relation communities use one canonical key (`source account + relation family`). Therefore
+same-CRM, same-IP, EA, rebate, copy-order and IB communities render as one representative line by
+default, with a member count; the detail control or community band expands only that community.
+Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
+opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
+
 ## Loading, empty and failure behavior
 
 The page shows Kuzu loading status, polls the background snapshot and reports processed/pending
