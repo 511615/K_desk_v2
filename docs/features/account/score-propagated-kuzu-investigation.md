@@ -152,7 +152,9 @@ back to the subject. Ring captions are positioned on their actual ring and empty
 Optional start/end datetime filters are forwarded to the read-only relationship endpoint; leaving
 both blank means full history. Clicking a copy relation stores the selected edge and highlights both
 endpoints with a white dashed overlay without changing the relationship colour.
-Grouped representative edges also include a visible member count in their relationship label.
+Grouped representative edges also include a visible member count in their relationship label. The
+detail-panel expand/merge control resolves its group from the actual relationship edge, so IB, CRM,
+copy and other single-relation communities toggle the same group that is drawn on the canvas.
 Selecting an account uses the same grouped-edge policy as the overview: one relation line represents
 one parent/type community. The detail relation control can explicitly expand that community to show
 member edges, then merge it again without rerunning the database scan.
