@@ -1600,13 +1600,21 @@ class OrderListTests(unittest.TestCase):
         for comment in (
             "[sl 4031.50]", "[tp 4029.00]", "[so 20%]", "so: 49.8%/50.0%",
             "from #27060824", "to #27060825", "deposit", "withdrawal", "credit",
-            "QQ: 123456789", "微信: 13800138000", "manual",
+            "manual",
         ):
             with self.subTest(comment=comment):
                 self.assertEqual(
                     app.classify_ea_comment(comment, ea_hint=True)["classification"],
                     "system_excluded",
                 )
+
+    def test_ea_comment_classifier_keeps_pure_contact_comment_as_exact_ea(self):
+        for comment in ("QQ: 123456789", "微信: 13800138000", "WhatsApp: +852 1234 5678"):
+            with self.subTest(comment=comment):
+                result = app.classify_ea_comment(comment)
+                self.assertEqual(result["classification"], "exact_ea")
+                self.assertTrue(result["countedAsEa"])
+                self.assertEqual(result["normalizedComment"], comment)
 
     def test_ea_comment_classifier_keeps_meaningful_chinese_comment_when_mt5_marks_expert(self):
         result = app.classify_ea_comment("手动下单3", ea_hint=True)
@@ -1719,6 +1727,25 @@ class OrderListTests(unittest.TestCase):
         self.assertEqual(groups[0]["totals"]["accounts"], 2)
         self.assertEqual({row["account"] for row in groups[0]["members"]}, {"247026", "201234"})
         self.assertEqual(groups[0]["peerAccounts"], 1)
+
+    def test_exact_comment_seeds_and_targets_cross_mt4_mt5_boundaries(self):
+        runtime = SimpleNamespace(
+            normalize_text=lambda value: str(value or "").strip(),
+            numeric_value=lambda value: float(value or 0),
+            rounded=lambda value, digits=2: round(float(value or 0), digits),
+            MYSQL_SOURCES=[
+                {"name": "AC MT4", "platform": "MT4", "kind": "mt4_trades", "host": "ac", "schema": "mt4", "table": "trades", "account_route": {"schema": "crm", "mt_server_code": 1}},
+                {"name": "DBG MT5", "platform": "MT5", "kind": "mt5_deals", "host": "dbg", "schema": "mt5", "table": "deals", "account_route": {"schema": "crm", "mt_server_code": 2}},
+            ],
+        )
+        service = app.EaCommentGroupService(runtime)
+        mt4_seed = {**app.ea_comment_identity("QQ: 123456789", 42), "originPlatform": "MT4", "originServer": "AC MT4"}
+        mt5_seed = {**app.ea_comment_identity("QQ: 123456789", 77), "originPlatform": "MT5", "originServer": "DBG MT5"}
+
+        merged = service._merge_seeds([mt4_seed, mt5_seed])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual({source["platform"] for source in service._exact_target_sources()}, {"MT4", "MT5"})
 
     def test_ea_dynamic_numeric_comment_query_uses_indexable_prefix_pattern(self):
         exact, dynamic = app.ea_comment_query_plan([

@@ -181,6 +181,14 @@ def classify_ea_comment(value: object, *, ea_hint: bool = False) -> dict:
             route["normalizedComment"] = comment
     if route:
         return route
+    if _CONTACT_TOKEN_RE.fullmatch(comment):
+        return _classification(
+            "exact_ea",
+            "联系方式 Comment",
+            comment,
+            evidence="完整联系方式 Comment 按用户定义参与精确 EA 查询",
+            source="contact",
+        )
     contact_stripped = _CONTACT_TOKEN_RE.sub("", comment).strip(" -_/|,;，；")
     if not contact_stripped or not re.search(r"[A-Za-z\u4e00-\u9fff]", contact_stripped):
         return _classification("system_excluded", "联系方式备注", comment, evidence="仅包含联系方式或营销账号")
@@ -633,7 +641,8 @@ class EaCommentGroupService:
                 category = classification["classification"]
                 if category == "system_excluded":
                     continue
-                if category != "possible_copy_route" and (not ea_hint or r.is_copy_trade(row)):
+                contact_comment = classification.get("classificationSource") == "contact"
+                if category != "possible_copy_route" and (not ea_hint or r.is_copy_trade(row)) and not contact_comment:
                     continue
                 identity = {
                     **ea_comment_identity(raw_comment, row.get("expert_id"), ea_hint=ea_hint),
@@ -1524,14 +1533,13 @@ class EaCommentGroupService:
         merged: dict[str, dict] = {}
         for seed in seeds:
             signature = r.normalize_text(seed.get("signatureKey"))
-            # Exact Comments are global within a platform lookup: the same
-            # Comment must be one group even when its seed orders came from
-            # different logical servers. Dynamic templates remain scoped to
-            # their origin server because their variable suffix is not an
-            # exact EA identity.
+            # Exact Comments are global across every configured MT4/MT5
+            # source. Dynamic templates remain platform/server-scoped because
+            # their variable suffix is not a complete Comment identity.
             origin_scope = "" if seed.get("signatureType") == "exact-comment" else r.normalize_text(seed.get("originServer")).casefold()
+            platform_scope = "" if seed.get("signatureType") == "exact-comment" else r.normalize_text(seed.get("originPlatform")).casefold()
             key = "|".join([
-                r.normalize_text(seed.get("originPlatform")).casefold(),
+                platform_scope,
                 origin_scope,
                 signature,
             ])
@@ -1583,6 +1591,22 @@ class EaCommentGroupService:
             unique.setdefault(key, source)
         return list(unique.values())
 
+    def _exact_target_sources(self) -> list[dict]:
+        """All routed MT4/MT5 sources for an exact full-Comment lookup."""
+
+        r = self.runtime
+        unique: dict[tuple[str, str, str, str, str], dict] = {}
+        for source in r.MYSQL_SOURCES:
+            if source.get("kind") not in {"mt5_deals", "mt4_trades"}:
+                continue
+            route = source.get("account_route") if isinstance(source.get("account_route"), dict) else {}
+            key = (
+                _text(source.get("host")), _text(source.get("schema")), _text(source.get("table")),
+                _text(route.get("schema")), _text(route.get("mt_server_code")),
+            )
+            unique.setdefault(key, source)
+        return list(unique.values())
+
     def payload(self, login: str, filters: dict | None = None) -> dict:
         r = self.runtime
         filters = filters or {}
@@ -1615,15 +1639,19 @@ class EaCommentGroupService:
             source_platform = r.normalize_text(source.get("platform")).upper()
             seeds_by_platform[source_platform].extend(seeds)
             origins_by_platform[source_platform].append(source)
-        exact_by_platform = {
-            source_platform: self._merge_seeds(seeds)
-            for source_platform, seeds in seeds_by_platform.items()
-            if seeds
-        }
+        # One exact lookup receives every seed.  Its complete Comment key is
+        # deliberately platform-agnostic, so a selected MT4 or MT5 account
+        # searches the complete configured MT4/MT5 source set exactly once.
+        all_exact_seeds = self._merge_seeds([
+            seed
+            for seeds in seeds_by_platform.values()
+            for seed in seeds
+        ])
+        exact_by_platform = {"ALL": all_exact_seeds} if all_exact_seeds else {}
         exact_requests = [
             (source_platform, target, seeds)
             for source_platform, seeds in exact_by_platform.items()
-            for target in self._platform_target_sources(source_platform, origins_by_platform[source_platform])
+            for target in self._exact_target_sources()
         ]
         request_count = len(exact_requests)
         exact_results = {
@@ -1679,11 +1707,7 @@ class EaCommentGroupService:
         }
         dynamic_requests = []
         for source_platform, seeds in fallback_by_platform.items():
-            targets = (
-                self._dynamic_target_sources(origins_by_platform[source_platform])
-                if source_platform == "MT5"
-                else self._platform_target_sources(source_platform, origins_by_platform[source_platform])
-            )
+            targets = self._exact_target_sources()
             dynamic_requests.extend((source_platform, target, seeds) for target in targets)
         with ThreadPoolExecutor(max_workers=min(4, len(dynamic_requests) or 1), thread_name_prefix="ea-format") as executor:
             futures = {}

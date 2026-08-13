@@ -293,10 +293,12 @@ then normalizes only those tickets. Platform and server filters are mandatory ro
 this pagination path.
 
 EA discovery uses the selected route to identify authoritative opening-Comment seeds, then queries
-every configured physical source on that platform by exact full Comment. MT5 candidates come only
-from opening deals and use the Comment index; MT4 candidates use the bounded observed interval
-because COMMENT and MAGIC are not independently indexed. Same-server EA membership requires Comment
-plus ExpertID/MAGIC; cross-server exact named membership requires Comment.
+every configured MT4 and MT5 physical source by exact full Comment. Exact Comment membership is
+cross-platform and cross-server; ExpertID/MAGIC is displayed as per-order evidence and never gates
+membership. MT5 candidates come only from opening deals and use the Comment index; MT4 candidates
+use the bounded observed interval because COMMENT and MAGIC are not independently indexed. Pure
+contact Comments are valid exact user-investigation keys; platform/system events, balance operations
+and routing formats retain their explicit exclusions/classifications.
 
 Only an error-free exact stage with fewer than two valid routed accounts may start structural
 fallback. Fallback queries the classifier's stable prefix, validates the complete normalized template
