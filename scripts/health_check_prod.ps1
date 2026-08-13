@@ -31,7 +31,7 @@ foreach ($check in $checks) {
 
 if (-not $AccountOnly) {
     $expectedPython = (Resolve-Path (Join-Path $PSScriptRoot "..\.venv\Scripts\python.exe")).Path
-    $processes = @(Get-CimInstance Win32_Process | Where-Object {
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
         $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
         $_.CommandLine -like "*--profile prod*" -and $_.ExecutablePath -eq $expectedPython
     })

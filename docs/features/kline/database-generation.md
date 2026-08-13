@@ -92,6 +92,8 @@ A K_desk listener with another runtime, owner or unreadable readiness is replace
 Uvicorn supervisor, then the complete production set (both web services, one interactive Worker and
 discovery Workers) must pass readiness. This prevents an accidentally started old/dev web process
 from accepting K-line jobs without a matching production Worker.
+Protected unrelated processes are skipped during local process enumeration so stop/start recovery
+continues when Windows denies inspection of another process.
 An MT5 IPC initialization failure is reported as a structured source failure. The production launcher
 prevents the known stale-interactive-Terminal route by selecting the dedicated quote Terminal before
 the web and worker processes start.

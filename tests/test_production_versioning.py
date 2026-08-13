@@ -59,3 +59,14 @@ def test_production_health_check_rejects_a_service_using_another_runtime_queue()
     assert '$expectedDatabase = Join-Path $Root "runtime\\prod\\kdesk.sqlite"' in health_check
     assert "$response.workerQueue" in health_check
     assert "$response.database" in health_check
+
+
+def test_production_process_guards_skip_uninspectable_system_processes() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+    health_check = (root / "scripts" / "health_check_prod.ps1").read_text(encoding="utf-8")
+    stopper = (root / "scripts" / "stop_prod.ps1").read_text(encoding="utf-8")
+
+    assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in launcher
+    assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in health_check
+    assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper

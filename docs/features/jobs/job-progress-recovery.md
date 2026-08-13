@@ -59,6 +59,8 @@ Readiness binds process ownership to the production runtime, not merely to a por
 8777 must report `profile=prod` and the production `kdesk.sqlite`; 8766 must report that same file as
 `workerQueue`; each listener's Uvicorn supervisor must originate from the current main worktree's
 `.venv`. A mismatch is replaced before jobs can be accepted.
+Process discovery skips unrelated protected Windows processes; a permission-denied system process
+cannot abort K_desk stop/start recovery.
 
 ## Business rules and units
 

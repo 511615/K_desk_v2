@@ -14,7 +14,7 @@ foreach ($port in @(8777, 8766)) {
     }
 }
 
-$workers = @(Get-CimInstance Win32_Process | Where-Object {
+$workers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
     $_.CommandLine -like "*--profile prod*"
 })

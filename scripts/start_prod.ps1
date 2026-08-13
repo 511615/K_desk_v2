@@ -153,7 +153,8 @@ function Stop-NonProductionKDeskListener {
 
     $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
     foreach ($listener in $listeners) {
-        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)" -ErrorAction SilentlyContinue
+        if ($null -eq $process) { throw "Unable to inspect the K_desk listener process on port $Port." }
         if (-not $ExpectedModule -or $process.CommandLine -notlike "*$ExpectedModule*") {
             throw "Port $Port is owned by an unexpected process: $($process.CommandLine)"
         }
@@ -187,7 +188,8 @@ function Start-KDeskProductionProcess {
         $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
         if ($listeners.Count -gt 0) {
             $productionListeners = @($listeners | Where-Object {
-                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)"
+                $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)" -ErrorAction SilentlyContinue
+                if ($null -eq $process) { return $false }
                 Test-KDeskProductionListener -Port $Port -Process $process -ExpectedModule $ExpectedModule
             })
             if ($productionListeners.Count -eq $listeners.Count) {
@@ -215,7 +217,7 @@ if (-not $AccountOnly) {
     )
     foreach ($plan in $queuePlans) {
         $queue = $plan.Queue
-        $workers = @(Get-CimInstance Win32_Process | Where-Object {
+        $workers = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -eq "python.exe" -and $_.CommandLine -like "*kdesk.worker.runner*" -and
             $_.CommandLine -like "*--profile prod*" -and $_.CommandLine -like "*--queue $queue*" -and
             $_.ExecutablePath -eq $Python
