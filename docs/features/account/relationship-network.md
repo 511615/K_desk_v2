@@ -73,6 +73,12 @@ score then account number. Each row shows account, database status, relationship
 selecting it selects and highlights the same graph node and existing graph path. No relationship,
 score or expansion inference is added by this table. Empty graphs and graphs without those statuses
 state this explicitly. Future risk items may add rows to this table without changing this status rule.
+Relationship labels must describe the evidence that produced an edge. `跟单订单匹配（开仓/平仓）`
+means the relationship came from matched copy-trading open and/or close orders; it is not a generic
+"order synchronization" claim. `跟单来源组匹配` means the accounts share an identified copy source
+group, but does not by itself prove every order was copied. Toxic edges are explicitly labeled as
+`Toxic 同向开平仓时间匹配` or `Toxic 反向开平仓时间匹配`, and the optional slow-query control says
+`包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
 Wheel zoom supports 10% through 250%; pointer-centred
 zoom and a double-click refit make every returned ring reachable on a small display.
 The caption explicitly states whether the selected account is the problem-account start or which

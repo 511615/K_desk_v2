@@ -59,6 +59,10 @@ and propagated score. A left-side extensible `风险表` presently provides one 
 account nodes with database status `T`, `TA` or `A`. It is a sorted status index, not an additional
 risk calculation. Clicking a row selects the identical rendered node, highlighting only that node's
 existing graph path and local relation evidence.
+Edge captions and detail explanations use explicit evidence names: `跟单订单匹配（开仓/平仓）`
+for matched copy-trading open/close orders, `跟单来源组匹配` for a shared identified source group,
+and `Toxic 同向开平仓时间匹配` / `Toxic 反向开平仓时间匹配` for same-direction or opposite-direction
+Toxic open/close time matches. The optional control is named `包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;

@@ -292,6 +292,10 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function riskStatusAccounts" in page.text
     assert "function renderRiskTable" in page.text
     assert "['T','TA','A'].includes(databaseStatus(node))" in page.text
+    assert "跟单订单匹配（开仓/平仓）" in page.text
+    assert "Toxic 同向开平仓时间匹配" in page.text
+    assert "Toxic 反向开平仓时间匹配" in page.text
+    assert "包含 Toxic 同向/反向开平仓时间匹配（较慢）" in page.text
     assert "relationship-network" in page.text
     assert 'id="includeToxic"' in page.text
     assert "if(includeToxic.checked)query.set('include_toxic','true')" in page.text
