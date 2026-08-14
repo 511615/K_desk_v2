@@ -174,6 +174,8 @@ community band or its detail control collapses them again.
 Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
 the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
 make the lines unclickable.
+Lane allocation is shared across all relation types emitted by one source account; a source cannot
+restart at lane zero merely because the next edge has a different relation label.
 
 ## Loading, empty and failure behavior
 
