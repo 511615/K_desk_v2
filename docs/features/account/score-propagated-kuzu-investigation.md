@@ -176,6 +176,8 @@ the curve midpoint, and hit testing samples the same quadratic path, so visual s
 make the lines unclickable.
 Lane allocation is shared across all relation types emitted by one source account; a source cannot
 restart at lane zero merely because the next edge has a different relation label.
+The first lane also receives a deterministic left/right bend, so an isolated edge cannot remain a
+straight line that visually merges with a nearby edge from another source.
 
 ## Loading, empty and failure behavior
 
