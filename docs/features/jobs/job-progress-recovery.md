@@ -55,6 +55,10 @@ Jobs and events are stored in SQLite. Workers may call only governed read-only r
 Production launcher configuration is inherited by the web and Worker child processes. K-line jobs
 therefore use the same dedicated read-only quote Terminal after a controlled service restart; a
 stale interactive Terminal is not an implicit Worker fallback.
+On Windows, the launcher explicitly pins `PYTHONPATH` to the current main checkout's `src` and
+disables user-site packages before spawning Uvicorn and Worker children. This prevents the
+virtualenv launcher from resolving an older K_desk package from the developer runtime while the
+health endpoint still reports production paths.
 Readiness binds process ownership to the production runtime, not merely to a port or FastAPI module:
 8777 must report `profile=prod` and the production `kdesk.sqlite`; 8766 must report that same file as
 `workerQueue`; each listener's Uvicorn supervisor must originate from the current main worktree's

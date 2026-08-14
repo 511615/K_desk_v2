@@ -229,6 +229,11 @@ production launcher while it remains off `main`. The development checkout is
 `main`, another Full verification from the production checkout and a pushed `main`. Only after the
 second verification may the 8777 account service or copy-pool Producer be restarted from `main`.
 Runtime snapshots, credentials, terminals and logs stay outside both Git histories.
+The production launcher exports `PYTHONPATH=<main checkout>\src` and `PYTHONNOUSERSITE=1` before
+starting child processes. This is mandatory on Windows because the virtualenv shim may otherwise
+spawn the Codex base interpreter and import the older `D:\risk\K_desk_v2` package. A health response
+that reports production paths is not sufficient unless the listener supervisor and child import
+root also point to the current main checkout.
 `start_prod.ps1` must not accept a listener merely because it uses the expected FastAPI module and
 port. It verifies the local `/health/ready` runtime (`8777 profile=prod` plus production
 `kdesk.sqlite`; `8766 workerQueue` pointing to the same file) and traces the listener to a Uvicorn

@@ -26,6 +26,9 @@ progress/events and receive a direct link when the generated HTML chart is ready
 inspection alone is not presented as a completed chart.
 The production account page opens the task center on the production K-line port `8766`; port `8866`
 remains development-only.
+Production child processes inherit a pinned main-checkout `PYTHONPATH` and disabled user-site
+packages, so K-line submissions and their Worker consumers always use the same production source
+tree and SQLite runtime.
 New HTML preserves the established white high-contrast chart workspace and remains standalone for
 iframe, direct and offline use. It defaults to a compressed quote-index axis with visible market-break labels; the
 `隐藏停盘 / 显示停盘` segmented control expands actual elapsed time without manufacturing bars.

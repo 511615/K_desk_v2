@@ -73,6 +73,14 @@ def test_production_process_guards_skip_uninspectable_system_processes() -> None
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper
 
 
+def test_production_launcher_pins_child_python_imports_to_main_source_tree() -> None:
+    root = Path(__file__).resolve().parents[1]
+    launcher = (root / "scripts" / "start_prod.ps1").read_text(encoding="utf-8")
+
+    assert '$env:PYTHONPATH = Join-Path $Root "src"' in launcher
+    assert '$env:PYTHONNOUSERSITE = "1"' in launcher
+
+
 def test_worker_runtime_heartbeat_markers_are_used_for_queue_readiness() -> None:
     root = Path(__file__).resolve().parents[1]
     runner = (root / "src" / "kdesk" / "worker" / "runner.py").read_text(encoding="utf-8")

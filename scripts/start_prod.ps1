@@ -47,6 +47,11 @@ if (-not (Test-Path -LiteralPath $Python)) {
 
 $env:KDESK_V2_ROOT = $Root
 $env:KDESK_PROFILE = "prod"
+# Windows virtualenv child processes can fall back to the Codex base Python.
+# Pin imports to this checkout so every spawned Uvicorn/Worker child uses the
+# same source tree as the production supervisor.
+$env:PYTHONPATH = Join-Path $Root "src"
+$env:PYTHONNOUSERSITE = "1"
 $env:KDESK_RUNTIME_DIR = $Runtime
 $env:KDESK_DATABASE = Join-Path $Runtime "kdesk.sqlite"
 $env:KDESK_QUEUE_DATABASE = Join-Path $Runtime "jobs.sqlite"
