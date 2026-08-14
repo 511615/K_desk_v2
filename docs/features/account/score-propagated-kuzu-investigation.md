@@ -167,6 +167,10 @@ same-CRM, same-IP, EA, rebate, copy-order and IB communities render as one repre
 default, with a member count; the detail control or community band expands only that community.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
+Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
+account node: members share the community anchor, the common edge terminates on that anchor, and the
+anchor displays the member count. Clicking the anchor expands the members; clicking the expanded
+community band or its detail control collapses them again.
 
 ## Loading, empty and failure behavior
 
