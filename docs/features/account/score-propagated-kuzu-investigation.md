@@ -171,6 +171,9 @@ Collapsed communities are rendered as their own canvas anchors instead of borrow
 account node: members share the community anchor, the common edge terminates on that anchor, and the
 anchor displays the member count. Clicking the anchor expands the members; clicking the expanded
 community band or its detail control collapses them again.
+Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
+the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
+make the lines unclickable.
 
 ## Loading, empty and failure behavior
 
