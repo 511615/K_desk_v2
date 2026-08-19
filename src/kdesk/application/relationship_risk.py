@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any
 
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
+from kdesk.domain.relationship_graph import build_presentation_graph
 from kdesk.domain.relationship_propagation import propagate_scores
 
 ProjectionScorer = Callable[[list[dict[str, Any]], list[dict[str, Any]], float], dict[str, Any]]
@@ -207,6 +208,11 @@ class AccountRelationshipRiskService:
         for relationship in scored["relationships"]:
             relationship["typeLabel"] = labels.get(relationship["type"], relationship["type"])
         scored["summary"]["evidenceCount"] = sum(len(item.get("evidence", [])) for item in scored["relationships"])
+        presentation_graph = build_presentation_graph(
+            scored["entities"],
+            scored["relationships"],
+            subject_id=root_key,
+        )
         failed = [item for item in coverage if item["status"] == "failed"]
         return {
             "ok": True,
@@ -230,6 +236,7 @@ class AccountRelationshipRiskService:
             "discoveryTruncated": discovery_truncated,
             "queryBudgetExhausted": query_budget_exhausted,
             "inProgress": False,
+            "presentationGraph": presentation_graph,
             **scored,
         }
 
@@ -266,6 +273,11 @@ class AccountRelationshipRiskService:
             "discoveryAccountCount": visited_count,
             "pendingAccountCount": pending_count,
         }
+        progress["presentationGraph"] = build_presentation_graph(
+            list(scored.get("entities") or []),
+            list(scored.get("relationships") or []),
+            subject_id=AccountRelationshipRiskService._account_key(login, filters),
+        )
         callback(progress)
 
     def _shared_ip_with_budget(

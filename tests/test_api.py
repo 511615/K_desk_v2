@@ -246,6 +246,11 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert all("score" in item and "riskColor" in item for item in payload["entities"])
     assert next(item for item in payload["entities"] if item["label"] == "302360")["databaseStatus"] == "TA"
     assert next(item for item in payload["entities"] if item["label"] == "302361")["databaseStatus"] == "P"
+    presentation = payload["presentationGraph"]
+    assert presentation["modelVersion"] == "relationship-entity-v1"
+    assert presentation["subjectId"] == "account:302360|MT5|DBG MT5"
+    assert next(item for item in presentation["entities"] if item["label"] == "302360")["databaseStatus"] == "TA"
+    assert next(item for item in presentation["entities"] if item["label"] == "302361")["databaseStatus"] == "P"
     assert all("localAction" not in item for item in payload["entities"])
     assert {name for name, _args in calls} == {
         "account_relationship_core_payload", "account_copy_origins_payload",
@@ -261,11 +266,11 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
             assert args[1]["_relationship"] == "1"
 
 
-def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_path: Path) -> None:
+def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
     with TestClient(app) as client:
-        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5")
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
 
     assert page.status_code == 200
     assert "/api/accounts/by-login/" in page.text
@@ -357,6 +362,25 @@ def test_kuzu_risk_page_loads_the_replaced_account_relationship_endpoint(tmp_pat
     assert "function checkedLeaf" in page.text
     assert "已核查，无新增账户" in page.text
     assert "当前账户细查" in page.text
+
+
+def test_kuzu_risk_defaults_to_the_current_focus_workspace(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5")
+        unknown = client.get("/kuzu-risk?account=302360&graph_type=stale-bookmark")
+
+    assert page.status_code == 200
+    assert unknown.status_code == 200
+    assert 'data-graph-type="focus-force"' in page.text
+    assert 'data-graph-type="focus-force"' in unknown.text
+    assert "中心约束关系工作区" in page.text
+    assert "presentationGraph" in page.text
+    assert "databaseStatus||n.status||'B'" in page.text
+    assert "p.inProgress" in page.text
+    assert "setTimeout(resolve,500)" in page.text
+    assert "graph_type','galaxy'" in page.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:
@@ -454,7 +478,7 @@ def test_kuzu_risk_graph_propagates_until_its_score_threshold(tmp_path: Path) ->
     settings = replace(make_test_settings(tmp_path), kuzu_risk_path=graph_path)
     app = create_account_app(settings)
     with TestClient(app) as client:
-        page = client.get("/kuzu-risk")
+        page = client.get("/kuzu-risk?graph_type=galaxy")
         graph = client.get("/api/kuzu-risk/graph?threshold=30")
         invalid_threshold = client.get("/api/kuzu-risk/graph?threshold=0")
 

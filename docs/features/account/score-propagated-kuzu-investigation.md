@@ -4,25 +4,33 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
-tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-11
+last_verified_date: 2026-08-19
 ---
 
 # Score-propagated Kuzu relationship investigation
 
 ## Purpose and user entry
 
-`/kuzu-risk?account={login}` is the account-detail relationship investigation screen. It reads the
-replaced relationship endpoint, materializes returned evidence in a temporary Kuzu projection, and
-renders scored relationships. Without `account`, it still supports the separate static local-file
-trial.
+`/kuzu-risk?account={login}` is the account-detail relationship investigation screen. Its default
+renderer is `focus-force`, the center-constrained investigation workspace. The original galaxy page
+is retained only at `graph_type=galaxy`, and `graph_type=choose` retains the selector. Unknown or
+missing graph-type values resolve to `focus-force`. Without `account`, the page still supports the
+separate static local-file trial.
 
 ## UI and behavior
 
-There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
+The default focus workspace separates global location, local relationship detail and evidence. It
+renders a relationship entity once, connects its member accounts to that entity and avoids the
+pairwise edge web. Clicking an account exposes its routed database status and compatible account
+detail link. It polls the existing single-flight expansion snapshots every 500 ms, updates available
+partial evidence immediately, and stops polling only when `inProgress=false` or the bounded client
+poll window expires. It reads `databaseStatus` directly and uses `B` only for a blank value.
+
+The explicit galaxy compatibility view retains the following behavior. There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
 its aggregate reaches the threshold. The overview projects every returned account node and concrete
 IB identity node once into concentric rings by logical account-depth. Within a ring, the stable layout
 uses the full circumference rather than evidence-family sectors, so no discovered sibling is obscured
@@ -100,7 +108,9 @@ while the single-flight background expansion runs, then entities with `score`,
 `hops`, `expandable`, `riskLevel`, `riskColor`, and
 `scoreLedger`, alongside coverage and truncation. Account entities additively expose `databaseStatus`,
 read from the account's routed MT4/MT5 risk-system database in the relationship-core status batch;
-it never uses a local ledger action or changes the cached expansion payload. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
+it never uses a local ledger action or changes the cached expansion payload. The additive
+`presentationGraph` contains relation entities and auditable paths without changing propagation
+scores or the existing `entities`/`relationships` contract. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
 local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
 
 ## Data, routing and read-only constraints
@@ -181,16 +191,18 @@ straight line that visually merges with a nearby edge from another source.
 
 ## Loading, empty and failure behavior
 
-The page shows Kuzu loading status, polls the background snapshot and reports processed/pending
+The focus and galaxy pages show Kuzu loading status, poll the background snapshot and report processed/pending
 accounts. Low-score nodes remain inspectable but do not expand. Missing static trial data does not
 trigger a remote scan. Invalid graph shape and Kuzu failures do not expose internal paths or exceptions.
 
 ## Code and dependencies
 
-`relationship_propagation.py` is pure scoring, `relationship_risk.py` composes source facts,
+`relationship_propagation.py` is pure scoring, `relationship_graph.py` creates the presentation-only
+relation-entity graph, `relationship_risk.py` composes source facts,
 `relationship_expansion.py` bounds the single-flight background job, and
 `KuzuRiskGraphRepository` owns temporary/static Kuzu reads. Canvas uses DOM `textContent` for data
-and never injects evidence as HTML.
+and never injects evidence as HTML. `kuzu_focus_workspace_page.py` is the default renderer;
+`kuzu_risk_page.py` remains the explicit galaxy compatibility renderer.
 `AccountRelationshipNetworkService` obtains the routed CRM hierarchy payload through the existing
 read-only legacy boundary. Same-CRM edges use its mapping-only legacy payload instead of a full
 trade-history dashboard read. Relationship-only EA and Copy reads bypass the dashboard result cache,

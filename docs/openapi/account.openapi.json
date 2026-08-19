@@ -961,6 +961,18 @@
       "get": {
         "summary": "Kuzu Risk Page",
         "operationId": "kuzu_risk_page_kuzu_risk_get",
+        "parameters": [
+          {
+            "name": "graph_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "focus-force",
+              "title": "Graph Type"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -968,6 +980,16 @@
               "text/html": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }

@@ -4,24 +4,33 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
-tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
+tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-10
+last_verified_date: 2026-08-19
 ---
 
 # Account relationship network
 
 ## Purpose and user entry
 
-The `关系网络` button on the legacy account-detail page now opens
-`/kuzu-risk?account={login}` while retaining the current platform, server and symbol filters. The
-previous in-dialog fact graph is no longer the visible account relationship interface.
+The `关系网络` button on the legacy account-detail page opens
+`/kuzu-risk?account={login}` while retaining the current platform, server and symbol filters.
+The default renderer is the current center-constrained relationship workspace. The original galaxy
+renderer remains available only through explicit `graph_type=galaxy`; missing or stale graph-type
+values cannot silently return the legacy view.
 
 ## UI and behavior
 
-The Kuzu page has a linked overview and detail view. The overview renders every returned account and
+The default workspace has a global locator, a center-constrained detailed graph and an evidence
+panel. It receives a presentation-only relationship-entity projection: repeated account pairs are
+represented by a shared relation entity and member edges, while the scored account graph remains the
+source of truth. It polls the existing single-flight background expansion and renders each available
+snapshot without starting duplicate work. Account nodes read `databaseStatus`; only a blank value
+falls back to `B`.
+
+The explicit legacy galaxy page has a linked overview and detail view. The overview renders every returned account and
 concrete IB-identity node exactly once in concentric rings by its logical account-to-account discovery
 depth. Nodes in each ring are distributed across the whole circle in deterministic order; they are not
 stacked into relationship-family sectors, so a high-cardinality relation cannot hide siblings behind one
@@ -116,7 +125,8 @@ counts; the page polls that snapshot rather than holding a web request open. Eac
 score, colour, hop count, expansion state and score ledger. Account entities additively include
 `databaseStatus`, read in the same bounded database-status batch as the CRM-account mapping for the
 account's actual route; cached expansion data is not mutated. The former evidence-only response is
-replaced by this contract.
+replaced by this contract. `presentationGraph` is additive and contains relation entities, grouped
+member edges, auditable subject paths and the unchanged account status fields.
 
 ## Data, routing and read-only constraints
 
