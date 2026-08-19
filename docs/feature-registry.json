@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "5c58311ca677",
+  "registryVersion": "36609cf75dc7",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -53,7 +53,10 @@
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_risk.py",
+        "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_focus_workspace_page.py",
+        "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
         "legacy/apps/problem_account_registry/app.py"
@@ -61,6 +64,7 @@
       "tests": [
         "tests/test_api.py",
         "tests/test_kuzu_risk_graph.py",
+        "tests/test_relationship_graph.py",
         "legacy/apps/problem_account_registry/test_app.py"
       ],
       "depends_on": [
@@ -73,7 +77,7 @@
         "ACC-REL-003"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-10",
+      "last_verified_date": "2026-08-19",
       "document": "docs/features/account/relationship-network.md"
     },
     {
@@ -116,10 +120,13 @@
       "code": [
         "legacy/apps/problem_account_registry/app.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_focus_workspace_page.py",
+        "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_risk.py",
+        "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/domain/relationship_propagation.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
         "src/kdesk/settings.py"
@@ -127,6 +134,7 @@
       "tests": [
         "tests/test_api.py",
         "tests/test_kuzu_risk_graph.py",
+        "tests/test_relationship_graph.py",
         "tests/test_relationship_propagation.py",
         "tests/test_relationship_risk.py"
       ],
@@ -136,7 +144,7 @@
         "TOX-POSITION-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-11",
+      "last_verified_date": "2026-08-19",
       "document": "docs/features/account/score-propagated-kuzu-investigation.md"
     },
     {

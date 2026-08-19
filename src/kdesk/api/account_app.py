@@ -18,6 +18,8 @@ from pydantic import BaseModel, ConfigDict
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
 from kdesk.api.kuzu_demo_page import render_kuzu_demo_page
+from kdesk.api.kuzu_focus_workspace_page import render_kuzu_focus_workspace_page
+from kdesk.api.kuzu_graph_type_page import render_kuzu_graph_type_page
 from kdesk.api.kuzu_risk_page import render_kuzu_risk_page
 from kdesk.application.bonus_arbitrage_scan import normalize_bonus_scan_options
 from kdesk.application.copy_pool_monitor import CopyPoolMonitorService
@@ -490,8 +492,13 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail="Kuzu 图谱暂时不可用") from None
 
     @app.get("/kuzu-risk", response_class=HTMLResponse)
-    async def kuzu_risk_page() -> HTMLResponse:
-        return HTMLResponse(render_kuzu_risk_page(), headers={"Cache-Control": "no-store"})
+    async def kuzu_risk_page(graph_type: str = Query("focus-force")) -> HTMLResponse:
+        renderer = {
+            "choose": render_kuzu_graph_type_page,
+            "focus-force": render_kuzu_focus_workspace_page,
+            "galaxy": render_kuzu_risk_page,
+        }.get((graph_type or "focus-force").strip().lower(), render_kuzu_focus_workspace_page)
+        return HTMLResponse(renderer(), headers={"Cache-Control": "no-store"})
 
     @app.get("/api/kuzu-risk/graph")
     async def kuzu_risk_graph(threshold: float = Query(12, ge=1, le=100)) -> dict:
