@@ -220,16 +220,17 @@ health acceptance.
 
 Install repository hooks once with `scripts/install_git_hooks.ps1`. Pre-commit runs Fast and
 pre-push runs Full. Production remains checked out on `main`. Normal changes are made in a separate
-`develop` worktree, verified there, merged into `main`, and deployed by a controlled restart. Do not
+`dev` worktree, verified there, promoted into `main`, and deployed by a controlled restart. Do not
 edit feature or Producer code in the running production worktree.
 
 The production checkout must be the worktree currently on `main`; on this host that checkout is
 `D:\risk\K_desk_v2_main`. `D:\risk\K_desk_v2` is an older feature worktree and is not a valid
 production launcher while it remains off `main`. The development checkout is
-`D:\risk\K_desk_v2_dev` on `develop`. A normal promotion requires a clean development worktree,
-`verify_change.ps1 -Mode Full`, a committed and pushed `develop`, then a non-interactive merge into
-`main`, another Full verification from the production checkout and a pushed `main`. Only after the
-second verification may the 8777 account service or copy-pool Producer be restarted from `main`.
+`D:\risk\K_desk_v2_dev` on `dev`. A normal promotion uses `scripts\promote_dev.ps1`, which requires
+clean worktrees, runs `verify_change.ps1 -Mode Full`, moves `back` to the previous `main`, and then
+fast-forwards `main` to `dev`. `back` has no worktree and never receives the new release. Then run
+`scripts\release_prod.ps1` from the clean production checkout. Small coherent changes may be
+promoted and deployed independently; there is no requirement to accumulate a large release.
 Runtime snapshots, credentials, terminals and logs stay outside both Git histories.
 The production launcher exports `PYTHONPATH=<main checkout>\src` and `PYTHONNOUSERSITE=1` before
 starting child processes. This is mandatory on Windows because the virtualenv shim may otherwise

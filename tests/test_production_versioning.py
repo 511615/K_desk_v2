@@ -117,3 +117,17 @@ def test_deployed_release_verifier_checks_identity_and_graph_routes() -> None:
     assert "sourceRoot" in verifier
     assert "data-graph-type=\"focus-force\"" in verifier
     assert "graph_type=galaxy" in verifier
+
+
+def test_dev_promotion_is_fast_forward_only_and_preserves_previous_main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    promotion = (root / "scripts" / "promote_dev.ps1").read_text(encoding="utf-8")
+
+    assert "D:\\risk\\K_desk_v2_main" in promotion
+    assert "D:\\risk\\K_desk_v2_dev" in promotion
+    assert "-Mode Full" in promotion
+    assert "merge-base" in promotion
+    assert "--is-ancestor" in promotion
+    assert "'branch', '-f', 'back', $mainSha" in promotion
+    assert "'merge', '--ff-only', 'dev'" in promotion
+    assert "branch refs/heads/back" in promotion

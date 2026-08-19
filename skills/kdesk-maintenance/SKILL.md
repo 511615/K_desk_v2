@@ -22,7 +22,8 @@ operational change under `D:\risk\K_desk_v2`.
 
 For release or deployment work, also verify the worktree identity before editing or restarting:
 the production checkout is `D:\risk\K_desk_v2_main` on `main`; development is
-`D:\risk\K_desk_v2_dev` on `develop`. Do not create an ad-hoc worktree for deployment. A feature
+`D:\risk\K_desk_v2_dev` on `dev`. `back` is the previous production revision and has no worktree.
+Do not create an ad-hoc worktree for deployment. A feature
 worktree must have a named branch and an explicit cleanup/merge decision.
 
 ## Feature lifecycle
@@ -65,6 +66,12 @@ verify `main`, the fixed production root and a clean worktree. After startup, co
 manifest with `/api/meta` and run `scripts\verify_deployed_release.ps1`; readiness alone does not
 prove that the intended commit is running. For the relationship workspace, the default
 `/kuzu-risk` route is `focus-force`; `graph_type=galaxy` is explicit compatibility only.
+
+For normal promotion, commit one coherent change on `dev`, run Fast during development, then run
+`scripts\promote_dev.ps1`. The script performs Full verification, requires `dev` to contain the
+current `main`, moves `back` to the old production revision, and fast-forwards `main`. Deploy the
+resulting clean `main` with `scripts\release_prod.ps1`. Never develop on `back` or synchronize the
+new release into `back`.
 
 Release mode requires the ignored local read-only ten-server fixture and explicit
 `KDESK_ENABLE_LIVE_CONTRACTS=1`.

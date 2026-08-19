@@ -8,12 +8,16 @@
 ## Worktree and release policy
 
 - Production is deployed only from `D:\risk\K_desk_v2_main` on branch `main`.
-- Development and verification use `D:\risk\K_desk_v2_dev` on branch `develop`.
+- Development and verification use `D:\risk\K_desk_v2_dev` on branch `dev`.
+- `back` points to the production revision that preceded the current promotion. It has no worktree
+  and never receives development commits directly.
 - `D:\risk\K_desk_v2` is a preserved user feature worktree; do not deploy from it or clean it automatically.
 - Do not create ad-hoc release or detached worktrees. A temporary feature worktree requires a named branch,
   an explicit merge/retention decision, and removal only after its changes are verified and accounted for.
 - A production restart must use `scripts\release_prod.ps1`; readiness alone is insufficient. Verify `/api/meta`
   and the intended graph route after startup.
+- Promote only with `scripts\promote_dev.ps1`: it runs Full verification, moves `back` to the old
+  `main`, and fast-forwards `main` to `dev`.
 3. Identify the affected Feature ID in `docs/feature-registry.json`. Create a feature document when no ID exists.
 4. Classify impact as architecture, API, data/routing, business rule, operations, UI, test-only, or internal refactor.
 

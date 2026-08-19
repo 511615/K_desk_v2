@@ -3,8 +3,8 @@ feature_id: GOV-LIFECYCLE-001
 title: Feature documentation lifecycle
 module: governance
 status: active
-apis: ["GET /api/meta", "POST /scripts/release_prod.ps1", "POST /scripts/verify_deployed_release.ps1"]
-code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
+apis: ["GET /api/meta", "POST /scripts/promote_dev.ps1", "POST /scripts/release_prod.ps1", "POST /scripts/verify_deployed_release.ps1"]
+code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/promote_dev.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
 tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_production_versioning.py", "tests/test_verify_live_matrix.py"]
 depends_on: []
 last_verified_version: 2.1.1
@@ -61,7 +61,8 @@ runs its complete offline regression suite in Full mode. Release verification ch
 live server route and requires each declared volatile finance field to be numeric. Exact finance
 formulas are verified with deterministic offline fixtures; moving live-account balances are never
 treated as an immutable release baseline. Production remains on `main`; changes are verified in the
-separate `develop` worktree and pass Full again after promotion before restart.
+separate `dev` worktree. `promote_dev.ps1` runs Full, records the old production revision in `back`,
+and fast-forwards `main`; Release verification still runs before restart.
 
 ## Compatibility and deprecation
 

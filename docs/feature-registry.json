@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "b2541b12432b",
+  "registryVersion": "5bd8d932580c",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -494,6 +494,7 @@
       "status": "active",
       "apis": [
         "GET /api/meta",
+        "POST /scripts/promote_dev.ps1",
         "POST /scripts/release_prod.ps1",
         "POST /scripts/verify_deployed_release.ps1"
       ],
@@ -508,6 +509,7 @@
         "scripts/generate_governance_artifacts.ps1",
         "scripts/install_git_hooks.ps1",
         "scripts/install_maintenance_skill.ps1",
+        "scripts/promote_dev.ps1",
         "scripts/publish_change.ps1",
         "scripts/release_prod.ps1",
         "scripts/start_prod.ps1",
