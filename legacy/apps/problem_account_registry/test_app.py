@@ -488,6 +488,46 @@ class MoneyScalingTests(unittest.TestCase):
         self.assertIn("`mt5_users_view`", cursor.execute.call_args.args[0])
         self.assertNotIn("`mt5_daily_view`", cursor.execute.call_args.args[0])
 
+    def test_mt5_reversal_deal_is_visible_when_no_open_close_pair_exists(self):
+        deals = [{
+            "Deal": 11, "Order": 22, "PositionID": 33, "Login": 900003,
+            "Action": 0, "Entry": 2, "Time": "2026-08-18 10:00:00",
+            "TimeMsc": "2026-08-18 10:00:00.100", "Symbol": "XAUUSD",
+            "Volume": 100, "VolumeClosed": 100, "Price": 3300,
+            "Profit": 12, "Commission": -1, "Storage": 0, "Fee": 0,
+            "Comment": "reversal", "Reason": 0,
+        }]
+
+        rows = app.mt5_deals_to_trades(
+            deals, {"name": "Live", "platform": "MT5", "server": "Live"}, "900003",
+            app.account_money_meta("USD", "Standard", "Live"),
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ticket"], "33")
+        self.assertEqual(rows[0]["open_time"], rows[0]["close_time"])
+        self.assertEqual(rows[0]["profit"], 12)
+
+    def test_mt5_trade_query_keeps_reversal_entries_for_conversion(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [{"mt_login": 900003}, {"AccountGroup": "STANDARD"}]
+        cursor.fetchall.return_value = []
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value = cursor_context
+        source = {
+            "name": "Live", "server": "Live", "platform": "MT5", "schema": "live",
+            "table": "mt5_deals", "kind": "mt5_deals", "default_currency": "USD",
+            "account_route": {"schema": "crm", "mt_server_code": "1"},
+        }
+
+        with patch.object(app, "mysql_trade_connect", return_value=connection):
+            app.query_mysql_mt5_source(source, "900003")
+
+        self.assertTrue(any("Entry in (0, 1, 2, 3)" in call.args[0] for call in cursor.execute.call_args_list))
+
     def test_mt5_standard_group_uses_source_default_currency_without_daily_view(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = {"AccountGroup": r"Live1\PXM\B\STD\F00D00"}
@@ -587,6 +627,53 @@ class MoneyScalingTests(unittest.TestCase):
         self.assertEqual(payload["latestSource"], {"platform": "MT5", "server": "AC GB MT5"})
         self.assertEqual(payload["routeValidation"], "crm_confirmed")
         self.assertIn("账户暂未做单", payload["error"])
+
+    def test_account_lookup_orders_are_sorted_before_empty_confirmed_sources(self):
+        def lookup(source, account):
+            return {
+                "exists": source["name"] == "AC CN MT5",
+                "account": account,
+                "orderCount": 3 if source["name"] == "AC CN MT5" else 0,
+                "latestSource": {"platform": "MT5", "server": source["server"]},
+            }
+
+        sources = [
+            {"name": "AC GB MT5", "platform": "MT5", "server": "AC GB MT5"},
+            {"name": "AC CN MT5", "platform": "MT5", "server": "AC CN MT5"},
+        ]
+        with patch.object(app, "MYSQL_SOURCES", sources), \
+             patch.object(app, "query_mysql_account_lookup_source", side_effect=lookup), \
+             patch.object(app, "TRADE_DB_SOURCE", "mysql"):
+            matches = app.account_lookup_databases("532573")
+
+        self.assertEqual([row["latestSource"]["server"] for row in matches], ["AC CN MT5", "AC GB MT5"])
+
+    def test_account_lookup_does_not_turn_all_source_failures_into_no_order(self):
+        source = {"name": "AC GB MT5", "platform": "MT5", "server": "AC GB MT5"}
+        with patch.object(app, "MYSQL_SOURCES", [source]), \
+             patch.object(app, "query_mysql_account_lookup_source", side_effect=RuntimeError("连接超时")), \
+             patch.object(app, "TRADE_DB_SOURCE", "mysql"):
+            matches = app.account_lookup_databases("532574")
+
+        self.assertEqual(len(matches), 1)
+        self.assertTrue(matches[0]["queryFailed"])
+        self.assertIn("查询失败", matches[0]["error"])
+
+    def test_detail_requires_server_selection_before_merging_multiple_sources(self):
+        routes = [
+            {"exists": True, "orderCount": 2, "latestSource": {"platform": "MT5", "server": "AC GB MT5"}},
+            {"exists": True, "orderCount": 4, "latestSource": {"platform": "MT5", "server": "AC CN MT5"}},
+        ]
+        with patch.object(app, "account_lookup_databases", return_value=routes), \
+             patch.object(app, "account_trade_analysis") as analysis:
+            detail = app._account_database_detail_uncached("532573")
+
+        self.assertTrue(detail["requiresSourceSelection"])
+        self.assertEqual(detail["sourceCandidates"], [
+            {"platform": "MT5", "server": "AC GB MT5", "orderCount": 2},
+            {"platform": "MT5", "server": "AC CN MT5", "orderCount": 4},
+        ])
+        analysis.assert_not_called()
 
     def test_mt4_trade_query_excludes_open_position_sentinel(self):
         cursor = MagicMock()
@@ -2338,6 +2425,8 @@ class OrderListTests(unittest.TestCase):
         self.assertIn("async function openAccountFromDetailSearch", html)
         self.assertIn("/api/account-lookup?account=", html)
         self.assertIn("matches.find(item=>item.latestSource?.platform===current.platform&&item.latestSource?.server===current.server)", html)
+        self.assertIn('id="accountSourceDialog"', html)
+        self.assertIn("matches.length>1", html)
 
     def test_account_detail_embedded_script_has_valid_javascript(self):
         script = re.search(r"<script>(.*?)</script>", app.ACCOUNT_DETAIL_HTML, re.DOTALL)

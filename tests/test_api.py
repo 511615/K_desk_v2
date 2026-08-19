@@ -511,6 +511,9 @@ def test_vue_workbench_forces_account_links_through_the_server() -> None:
     assert "router.push" not in workbench_source
     assert "<RouterLink" not in workbench_source
     assert "window.location.assign(accountHref(" in workbench_source
+    assert "lookupMatches" in workbench_source
+    assert "matches.length > 1" in workbench_source
+    assert "选择平台 / 服务器" in workbench_source
 
 
 def test_vue_index_is_not_cached_across_production_deployments(tmp_path: Path) -> None:

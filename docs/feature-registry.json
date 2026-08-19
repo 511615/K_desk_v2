@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "5bd8d932580c",
+  "registryVersion": "9c47407610be",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -38,7 +38,7 @@
         "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-07",
+      "last_verified_date": "2026-08-19",
       "document": "docs/features/account/account-detail-legacy.md"
     },
     {
@@ -158,7 +158,9 @@
       ],
       "code": [
         "src/kdesk/api/account_app.py",
-        "legacy/apps/problem_account_registry/app.py"
+        "legacy/apps/problem_account_registry/app.py",
+        "frontend/src/pages/WorkbenchPage.vue",
+        "frontend/src/styles.css"
       ],
       "tests": [
         "tests/test_api.py",
@@ -169,7 +171,7 @@
         "FIN-REBATE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-06",
+      "last_verified_date": "2026-08-19",
       "document": "docs/features/account/account-search.md"
     },
     {

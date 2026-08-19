@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_netwo
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "FIN-HISTORY-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-07
+last_verified_date: 2026-08-19
 ---
 
 # Legacy account detail page
@@ -28,9 +28,11 @@ start/end controls and an explicit query action; each dialog's visible result an
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
-ledger. It reuses the read-only account lookup route, preferring a matching current platform/server
-when that Login exists there and otherwise using the first returned source. Empty, non-numeric,
-not-found and lookup-in-progress states are visible beside the input.
+ledger. It reuses the read-only account lookup route. When the Login exists on multiple platforms or
+servers, a source-selection dialog lists every candidate and the user must choose one before
+navigation; the selected platform/server is carried into the detail URL. Empty, non-numeric,
+not-found and lookup-in-progress states are visible beside the input. Direct detail requests without
+source filters also return a source-selection state rather than merging orders from different servers.
 Successful Copy and EA dialog payloads are retained in page memory by normalized platform/server/
 symbol filters and their selected opening-time ranges. Closing a dialog preserves its result; reopening uses no network request. The main
 refresh button clears both dialog caches before loading fresh account data.
@@ -103,6 +105,10 @@ does not render another server's data.
 When CRM confirms the selected route but the trading history is empty, detail retains that confirmed
 source identity and reports an empty-order state. It never guesses another physical source merely
 to populate the page.
+MT5 reversal/out-by deals (`Entry` 2/3) that have no standard open/close pair remain visible as a
+zero-duration factual trade row; they are not discarded as an empty account.
+The account-source lookup includes those entries before conversion, so the detail page cannot report
+an empty account solely because its available execution uses an `Entry` 2/3 form.
 
 ## Business rules and units
 

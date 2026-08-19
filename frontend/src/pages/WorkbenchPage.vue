@@ -17,6 +17,8 @@ const actionFilter = ref('')
 const statusFilter = ref('')
 const lookupBusy = ref(false)
 const lookupError = ref('')
+const lookupMatches = ref<any[]>([])
+const lookupSelectionOpen = ref(false)
 const statusSaving = ref('')
 const tools = reactive({ logs: true, hierarchy: true })
 const logsForm = reactive({ account: '', start: localDate(-1), end: localDate(0) })
@@ -84,14 +86,27 @@ async function openAccount(login = accountInput.value.trim()) {
   lookupError.value = ''
   try {
     const result = await api<any>(`/api/account-lookup?account=${encodeURIComponent(login)}`)
-    if (!result.database?.exists) throw new Error('未在交易库或本地台账中找到该账号')
-    const source = result.database.latestSource || {}
+    const matches = Array.isArray(result.databases) ? result.databases : []
+    if (result.database?.queryFailed) throw new Error(result.database.error || '账号查询失败，请稍后重试')
+    if (!matches.length && !result.database?.exists) throw new Error('未在交易库或本地台账中找到该账号')
+    if (matches.length > 1) {
+      lookupMatches.value = matches
+      lookupSelectionOpen.value = true
+      return
+    }
+    const source = (matches[0] || result.database).latestSource || {}
     window.location.assign(accountHref(login, source.platform, source.server))
   } catch (error: any) {
     lookupError.value = error.message || '账号查询失败'
   } finally {
     lookupBusy.value = false
   }
+}
+
+function chooseAccountSource(match: any) {
+  const source = match?.latestSource || {}
+  lookupSelectionOpen.value = false
+  window.location.assign(accountHref(accountInput.value.trim(), source.platform, source.server))
 }
 
 async function updateStatus(row: any, status: string) {
@@ -284,6 +299,18 @@ onBeforeUnmount(() => {
         <small v-if="lookupError" class="inline-error">{{ lookupError }}</small>
       </div>
     </section>
+
+    <div v-if="lookupSelectionOpen" class="lookup-modal" role="dialog" aria-modal="true" aria-labelledby="lookup-modal-title">
+      <button class="lookup-modal-backdrop" type="button" aria-label="关闭账号来源选择" @click="lookupSelectionOpen=false"></button>
+      <section class="lookup-modal-card">
+        <div class="section-head"><div><h2 id="lookup-modal-title">选择平台 / 服务器</h2><small>账号 {{ accountInput }} 在多个交易来源存在，请选择要查看的详细数据</small></div><button class="text-button" type="button" @click="lookupSelectionOpen=false">关闭</button></div>
+        <div class="lookup-source-list">
+          <button v-for="match in lookupMatches" :key="`${match.latestSource?.platform}-${match.latestSource?.server}`" type="button" class="lookup-source-option" @click="chooseAccountSource(match)">
+            <span><b>{{ match.latestSource?.platform || '-' }} / {{ match.latestSource?.server || '-' }}</b><small>{{ match.exists ? `${match.orderCount || 0} 笔订单` : '账户暂未做单' }}</small></span><strong>查看详情 →</strong>
+          </button>
+        </div>
+      </section>
+    </div>
 
     <RebateAuditPanel :initial-account="accountInput" />
 

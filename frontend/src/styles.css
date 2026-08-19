@@ -50,6 +50,15 @@ label { color: #839eb8; font-size: 12px }
 .lookup-block { display: flex; flex-direction: column; gap: 6px; align-items: flex-end }
 .lookup { display: flex; gap: 8px }
 .lookup input { width: 340px }
+.lookup-modal { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.lookup-modal-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: #020a14d9; }
+.lookup-modal-card { position: relative; width: min(620px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; padding: 18px; border: 1px solid #24618e; border-radius: 8px; background: #061a31; box-shadow: 0 22px 70px #000b; }
+.lookup-source-list { display: grid; gap: 9px; }
+.lookup-source-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 13px 14px; border: 1px solid #1c527b; border-radius: 6px; background: #071f38; color: #dcecf8; text-align: left; cursor: pointer; }
+.lookup-source-option:hover, .lookup-source-option:focus-visible { border-color: #1ab5fb; background: #0a3152; }
+.lookup-source-option span, .lookup-source-option small { display: block; }
+.lookup-source-option small { margin-top: 4px; color: #819db5; font-size: 11px; }
+.lookup-source-option strong { color: #58d2f5; white-space: nowrap; }
 .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0 }
 .four-summary { grid-template-columns: repeat(4, 1fr) }
 .summary-grid article { padding: 13px 16px; background: #071b32; border: 1px solid #154367; border-radius: 7px }
@@ -382,6 +391,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #a9bed0; font: 11px
   .hero { align-items: stretch; flex-direction: column; gap: 14px }
   .lookup-block { align-items: stretch }
   .lookup input { width: 100% }
+  .lookup-modal { padding: 10px }
+  .lookup-modal-card { width: calc(100vw - 20px); padding: 13px }
   .four-summary { grid-template-columns: repeat(2, 1fr) }
   .tool-form { display: grid; grid-template-columns: 1fr 1fr }
   .tool-form label, .tool-form label.grow { min-width: 0 }

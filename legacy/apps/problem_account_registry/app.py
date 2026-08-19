@@ -1403,6 +1403,7 @@ def account_lookup_databases(account: str) -> list[dict]:
     if cached is not None:
         return cached
     matches: list[dict] = []
+    errors: list[str] = []
     if TRADE_DB_SOURCE in {"mysql", "auto"}:
         with ThreadPoolExecutor(max_workers=min(8, len(MYSQL_SOURCES)), thread_name_prefix="lookup-source") as executor:
             futures = {executor.submit(query_mysql_account_lookup_source, source, account): source for source in MYSQL_SOURCES}
@@ -1411,12 +1412,34 @@ def account_lookup_databases(account: str) -> list[dict]:
                     result = future.result()
                     if result:
                         matches.append(result)
-                except Exception:
+                except Exception as exc:
+                    errors.append(f"{futures[future].get('name', '交易源')}: {exc}")
                     continue
     if not matches and TRADE_DB_SOURCE in {"sqlite", "auto"}:
         matches = query_sqlite_account_lookup(account)
+    if not matches and errors:
+        matches = [{
+            "exists": False,
+            "queryFailed": True,
+            "dbSource": "mysql",
+            "account": account,
+            "orderCount": 0,
+            "chartableOrderCount": 0,
+            "symbols": [],
+            "latestSource": {},
+            "accountMeta": account_money_meta(),
+            "error": "账号查询失败，未能确认交易记录；请稍后重试",
+            "errorDetails": errors[:3],
+            "refreshedAt": now_text(),
+        }]
     source_order = {(source["platform"], source["server"]): index for index, source in enumerate(MYSQL_SOURCES)}
-    matches.sort(key=lambda item: source_order.get((item["latestSource"]["platform"], item["latestSource"]["server"]), len(source_order)))
+    matches.sort(key=lambda item: (
+        not bool(item.get("exists")),
+        source_order.get((
+            (item.get("latestSource") or {}).get("platform", ""),
+            (item.get("latestSource") or {}).get("server", ""),
+        ), len(source_order)),
+    ))
     return account_cache_set(cache_key, matches)
 
 
@@ -1501,6 +1524,45 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
         opens = [row for row in items if mysql_int(row.get("Entry"), -1) == 0 and mysql_int(row.get("Action"), -1) in (0, 1)]
         closes = [row for row in items if mysql_int(row.get("Entry"), -1) == 1 and mysql_int(row.get("Action"), -1) in (0, 1)]
         if not opens or not closes:
+            reversal = next(
+                (row for row in items if mysql_int(row.get("Entry"), -1) in (2, 3) and mysql_int(row.get("Action"), -1) in (0, 1)),
+                None,
+            )
+            if reversal:
+                event_time = mysql_datetime_text(reversal.get("Time"))
+                event_time_msc = mysql_datetime_text(reversal.get("TimeMsc") or reversal.get("Time"))
+                action = mysql_int(reversal.get("Action"))
+                out.append({
+                    "id": normalize_text(reversal.get("Deal") or position_id),
+                    "source_id": normalize_text(source.get("name")),
+                    "data_source": "mysql",
+                    "platform": source.get("platform", "MT5"), "server": source.get("server", source.get("name", "")),
+                    "account": account, "account_currency": account_meta.get("currency", ""),
+                    "display_currency": account_meta.get("displayCurrency", ""), "money_scale": money_scale,
+                    "is_cent_account": bool(account_meta.get("isCentAccount")),
+                    "currency_source": normalize_text(account_meta.get("currencySource")),
+                    "ticket": normalize_text(reversal.get("PositionID") or reversal.get("Order") or reversal.get("Deal")),
+                    "open_time": event_time, "close_time": event_time,
+                    "open_time_msc": event_time_msc, "close_time_msc": event_time_msc,
+                    "type": "buy" if action == 0 else "sell",
+                    "volume": normalize_mt5_volume(reversal.get("VolumeClosed") or reversal.get("Volume")),
+                    "symbol": normalize_text(reversal.get("Symbol")),
+                    "open_price": reversal.get("Price") or 0, "close_price": reversal.get("Price") or 0,
+                    "commission": numeric_value(reversal.get("Commission")) * money_scale,
+                    "fee": numeric_value(reversal.get("Fee")) * money_scale, "taxes": 0,
+                    "swap": numeric_value(reversal.get("Storage")) * money_scale,
+                    "profit": numeric_value(reversal.get("Profit")) * money_scale,
+                    "sl": reversal.get("PriceSL") or "", "tp": reversal.get("PriceTP") or "",
+                    "reason": trade_reason_label("MT5", reversal.get("Reason")),
+                    "reason_code": mysql_int(reversal.get("Reason"), -1),
+                    "open_comment": normalize_text(reversal.get("Comment")), "comment": normalize_text(reversal.get("Comment")),
+                    "expert_id": normalize_text(reversal.get("ExpertID")),
+                    "tick_value": numeric_value(reversal.get("TickValue")), "tick_size": numeric_value(reversal.get("TickSize")),
+                    "contract_size": numeric_value(reversal.get("ContractSize")),
+                    "market_bid": numeric_value(reversal.get("MarketBid")), "market_ask": numeric_value(reversal.get("MarketAsk")),
+                    "price_gateway": numeric_value(reversal.get("PriceGateway")), "holding_seconds": 0,
+                    "raw_json": json.dumps({"source": source.get("name"), "reversal": reversal}, ensure_ascii=False, default=str),
+                })
             continue
         open_row = opens[0]
         for close_row in closes:
@@ -1558,7 +1620,7 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
 
 
 def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: str = "", end: str = "", limit: int | None = 50000) -> list[dict]:
-    where = ["Login = %s", "Action in (0, 1)", "Entry in (0, 1)"]
+    where = ["Login = %s", "Action in (0, 1)", "Entry in (0, 1, 2, 3)"]
     args: list[object] = [int(account)]
     if symbol:
         where.append("Symbol = %s")
@@ -4246,6 +4308,27 @@ def _account_database_detail_uncached(login: str, filters: dict | None = None) -
     active_filters = {key: normalize_text(filters.get(key)) for key in ("platform", "server", "symbol", "start", "end")}
     source_scope = {key: active_filters[key] for key in ("platform", "server")}
     detail_filters = {key: active_filters[key] for key in ("symbol", "start", "end")}
+    if not any(source_scope.values()):
+        candidates = account_lookup_databases(login)
+        if len(candidates) > 1:
+            return {
+                "exists": False,
+                "account": login,
+                "requiresSourceSelection": True,
+                "sourceCandidates": [
+                    {
+                        "platform": normalize_text((item.get("latestSource") or {}).get("platform")),
+                        "server": normalize_text((item.get("latestSource") or {}).get("server")),
+                        "orderCount": mysql_int(item.get("orderCount")),
+                    }
+                    for item in candidates
+                ],
+                "platforms": [],
+                "servers": [],
+                "metrics": trade_metrics([]),
+                "error": "账号同时存在多个平台/服务器，请先选择查看来源",
+                "refreshedAt": now_text(),
+            }
     try:
         analysis = account_trade_analysis(login, **source_scope)
         history_limit = analysis["historyLimit"]
@@ -11290,6 +11373,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .order-pager { border-color:#163b62; background:#06172c; }
     dialog { background:#06162b; border:1px solid #237fc2; border-radius:10px; box-shadow:0 18px 70px #000c,0 0 30px #168cff44; }
     dialog::backdrop { background:#010711dd; backdrop-filter:blur(3px); }
+    .account-source-dialog { width:min(620px,calc(100% - 30px)); height:auto; max-height:calc(100% - 30px); padding:18px; }
+    .account-source-list { display:grid; gap:9px; }
+    .account-source-option { display:flex; align-items:center; justify-content:space-between; gap:14px; width:100%; padding:13px 14px; border:1px solid #245586; border-radius:6px; background:#071f38; color:#dcecf8; text-align:left; cursor:pointer; }
+    .account-source-option:hover,.account-source-option:focus-visible { border-color:#1ab5fb; background:#0a3152; }
+    .account-source-option small { display:block; margin-top:4px; color:#819db5; font-size:11px; }
+    .account-source-option strong { color:#58d2f5; white-space:nowrap; }
     .dialog-head { background:#071a31; border-bottom:1px solid #1d6097; }
     .dialog-head button,.dialog-head a { color:#b9d8fa; border:1px solid #245586; border-radius:5px; background:#081b36; text-decoration:none; padding:7px 10px; }
     .dialog-head-actions { display:flex; align-items:center; gap:8px; }
@@ -11720,6 +11809,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     </details>
   </main>
   <dialog id="previewDialog"><div class="dialog-head"><b>AI 交易复核图表</b><div class="dialog-head-actions"><a id="previewOpen" href="#" target="_blank" rel="noopener">新窗口打开</a><button id="closePreview">关闭</button></div></div><iframe id="previewFrame" title="AI 交易复核图表"></iframe></dialog>
+  <dialog id="accountSourceDialog" class="account-source-dialog"><div class="dialog-head"><b>选择平台 / 服务器</b><button id="closeAccountSource" type="button">关闭</button></div><p id="accountSourceHint" class="status">该账号存在多个交易来源，请选择要查看的详细数据。</p><div id="accountSourceList" class="account-source-list"></div></dialog>
   <dialog id="toxicDialog" class="toxic-dialog">
     <div class="dialog-head"><b>Toxic 专项检测</b><button id="closeToxic" type="button">关闭</button></div>
     <div class="toxic-body">
@@ -11803,7 +11893,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     const LOGIN=__ACCOUNT_LOGIN_JSON__;
     const $=id=>document.getElementById(id);
     const initialParams=new URLSearchParams(location.search);
-    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null}};
+    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null},accountLookupMatches:[]};
     const TOXIC_TYPES=[
       {id:'market_pushing',label:'推盘',tick:true},{id:'quote_latency_arbitrage',label:'报价延迟套利',tick:true},{id:'cross_platform_spread_arbitrage',label:'跨平台点差套利',tick:true},
       {id:'rebate_churning',label:'刷返佣'},{id:'bonus_arbitrage',label:'赠金套利'},{id:'short_close_trading',label:'短平交易'},
@@ -12015,11 +12105,21 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       button.disabled=true;status.textContent='正在定位账号...';
       try{
         const data=await json(`/api/account-lookup?account=${encodeURIComponent(account)}`),matches=(data.databases||[]).length?data.databases:[data.database].filter(Boolean);
+        if(data.database?.queryFailed)throw new Error(data.database.error||'账号查询失败，请稍后重试');
         if(!matches.length)throw new Error('未找到该账号');
+        if(matches.length>1){openAccountSourceDialog(account,matches);status.textContent=`找到 ${matches.length} 个平台/服务器，请选择`;return;}
         const current=filters(),selected=matches.find(item=>item.latestSource?.platform===current.platform&&item.latestSource?.server===current.server)||matches[0],source=selected.latestSource||{};
         const query=new URLSearchParams();if(source.platform)query.set('platform',source.platform);if(source.server)query.set('server',source.server);
         location.assign(`/account/${encodeURIComponent(account)}${query.size?`?${query}`:''}`);
       }catch(err){status.textContent=err.message||'账号查询失败';button.disabled=false;}
+      finally{if(status.textContent==='正在定位账号...')button.disabled=false;}
+    }
+    function openAccountSourceDialog(account,matches){
+      state.accountLookupMatches=matches;const dialog=$("accountSourceDialog"),list=$("accountSourceList");
+      $("accountSourceHint").textContent=`账号 ${account} 同时存在多个平台/服务器，请选择要查看的详细数据。`;
+      list.innerHTML=matches.map((item,index)=>{const source=item.latestSource||{};return `<button type="button" class="account-source-option" data-source-index="${index}"><span><b>${esc(source.platform||'-')} / ${esc(source.server||'-')}</b><small>${item.exists?`${num(item.orderCount,0)} 笔订单`:'账户暂未做单'}</small></span><strong>查看详情 →</strong></button>`;}).join('');
+      list.querySelectorAll('[data-source-index]').forEach(button=>button.addEventListener('click',()=>{const item=state.accountLookupMatches[Number(button.dataset.sourceIndex)]||{},source=item.latestSource||{},query=new URLSearchParams();if(source.platform)query.set('platform',source.platform);if(source.server)query.set('server',source.server);dialog.close();location.assign(`/account/${encodeURIComponent(account)}${query.size?`?${query}`:''}`);}));
+      dialog.showModal();
     }
     function automationDialogQuery(){const q=new URLSearchParams(filters());[...q.keys()].forEach(key=>{if(!q.get(key))q.delete(key)});q.sort();return q;}
     function copyOriginDialogQuery(){const q=automationDialogQuery(),start=databaseTime($("copyOriginStart").value),end=databaseTime($("copyOriginEnd").value,true);if(start&&end&&start>end)throw new Error('跟单开始时间不能晚于结束时间');if(start)q.set('start',start);if(end)q.set('end',end);q.sort();return q;}
@@ -12194,7 +12294,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       }catch(err){status.textContent=err.message||'报表导出失败';}finally{button.disabled=false;}
     }
     async function loadRiskPanels(q){const request=++state.riskRequest;try{const data=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/risk-panels?${q}`);if(request!==state.riskRequest)return;if(state.detail?.database)state.detail.database.riskPanels=data.riskPanels;renderRiskPanels(data.riskPanels);}catch(err){if(request===state.riskRequest)renderRiskPanels({available:false,reason:err.message});}}
-    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{render(await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`),keepFilters);loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
+    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{const detail=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`);if(detail.database?.requiresSourceSelection){openAccountSourceDialog(LOGIN,(detail.database.sourceCandidates||[]).map(item=>({exists:true,orderCount:item.orderCount,latestSource:{platform:item.platform,server:item.server}})));$("metricStatus").textContent='请先选择平台 / 服务器';return;}render(detail,keepFilters);loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
     function targetAccounts(){return $("batchSameName").checked&&!$("batchSameName").disabled?state.sameNameAccounts:[String(LOGIN)];}
     async function markRequest(payload,accounts=targetAccounts()){const batch=accounts.length>1;return json(batch?'/api/accounts/mark-batch':'/api/accounts/mark',{method:'POST',body:JSON.stringify(batch?{...payload,accounts}:{...payload,account:LOGIN})});}
     function applyLocalAction(action,accounts){const panels=state.detail?.database?.riskPanels;if(!panels?.sameName)return;const targets=new Set(accounts.map(String));panels.sameName.forEach(row=>{if(targets.has(String(row.account)))row.localStatus=action;});renderRiskPanels(panels);}
@@ -12343,6 +12443,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       }catch(err){$("toxicStatus").textContent=err.message;state.toxic.running=false;$("startToxic").disabled=false;$("toxicBtn").disabled=false;}
     }
     $("accountId").textContent=LOGIN;renderToxicSelector();$("detailAccountSearchForm").addEventListener('submit',openAccountFromDetailSearch);$("refreshBtn").addEventListener('click',()=>{clearAutomationDialogCache();load(true);});$("refreshIpBtn").addEventListener('click',loadIps);$("copyOriginBtn").addEventListener('click',openCopyOrigins);$("applyCopyOriginRange").addEventListener('click',loadCopyOrigins);$("exportCopyReportBtn").addEventListener('click',()=>downloadAutomationReport('copy'));$("closeCopyDialog").addEventListener('click',()=>$("copyDialog").close());$("eaCommentBtn").addEventListener('click',openEaCommentGroups);$("applyEaCommentRange").addEventListener('click',loadEaCommentGroups);$("exportEaReportBtn").addEventListener('click',()=>downloadAutomationReport('ea'));$("closeEaCommentDialog").addEventListener('click',()=>$("eaCommentDialog").close());$("relationshipNetworkBtn").addEventListener('click',openRelationshipNetwork);$("resetRelationshipNetworkBtn").addEventListener('click',resetRelationshipNetwork);$("closeRelationshipNetworkDialog").addEventListener('click',()=>$("relationshipNetworkDialog").close());$("manageActionsBtn").addEventListener('click',toggleActionManager);$("addQuickActionBtn").addEventListener('click',addQuickAction);$("newQuickAction").addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addQuickAction();}});$("saveBtn").addEventListener('click',save);$("status").addEventListener('change',saveStatusOnly);$("chartSymbol").addEventListener('change',event=>selectChartSymbol(event.target.value,true));$("includeTimeline").addEventListener('change',event=>{$("refreshTimelineCache").disabled=!event.target.checked;if(!event.target.checked)$("refreshTimelineCache").checked=false;});$("generateBtn").addEventListener('click',generate);$("toxicBtn").addEventListener('click',openToxic);$("historicalFundsBtn").addEventListener('click',openHistoricalFunds);$("historicalFundsPrev").addEventListener('click',()=>{if(state.historicalFunds.page>1){state.historicalFunds.page--;renderHistoricalFundsEvents();}});$("historicalFundsNext").addEventListener('click',()=>{const pages=Math.ceil((state.historicalFunds.data?.events?.length||0)/state.historicalFunds.pageSize);if(state.historicalFunds.page<pages){state.historicalFunds.page++;renderHistoricalFundsEvents();}});$("closeHistoricalFunds").addEventListener('click',()=>$("historicalFundsDialog").close());$("startToxic").addEventListener('click',()=>startToxic());document.querySelectorAll('input[name="toxicMode"]').forEach(input=>input.addEventListener('change',updateToxicMode));$("closeToxic").addEventListener('click',()=>$("toxicDialog").close());$("closePreview").addEventListener('click',()=>{$("previewDialog").close();$("previewFrame").src='about:blank';});
+    $("closeAccountSource").addEventListener('click',()=>$("accountSourceDialog").close());
     ["customAction","group","tags","note","owner"].forEach(id=>$(id).addEventListener('input',()=>{state.formDirty=true;}));
     $("orderDetails").addEventListener('toggle',()=>{if($("orderDetails").open&&!state.orders.loaded)loadOrders(1);});$("orderPrev").addEventListener('click',()=>loadOrders(state.orders.page-1));$("orderNext").addEventListener('click',()=>loadOrders(state.orders.page+1));
     loadLedger();load().catch(err=>{$("metricStatus").textContent=err.message;});loadIps();

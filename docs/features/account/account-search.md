@@ -4,11 +4,11 @@ title: Account search and source routing
 module: account
 status: active
 apis: ["GET /api/account-lookup", "GET /api/account-lookup-finance"]
-code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py"]
+code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/pages/WorkbenchPage.vue", "frontend/src/styles.css"]
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["FIN-COMP-001", "FIN-REBATE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-06
+last_verified_date: 2026-08-19
 ---
 
 # Account search and source routing
@@ -21,14 +21,19 @@ which the login exists. The selected result opens `/account/{login}` with platfo
 ## UI and behavior
 
 Results show platform, logical server and account metadata. Shared numeric logins remain separate
-rows. Search does not silently choose a different CRM route. A CRM-confirmed newly registered
+rows. When more than one result is returned, the workbench opens a source-selection dialog and
+does not navigate until the user chooses a platform/server. Search does not silently choose a different CRM route. A CRM-confirmed newly registered
 account remains a selectable result even before its first trading row exists: it shows its real
 platform/server together with the explicit `账户暂未做单` state.
 
 ## API contract
 
 `GET /api/account-lookup?account=` returns `database` for legacy callers and `databases` for all
-matches. `GET /api/account-lookup-finance` accepts account/platform/server and preserves `AC MT4`
+matches. Matching sources with orders are ordered before CRM-confirmed zero-order sources so a
+legacy caller still receives the most useful default while the full candidate list remains intact.
+The source query includes MT5 execution entries 0 through 3 before the account trade converter
+classifies ordinary pairs and reversal/out-by evidence.
+`GET /api/account-lookup-finance` accepts account/platform/server and preserves `AC MT4`
 and `DBG MT5` aliases while resolving finance from the actual result server.
 Each MySQL lookup may additionally expose `routeValidation`; existing response fields are unchanged.
 
