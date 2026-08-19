@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "8db92d807590",
+  "registryVersion": "b2541b12432b",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -529,8 +529,8 @@
         "tests/test_verify_live_matrix.py"
       ],
       "depends_on": [],
-      "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-07",
+      "last_verified_version": "2.1.1",
+      "last_verified_date": "2026-08-19",
       "document": "docs/features/governance/feature-lifecycle.md"
     },
     {

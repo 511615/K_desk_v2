@@ -20,6 +20,11 @@ operational change under `D:\risk\K_desk_v2`.
    `BUSINESS_RULES.md`, `OPERATIONS.md` or `TEST_STRATEGY.md`.
 5. Inspect `git status` and preserve all unrelated user changes.
 
+For release or deployment work, also verify the worktree identity before editing or restarting:
+the production checkout is `D:\risk\K_desk_v2_main` on `main`; development is
+`D:\risk\K_desk_v2_dev` on `develop`. Do not create an ad-hoc worktree for deployment. A feature
+worktree must have a named branch and an explicit cleanup/merge decision.
+
 ## Feature lifecycle
 
 - Existing feature: update its current-state document and add one new immutable unreleased change record.
@@ -54,6 +59,12 @@ During implementation run Fast verification; before handoff run Full:
 pwsh -NoLogo -NoProfile -NonInteractive -File scripts\verify_change.ps1 -Mode Fast
 pwsh -NoLogo -NoProfile -NonInteractive -File scripts\verify_change.ps1 -Mode Full
 ```
+
+Before production restart, run the release script from the clean production checkout. It must
+verify `main`, the fixed production root and a clean worktree. After startup, compare the release
+manifest with `/api/meta` and run `scripts\verify_deployed_release.ps1`; readiness alone does not
+prove that the intended commit is running. For the relationship workspace, the default
+`/kuzu-risk` route is `focus-force`; `graph_type=galaxy` is explicit compatibility only.
 
 Release mode requires the ignored local read-only ten-server fixture and explicit
 `KDESK_ENABLE_LIVE_CONTRACTS=1`.

@@ -7,8 +7,8 @@ apis: ["GET /api/meta", "POST /scripts/release_prod.ps1", "POST /scripts/verify_
 code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
 tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_production_versioning.py", "tests/test_verify_live_matrix.py"]
 depends_on: []
-last_verified_version: 2.1.0
-last_verified_date: 2026-08-07
+last_verified_version: 2.1.1
+last_verified_date: 2026-08-19
 ---
 
 # Feature documentation lifecycle

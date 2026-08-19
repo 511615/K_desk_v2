@@ -4,6 +4,16 @@
 
 1. Read `docs/README.md`, `docs/ARCHITECTURE.md`, and the affected feature documents.
 2. Inspect `git status`; preserve all user-owned and unrelated worktree changes.
+
+## Worktree and release policy
+
+- Production is deployed only from `D:\risk\K_desk_v2_main` on branch `main`.
+- Development and verification use `D:\risk\K_desk_v2_dev` on branch `develop`.
+- `D:\risk\K_desk_v2` is a preserved user feature worktree; do not deploy from it or clean it automatically.
+- Do not create ad-hoc release or detached worktrees. A temporary feature worktree requires a named branch,
+  an explicit merge/retention decision, and removal only after its changes are verified and accounted for.
+- A production restart must use `scripts\release_prod.ps1`; readiness alone is insufficient. Verify `/api/meta`
+  and the intended graph route after startup.
 3. Identify the affected Feature ID in `docs/feature-registry.json`. Create a feature document when no ID exists.
 4. Classify impact as architecture, API, data/routing, business rule, operations, UI, test-only, or internal refactor.
 
