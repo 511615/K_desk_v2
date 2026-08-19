@@ -20,7 +20,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /account/{login}` - account detail page
 - `GET /health/live` - process liveness
 - `GET /health/ready` - service and SQLite readiness
-- `GET /api/meta` - version, profile and capability metadata
+- `GET /api/meta` - deployed version identity, Git SHA, source root, Python executable, branch,
+  schema/feature metadata and default route contracts. Deployment tooling compares this response
+  with the release manifest; a healthy HTTP response alone is not proof that the intended version
+  is running.
 
 ### Ledger and local data
 
@@ -196,6 +199,7 @@ parameters, output names, `8777/8766` ports, iframe previews and direct chart li
 - Start production: `pwsh -File D:\risk\K_desk_v2_main\scripts\start_prod.ps1`
 - Stop production: `pwsh -File D:\risk\K_desk_v2_main\scripts\stop_prod.ps1`
 - Health check: `pwsh -File D:\risk\K_desk_v2_main\scripts\health_check_prod.ps1`
+- Deployment identity check: `pwsh -File D:\risk\K_desk_v2_main\scripts\verify_deployed_release.ps1 -ExpectedGitSha <sha> -ExpectedVersion <version>`
 - Roll back: `pwsh -File D:\risk\K_desk_v2_main\scripts\rollback_to_legacy.ps1 -ConfirmRollback ROLLBACK-KDESK`
 
 All services bind only to localhost. MySQL, MT4 and MT5 integrations are outbound read-only data providers and do not add a K_desk listening port.

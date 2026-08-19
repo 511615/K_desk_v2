@@ -8,7 +8,9 @@
 | K-line web | `127.0.0.1:8766` | `127.0.0.1:8866` |
 | Workers | one interactive Worker and two discovery Workers (push, rebate, bonus and position-risk discovery) | isolated dev queues |
 
-Use `scripts/start_prod.ps1`, `stop_prod.ps1` and `health_check_prod.ps1`. The stop script verifies
+Use `scripts/start_prod.ps1`, `stop_prod.ps1`, `health_check_prod.ps1` and
+`verify_deployed_release.ps1`. Production is always started from the clean `main` checkout at
+`D:\risk\K_desk_v2_main`; do not launch Uvicorn manually or from another worktree. The stop script verifies
 port ownership before terminating a process. Production logs are under `runtime/prod/logs` and must
 not contain credentials or sensitive account fields.
 The default production start launches two discovery Workers so a long scan cannot serialize all
@@ -251,9 +253,13 @@ old/dev listener accepting durable K-line jobs while the production queue has no
 5. Check both readiness endpoints and representative account/legacy-page contracts.
 6. On failure, stop the new processes, restore the snapshot and restart the prior version.
 
-Use `scripts/release_prod.ps1 -Version <VERSION>`. It requires Release verification, creates
-consistent SQLite backups with integrity checks, records a manifest, and attempts automatic data
-restore/startup if migration or health acceptance fails.
+Use `scripts/release_prod.ps1 -Version <VERSION>`. It requires the `main` branch, the fixed
+production root and a clean worktree. It runs Release verification, creates consistent SQLite
+backups with integrity checks, records a manifest, and attempts automatic data restore/startup if
+migration or health acceptance fails. After startup it compares the manifest with `/api/meta`,
+checks the source root and Python executable, and verifies default route contracts. Readiness alone
+is insufficient: `/kuzu-risk` must be `focus-force`; `graph_type=galaxy` is the explicit legacy
+compatibility route.
 
 GitHub stores code only. Local release snapshots protect deployment rollback but are not disaster
 recovery for disk loss.

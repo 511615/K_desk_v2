@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "36609cf75dc7",
+  "registryVersion": "8db92d807590",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -493,13 +493,16 @@
       "module": "governance",
       "status": "active",
       "apis": [
-        "GET /api/meta"
+        "GET /api/meta",
+        "POST /scripts/release_prod.ps1",
+        "POST /scripts/verify_deployed_release.ps1"
       ],
       "code": [
         "src/kdesk/__init__.py",
         "src/kdesk/build_info.py",
         "scripts/governance.py",
         "scripts/verify_change.ps1",
+        "scripts/verify_deployed_release.ps1",
         "scripts/verify_live_matrix.py",
         "scripts/backup_sqlite.py",
         "scripts/generate_governance_artifacts.ps1",
@@ -507,6 +510,9 @@
         "scripts/install_maintenance_skill.ps1",
         "scripts/publish_change.ps1",
         "scripts/release_prod.ps1",
+        "scripts/start_prod.ps1",
+        "scripts/stop_prod.ps1",
+        "scripts/health_check_prod.ps1",
         "skills/kdesk-maintenance",
         "frontend/playwright.config.ts",
         "frontend/vite.config.ts",
@@ -519,6 +525,7 @@
       "tests": [
         "tests/test_governance.py",
         "tests/test_architecture.py",
+        "tests/test_production_versioning.py",
         "tests/test_verify_live_matrix.py"
       ],
       "depends_on": [],

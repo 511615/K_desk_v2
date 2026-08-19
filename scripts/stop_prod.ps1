@@ -9,7 +9,14 @@ foreach ($port in @(8777, 8766)) {
         if ($process.CommandLine -like "*$expectedModule*") {
             Stop-Process -Id $listener.OwningProcess -Force
         } else {
-            throw "Refusing to stop port $port because it is not owned by K_desk_v2 $expectedModule"
+            $details = [ordered]@{
+                Port = $port
+                Pid = $listener.OwningProcess
+                ProcessName = [string]$process.Name
+                ExecutablePath = [string]$process.ExecutablePath
+                CommandLine = [string]$process.CommandLine
+            } | ConvertTo-Json -Compress
+            throw "Refusing to stop port $port because it is not owned by K_desk_v2 $expectedModule. Occupant: $details"
         }
     }
 }

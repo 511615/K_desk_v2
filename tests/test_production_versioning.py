@@ -71,6 +71,8 @@ def test_production_process_guards_skip_uninspectable_system_processes() -> None
     assert "ConvertFrom-Json" in health_check
     assert "runtime\\prod\\workers" in health_check
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper
+    assert "Occupant:" in stopper
+    assert "ExecutablePath" in stopper
 
 
 def test_production_launcher_pins_child_python_imports_to_main_source_tree() -> None:
@@ -90,3 +92,27 @@ def test_worker_runtime_heartbeat_markers_are_used_for_queue_readiness() -> None
     assert "workers" in runner
     assert "ConvertFrom-Json" in health_check
     assert "runtime\\prod\\workers" in health_check
+
+
+def test_release_script_is_pinned_to_clean_main_production_root() -> None:
+    root = Path(__file__).resolve().parents[1]
+    release = (root / "scripts" / "release_prod.ps1").read_text(encoding="utf-8")
+
+    assert "branch --show-current" in release
+    assert "Production release requires the main branch" in release
+    assert "D:\\risk\\K_desk_v2_main" in release
+    assert "Production release requires a clean Git worktree" in release
+    assert "SkipGitCleanCheck" not in release
+    assert "verify_deployed_release.ps1" in release
+
+
+def test_deployed_release_verifier_checks_identity_and_graph_routes() -> None:
+    root = Path(__file__).resolve().parents[1]
+    verifier = (root / "scripts" / "verify_deployed_release.ps1").read_text(encoding="utf-8")
+
+    assert "/api/meta" in verifier
+    assert "ExpectedGitSha" in verifier
+    assert "ExpectedVersion" in verifier
+    assert "sourceRoot" in verifier
+    assert "data-graph-type=\"focus-force\"" in verifier
+    assert "graph_type=galaxy" in verifier

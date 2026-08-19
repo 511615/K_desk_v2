@@ -1,8 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '',
-    [switch]$SkipGitCleanCheck
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,11 +21,17 @@ if (-not (Test-Path -LiteralPath $Python)) { throw 'Production Python environmen
 
 Push-Location -LiteralPath $Root
 try {
-    if (-not $SkipGitCleanCheck) {
-        $status = @(& git status --porcelain)
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Git status.' }
-        if ($status.Count -gt 0) { throw 'Production release requires a clean Git worktree.' }
+    $branch = (& git branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') {
+        throw "Production release requires the main branch, found '$branch'."
     }
+    $expectedRoot = 'D:\risk\K_desk_v2_main'
+    if ([IO.Path]::GetFullPath($Root) -ne [IO.Path]::GetFullPath($expectedRoot)) {
+        throw "Production release must run from $expectedRoot, found $Root."
+    }
+    $status = @(& git status --porcelain)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Git status.' }
+    if ($status.Count -gt 0) { throw 'Production release requires a clean Git worktree.' }
     & (Join-Path $Root 'scripts\verify_change.ps1') -Mode Release
     if ($LASTEXITCODE -ne 0) { throw 'Release verification failed.' }
 
@@ -56,8 +61,7 @@ try {
     & $Python -m alembic -c (Join-Path $Root 'alembic.ini') upgrade head
     if ($LASTEXITCODE -ne 0) { throw 'Alembic migration failed.' }
     & (Join-Path $Root 'scripts\start_prod.ps1')
-    $health = @(& (Join-Path $Root 'scripts\health_check_prod.ps1'))
-    if (@($health | Where-Object { -not $_.Ready }).Count -gt 0) { throw 'Production health acceptance failed.' }
+    & (Join-Path $Root 'scripts\verify_deployed_release.ps1') -ExpectedGitSha $releaseManifest.GitSha -ExpectedVersion $Version
 
     Write-Host "K_desk $Version released. Backup: $BackupDir"
 } catch {

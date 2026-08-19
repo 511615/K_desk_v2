@@ -79,13 +79,20 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         payload = client.get("/api/meta").json()
-    assert payload["version"] == "2.1.0"
+    assert payload["version"] == "2.1.1"
     assert payload["gitSha"]
     assert payload["buildTime"]
     assert payload["schemaRevision"] in {"unversioned", "uninitialized", "0001"}
     assert payload["featureRegistryVersion"]
     assert payload["featureCount"] >= 10
     assert payload["compatibilityLevel"] == "legacy-account-v1"
+    assert payload["sourceRoot"]
+    assert payload["pythonExecutable"]
+    assert payload["branch"] in {"main", "detached"}
+    assert payload["defaultRoutes"] == {
+        "kuzuRisk": "focus-force",
+        "kuzuGalaxy": "graph_type=galaxy",
+    }
 
 
 def test_account_validation_rejects_unsafe_path_data(tmp_path: Path) -> None:

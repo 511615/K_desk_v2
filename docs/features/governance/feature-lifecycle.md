@@ -3,9 +3,9 @@ feature_id: GOV-LIFECYCLE-001
 title: Feature documentation lifecycle
 module: governance
 status: active
-apis: ["GET /api/meta"]
-code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
-tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_verify_live_matrix.py"]
+apis: ["GET /api/meta", "POST /scripts/release_prod.ps1", "POST /scripts/verify_deployed_release.ps1"]
+code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1", "scripts/verify_live_matrix.py", "scripts/backup_sqlite.py", "scripts/generate_governance_artifacts.ps1", "scripts/install_git_hooks.ps1", "scripts/install_maintenance_skill.ps1", "scripts/publish_change.ps1", "scripts/release_prod.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1", "skills/kdesk-maintenance", "frontend/playwright.config.ts", "frontend/vite.config.ts", "frontend/pnpm-lock.yaml", "runtime/prod/contracts", ".githooks", ".github/workflows", "AGENTS.md"]
+tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_production_versioning.py", "tests/test_verify_live_matrix.py"]
 depends_on: []
 last_verified_version: 2.1.0
 last_verified_date: 2026-08-07
@@ -24,7 +24,10 @@ There is no end-user panel. Developers and AI use AGENTS, the version-controlled
 
 ## API contract
 
-`/api/meta` publishes version, Git/build/schema metadata, registry version, feature count and compatibility level.
+`/api/meta` publishes version, Git/build/schema metadata, registry version, feature count,
+compatibility level, source root, Python executable, branch and default route contracts. Production
+release acceptance compares these values with the release manifest; readiness alone is not a version
+identity check.
 
 ## Data, routing and read-only constraints
 
@@ -48,6 +51,9 @@ The Python governance CLI is cross-platform; PowerShell composes local Windows v
 ## Tests and acceptance
 
 Tests validate parsing, registry determinism, change records, architecture boundaries and metadata.
+Production release is pinned to `D:\risk\K_desk_v2_main` on `main`; ad-hoc deployment worktrees are
+prohibited. After restart, `verify_deployed_release.ps1` checks Git SHA, version, source root,
+branch, profile and critical route contracts.
 The shared verifier also compiles and safety-lints the versioned copy-pool Producer in Fast mode and
 runs its complete offline regression suite in Full mode. Release verification checks every configured
 live server route and requires each declared volatile finance field to be numeric. Exact finance

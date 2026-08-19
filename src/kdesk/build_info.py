@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -31,6 +32,23 @@ def _git_sha(root: Path) -> str:
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
+def _git_branch(root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=root,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else "detached"
 
 
 def _schema_revision(database_path: Path) -> str:
@@ -62,4 +80,11 @@ def build_metadata(settings: Settings) -> dict:
         "featureRegistryVersion": registry_version,
         "featureCount": feature_count,
         "compatibilityLevel": "legacy-account-v1",
+        "sourceRoot": str(SOURCE_ROOT),
+        "pythonExecutable": sys.executable,
+        "branch": _git_branch(SOURCE_ROOT),
+        "defaultRoutes": {
+            "kuzuRisk": "focus-force",
+            "kuzuGalaxy": "graph_type=galaxy",
+        },
     }
