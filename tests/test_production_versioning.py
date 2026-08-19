@@ -113,6 +113,7 @@ def test_deployed_release_verifier_checks_identity_and_graph_routes() -> None:
     assert "/api/meta" in verifier
     assert "ExpectedGitSha" in verifier
     assert "ExpectedVersion" in verifier
+    assert "ExpectedGitSha).StartsWith" in verifier
     assert "sourceRoot" in verifier
     assert "data-graph-type=\"focus-force\"" in verifier
     assert "graph_type=galaxy" in verifier

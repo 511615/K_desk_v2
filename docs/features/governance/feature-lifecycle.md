@@ -54,6 +54,8 @@ Tests validate parsing, registry determinism, change records, architecture bound
 Production release is pinned to `D:\risk\K_desk_v2_main` on `main`; ad-hoc deployment worktrees are
 prohibited. After restart, `verify_deployed_release.ps1` checks Git SHA, version, source root,
 branch, profile and critical route contracts.
+The verifier accepts the abbreviated Git SHA exposed by `/api/meta` only when it prefixes the
+intended release commit.
 The shared verifier also compiles and safety-lints the versioned copy-pool Producer in Fast mode and
 runs its complete offline regression suite in Full mode. Release verification checks every configured
 live server route and requires each declared volatile finance field to be numeric. Exact finance
