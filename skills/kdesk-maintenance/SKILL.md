@@ -38,6 +38,23 @@ worktree must have a named branch and an explicit cleanup/merge decision.
 
 Never edit an older change record after it has been released. Documentation and code belong in the same Git change.
 
+## Relationship network isolation pilot
+
+The relationship-network refactor is an isolated pilot, not a whole-project rewrite. Keep the
+legacy relationship API and Galaxy compatibility view unchanged while the v2 implementation is
+developed behind `KDESK_RELATIONSHIP_V2_ENABLED` and `KDESK_RELATIONSHIP_V2_DEFAULT` (both default
+to `false` in production). The v2 path uses separate API, application, domain, infrastructure and
+frontend feature boundaries; it must return normalized evidence, coverage and implementation
+metadata instead of leaking legacy payloads.
+
+For this pilot only, a named temporary branch such as `feature/acc-rel-isolated-v2` or
+`feature/acc-rel-evidence-adapter` is allowed. It must branch from `dev`, contain one coherent
+relationship-network objective, and include its Feature document, immutable change record,
+compatibility notes and tests. It is never a deployment source and must be merged back into `dev`
+before `promote_dev.ps1` is used. Do not mix K-line, finance, EA, Toxic or unrelated account-detail
+changes into the pilot branch. If v2 fails, disable the flag and keep the legacy endpoint/page
+available; do not roll back the whole K_desk service merely to revert the relationship module.
+
 ## Implementation boundaries
 
 - Keep the modular monolith and existing `8777/8766` contracts.
