@@ -13,6 +13,8 @@ arrows above or below a candle and made them diverge from the execution quote. A
 overlay converts each order's normalized open/close plot price with the candle series
 `priceToCoordinate` method and its time coordinate. Small directional triangles and close squares
 are therefore anchored to the exact quoted price and remain attached during pan, zoom and resize.
+The Profit pane also now uses a symmetric absolute-value scale and one shared zero baseline so every
+bar starts from the same reference line.
 
 ## Impact
 
