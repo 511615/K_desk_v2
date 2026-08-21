@@ -70,6 +70,7 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "filter:drop-shadow(0 0 1px #e5f2ff)" in html
     assert "profitZero" in html
     assert "minValue:-profitMaxAbs" in html
+    assert "rgba(192,145,255,${alpha})" in html
     assert "MetaTrader5" not in html
 
 

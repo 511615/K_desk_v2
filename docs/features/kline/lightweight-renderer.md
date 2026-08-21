@@ -78,3 +78,7 @@ after fit, pan, zoom and resize so nodes remain attached to their quotes.
 The Profit indicator uses one symmetric absolute-value scale for positive and negative values and a
 shared dashed zero baseline. Profit bars are therefore anchored to the same baseline; positive bars
 extend upward and negative bars downward with equal visual magnitude.
+
+Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with density-aware opacity
+from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
+the dark TradingView-style background.
