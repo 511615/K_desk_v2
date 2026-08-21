@@ -47,13 +47,22 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "filterType" in html
     assert "windowStart" in html
     assert "accountTimelineData" in html
-    assert "toggleNoQuoteTime" in html
+    assert "hideGaps" in html
+    assert "showGaps" in html
     assert "买入开仓 ▲" in html
     assert "卖出开仓 ▼" in html
     assert "开 ${t.Ticket" not in html
     assert "平 ${t.Ticket" not in html
     assert "'S/L'" in html
     assert "'T/P'" in html
+    assert 'id="hideGaps"' in html
+    assert 'id="showGaps"' in html
+    assert 'id="displayLimit"' in html
+    assert "#061322" in html
+    assert "#071b31" in html
+    assert "shownAvgHold" in html
+    assert "groupProfitBars" in html
+    assert "subscribeVisibleLogicalRangeChange" in html
     assert "MetaTrader5" not in html
 
 
