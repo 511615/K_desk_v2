@@ -42,7 +42,7 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     html = build_lightweight_html("10001", "10001_demo", trades, bars, mapping)
     assert "lightweight-charts" in html
     assert "CandlestickSeries" in html
-    assert "createSeriesMarkers" in html
+    assert "createSeriesMarkers" not in html
     assert "panelPosition" in html
     assert "filterType" in html
     assert "windowStart" in html
@@ -63,6 +63,9 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "shownAvgHold" in html
     assert "groupProfitBars" in html
     assert "subscribeVisibleLogicalRangeChange" in html
+    assert "priceToCoordinate" in html
+    assert "tradeMarkers" in html
+    assert "border-left:4px solid transparent" in html
     assert "MetaTrader5" not in html
 
 

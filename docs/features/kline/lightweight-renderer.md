@@ -69,4 +69,8 @@ The current renderer follows the supplied production artifact's interaction cont
 switcher, range status, original order-table columns and position snapshot cards. Nodes keep the
 legacy semantics without ticket text: directional triangles, close squares and dashed holding lines.
 The presentation uses the dark TradingView-style palette; marker colors are light/blue/purple only
-to preserve contrast on that dark surface.
+to preserve contrast on that dark surface. Trade nodes are rendered in a transparent overlay using
+the order's normalized open/close plot price and the chart time coordinate. Buy/sell triangles are
+small (4px side, 7px height) and sit on the exact execution quote rather than using the native
+`aboveBar`/`belowBar` placement; close squares use the exact close quote. The overlay is repositioned
+after fit, pan, zoom and resize so nodes remain attached to their quotes.
