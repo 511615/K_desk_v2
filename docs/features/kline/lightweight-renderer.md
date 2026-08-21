@@ -63,3 +63,7 @@ pass before promotion.
 
 Existing API paths, artifact names and payload fields remain unchanged. Production ports are not
 changed by this feature; promotion requires separate parity verification and cutover.
+
+The current renderer preserves the legacy visual convention: black buy/sell triangles without ticket
+text, blue close squares, purple dashed holding lines, the overlay pane switcher, the original
+order-table columns and the position snapshot card layout.
