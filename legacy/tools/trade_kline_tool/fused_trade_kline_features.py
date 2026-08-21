@@ -3,13 +3,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from account_timeline_features import inject_account_timeline
-from position_fused_trade_kline import (
-    fallback_position_meta,
-    inject_fused_features,
-    inject_position_meta,
-    load_position_meta,
-)
+try:
+    from .account_timeline_features import inject_account_timeline
+    from .position_fused_trade_kline import (
+        fallback_position_meta,
+        inject_fused_features,
+        inject_position_meta,
+        load_position_meta,
+    )
+except ImportError:  # script execution from the legacy tool directory
+    from account_timeline_features import inject_account_timeline
+    from position_fused_trade_kline import (
+        fallback_position_meta,
+        inject_fused_features,
+        inject_position_meta,
+        load_position_meta,
+    )
 
 
 def enhance_trade_kline_html(html: str, statement: Path | str | None = None, trades=None, timeline: dict | None = None) -> str:

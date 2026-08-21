@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "9c47407610be",
+  "registryVersion": "df15b84b8bf8",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -624,6 +624,33 @@
       "last_verified_version": "2.1.0",
       "last_verified_date": "2026-08-12",
       "document": "docs/features/kline/database-generation.md"
+    },
+    {
+      "feature_id": "KLN-RENDER-001",
+      "title": "Lightweight Charts trade renderer",
+      "module": "kline",
+      "status": "active",
+      "apis": [
+        "POST /api/kline/generate-from-db",
+        "GET /output/{name}"
+      ],
+      "code": [
+        "legacy/tools/trade_kline_tool/lightweight_trade_kline.py",
+        "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py",
+        "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
+        "legacy/tools/trade_kline_tool/fused_trade_kline_features.py",
+        "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"
+      ],
+      "tests": [
+        "tests/test_lightweight_trade_kline.py"
+      ],
+      "depends_on": [
+        "KLN-DB-001",
+        "KLN-TIMELINE-001"
+      ],
+      "last_verified_version": "2.1.1",
+      "last_verified_date": "2026-08-21",
+      "document": "docs/features/kline/lightweight-renderer.md"
     },
     {
       "feature_id": "KLN-TIMELINE-001",

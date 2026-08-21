@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 
 import pandas as pd
-from fused_trade_kline_features import enhance_trade_kline_html
+try:
+    from .fused_trade_kline_features import enhance_trade_kline_html
+except ImportError:  # script execution from the legacy tool directory
+    from fused_trade_kline_features import enhance_trade_kline_html
 
 
 def quote_gaps(bars: pd.DataFrame) -> list[dict]:
@@ -1018,7 +1021,20 @@ def main() -> None:
         bars = load_bars_for_symbol(trades_path.parent, stem, report_symbol, mapping)
         bars_by_symbol[report_symbol] = apply_display_price_alignment(report_symbol, bars, symbol_trades, mapping)
     statement_path = find_statement_for_stem(trades_path.parent, account)
-    html = enhance_trade_kline_html(build_html(account, stem, trades, bars_by_symbol, mapping_by_symbol), statement_path, trades)
+    from lightweight_trade_kline import build_lightweight_html
+    position_meta = None
+    if statement_path is not None:
+        try:
+            from position_fused_trade_kline import fallback_position_meta, load_position_meta
+
+            position_meta = load_position_meta(statement_path, trades)
+        except Exception as exc:
+            try:
+                position_meta = fallback_position_meta(trades, statement_path)
+                position_meta["positionMetaWarning"] = str(exc)
+            except Exception:
+                position_meta = {"positionMetaWarning": str(exc)}
+    html = build_lightweight_html(account, stem, trades, bars_by_symbol, mapping_by_symbol, position_meta=position_meta)
     out_path.write_text(html, encoding="utf-8")
     print(out_path)
 

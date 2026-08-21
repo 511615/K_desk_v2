@@ -83,6 +83,14 @@ Gaps over five minutes form segment boundaries and gaps over sixty minutes are l
 quote. Long-history aggregation occurs within each segment. Missing-minute trades retain their real
 time and use hollow warning markers rather than moving to the next quote.
 
+The development renderer is now Lightweight Charts 5.0.8. It consumes the same normalized payload
+and keeps symbol selection, filters, order markers, holding lines, Profit/volume/position panes,
+time-window positioning, summary metrics, order table and optional funds replay. Quote acquisition
+is separated from rendering: `generate_trade_kline_from_statement.py --offline-cache` reads an
+existing mapping and M1 cache only, so it does not initialize MT5. The cache is produced by the
+upstream read-only quote adapter and can later be replaced by a live Terminal feed without changing
+the browser contract.
+
 ## Loading, empty and failure behavior
 
 Invalid uploads, unavailable quotes and unsafe paths fail explicitly. A failed symbol does not block
