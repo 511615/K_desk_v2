@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from kdesk import __version__
 from kdesk.api.common import legacy_filters, request_context
+from kdesk.api.kuzu_3d_preview_page import render_kuzu_3d_preview_page
 from kdesk.api.kuzu_demo_page import render_kuzu_demo_page
 from kdesk.api.kuzu_focus_workspace_page import render_kuzu_focus_workspace_page
 from kdesk.api.kuzu_graph_type_page import render_kuzu_graph_type_page
@@ -25,11 +26,11 @@ from kdesk.application.bonus_arbitrage_scan import normalize_bonus_scan_options
 from kdesk.application.copy_pool_monitor import CopyPoolMonitorService
 from kdesk.application.historical_funds import HistoricalFundsService
 from kdesk.application.ledger_service import LedgerService
-from kdesk.application.position_risk import PositionRiskService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
 from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
+from kdesk.application.trade_relationship_detection import TradeRelationshipDetectionService
 from kdesk.build_info import build_metadata
 from kdesk.domain.rebate_churning import normalize_scan_options
 from kdesk.infrastructure.automation_reports import (
@@ -103,29 +104,8 @@ def _safe_login(login: str) -> str:
 
 
 def _toxic_sync_payload(legacy: LegacyBridge, login: str, filters: dict[str, str]) -> dict:
-    """Return only fully-verified synchronized open/close matches for graph evidence."""
-    position_risk = PositionRiskService(LegacyPositionRiskRepository(legacy))
-    analysis = position_risk.analyze(login, filters, stage="deep")
-    best = analysis.get("bestResult") or {}
-    event = (best.get("evidence") or {}).get("bestEvent") or {}
-    matches = [
-        *list(event.get("sameDirectionMatches") or []),
-        *list(event.get("oppositeDirectionMatches") or []),
-    ]
-    peer_coverage = dict(event.get("peerSearchCoverage") or {})
-    status = str(peer_coverage.get("status") or ("available" if matches else "unavailable"))
-    return {
-        "matches": matches,
-        "coverage": [{
-            "source": "toxicSync",
-            "status": "available" if status == "完成" else status,
-            "reason": "" if status == "完成" else str(peer_coverage.get("reason") or status),
-            "scope": peer_coverage.get("scope") or "AC/DBG 全平台 MT4 + MT5",
-            "matchCount": len(matches),
-            "eventStart": event.get("start") or "",
-            "eventEnd": event.get("end") or "",
-        }],
-    }
+    """Return principal-order synchronization and suspected opposite-lock evidence."""
+    return TradeRelationshipDetectionService(LegacyPositionRiskRepository(legacy)).analyze(login, filters)
 
 
 def _payload_bool(payload: dict, key: str, default: bool) -> bool:
@@ -218,6 +198,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         kuzu_risk.score_projection,
         lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
         lambda login, filters: _toxic_sync_payload(legacy, login, filters),
+        shared_cid_lookup=lambda login, filters: legacy.call("account_shared_cid_payload", login, filters),
         discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
     )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
@@ -495,6 +476,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     async def kuzu_risk_page(graph_type: str = Query("focus-force")) -> HTMLResponse:
         renderer = {
             "choose": render_kuzu_graph_type_page,
+            "focus-3d": render_kuzu_3d_preview_page,
             "focus-force": render_kuzu_focus_workspace_page,
             "galaxy": render_kuzu_risk_page,
         }.get((graph_type or "focus-force").strip().lower(), render_kuzu_focus_workspace_page)

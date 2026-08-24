@@ -258,9 +258,13 @@ def test_relationship_evidence_exposes_an_ib_owner_and_all_direct_rebate_account
             return {"records": [{
                 "crmSchema": "crm", "platform": "MT5", "server": "AC CN MT5", "crmUserId": 23840,
                 "ownIbDirectRebateChecked": True,
+                "ownIbTotalAccounts": 40,
+                "ownIbAbnormalAccounts": 2,
+                "ibAnomalyPeriodStart": "2026-05-10 00:00:00",
+                "ibAnomalyPeriodEnd": "2026-08-10 00:00:00",
                 "ownIbDirectRebateAccounts": [
-                    {"account": "300", "platform": "MT5", "server": "AC CN MT5", "rebateOrderCount": 4, "lastRebateAt": "2026-08-10 10:00:00"},
-                    {"account": "301", "platform": "MT4", "server": "AC CN MT4", "rebateOrderCount": 2, "lastRebateAt": "2026-08-09 10:00:00"},
+                    {"account": "300", "platform": "MT5", "server": "AC CN MT5", "databaseStatus": "P", "rebateOrderCount": 4, "rebateAmount": 100, "tradeProfit": 10, "combinedProfit": 110, "rebateShare": 100 / 110, "inclusionReasons": ["数据库状态 P", "返佣主导盈利"], "lastRebateAt": "2026-08-10 10:00:00"},
+                    {"account": "301", "platform": "MT4", "server": "AC CN MT4", "databaseStatus": "B", "rebateOrderCount": 5, "rebateAmount": 80, "tradeProfit": 0, "combinedProfit": 80, "rebateShare": 1, "inclusionReasons": ["返佣主导盈利"], "lastRebateAt": "2026-08-09 10:00:00"},
                 ],
             }]}
         return {}
@@ -278,7 +282,77 @@ def test_relationship_evidence_exposes_an_ib_owner_and_all_direct_rebate_account
     assert {"200", "300", "301"}.issubset(members)
     assert identity["target"] == ib["id"]
     assert len(rebate_edges) == 2
+    assert "异常 2 / 直属返佣账户共 40 个" in ib["detail"]
+    assert next(entity for entity in result["entities"] if entity["label"] == "300")["databaseStatus"] == "P"
     assert any("返佣关联成交：4 笔" in item for item in rebate_edges[0]["evidence"])
+    assert any("返佣占综合盈利：90.9%" in item for item in rebate_edges[0]["evidence"])
+
+
+def test_relationship_evidence_only_expands_anomalies_below_the_direct_ib() -> None:
+    def legacy_call(name: str, *_args: Any) -> dict[str, Any]:
+        if name == "account_crm_ib_relationship_payload":
+            return {"records": [{
+                "crmSchema": "crm", "platform": "MT5", "server": "AC CN MT5", "crmUserId": 101,
+                "directIbUserId": 202,
+                "directIbAccounts": [{"account": "900", "platform": "MT5", "server": "AC CN MT5"}],
+                "directIbTotalAccounts": 214,
+                "directIbAbnormalAccounts": 2,
+                "directIbHighestStatus": "T",
+                "ibAnomalyPeriodStart": "2026-05-10 00:00:00",
+                "ibAnomalyPeriodEnd": "2026-08-10 00:00:00",
+                "directIbAnomalousRebateAccounts": [
+                    {"account": "300", "platform": "MT5", "server": "AC CN MT5", "databaseStatus": "T", "rebateAmount": 0, "tradeProfit": -10, "combinedProfit": -10, "rebateShare": 0, "rebateOrderCount": 1, "inclusionReasons": ["数据库状态 T"]},
+                    {"account": "301", "platform": "MT4", "server": "AC CN MT4", "databaseStatus": "B", "rebateAmount": 120, "tradeProfit": 5, "combinedProfit": 125, "rebateShare": 0.96, "rebateOrderCount": 9, "inclusionReasons": ["返佣主导盈利"]},
+                ],
+            }]}
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call)
+    try:
+        result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"})
+    finally:
+        service.close()
+
+    ib = next(entity for entity in result["entities"] if entity["type"] == "ib_user" and entity["label"] == "IB 202")
+    anomaly_accounts = {entity["label"] for entity in result["entities"] if entity["type"] == "account"}
+    anomaly_edges = [edge for edge in result["relationships"] if edge["type"] == "ib_direct_rebate"]
+    assert {"100", "300", "301", "900"}.issubset(anomaly_accounts)
+    assert "异常 2 / 直属返佣账户共 214 个" in ib["detail"]
+    assert len(anomaly_edges) == 2
+    assert all(edge["source"] == ib["id"] for edge in anomaly_edges)
+    assert not any(edge["source"] == "account:100" for edge in anomaly_edges)
+    assert any("纳入原因：数据库状态 T" in item for edge in anomaly_edges for item in edge["evidence"])
+
+
+def test_relationship_evidence_deduplicates_the_same_ib_anomaly_edge_across_routes() -> None:
+    member = {
+        "account": "300", "platform": "MT5", "server": "AC CN MT5",
+        "databaseStatus": "P", "rebateAmount": 10, "tradeProfit": -2,
+        "combinedProfit": 8, "rebateShare": 1.25, "rebateOrderCount": 4,
+        "inclusionReasons": ["数据库状态 P"],
+    }
+
+    def legacy_call(name: str, _login: str, _filters: dict[str, str]) -> dict[str, Any]:
+        if name == "account_crm_ib_relationship_payload":
+            return {"records": [{
+                "crmSchema": "crm", "platform": "MT5", "server": "AC CN MT5",
+                "crmUserId": 202, "directIbUserId": 202,
+                "ownIbDirectRebateChecked": True,
+                "ownIbDirectRebateAccounts": [member],
+                "directIbAnomalyChecked": True,
+                "directIbAnomalousRebateAccounts": [member],
+            }]}
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call)
+    try:
+        result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"})
+    finally:
+        service.close()
+
+    edges = [edge for edge in result["relationships"] if edge["type"] == "ib_direct_rebate"]
+    assert len(edges) == 1
+    assert edges[0]["label"] == "IB 异常直属返佣账户"
 
 
 def test_relationship_risk_expands_same_ip_peer_with_an_auditable_edge() -> None:
@@ -329,6 +403,76 @@ def test_relationship_risk_does_not_repeat_shared_last_ip_lookup_for_the_same_ip
     assert {entity["label"] for entity in result["entities"]} == {"100", "200"}
 
 
+def test_relationship_risk_expands_same_cid_peer_and_reads_the_cid_cohort_once() -> None:
+    class _FlatEvidenceNetwork:
+        def build(self, login: str, filters: dict[str, str]) -> dict[str, Any]:
+            return {
+                "entities": [{
+                    "id": f"account:{login}", "type": "account", "label": login,
+                    "platform": filters["platform"], "server": filters["server"], "isSubject": True,
+                }],
+                "relationships": [], "relationTypes": [], "coverage": [],
+            }
+
+    cid_calls: list[str] = []
+
+    def shared_cid(login: str, filters: dict[str, str]) -> dict[str, Any]:
+        cid_calls.append(login)
+        if login == "100":
+            return {
+                "peers": [{
+                    "account": "500", "platform": filters["platform"], "server": filters["server"],
+                    "cid": "987654", "lastAccessAt": "2026-08-24 01:09:03",
+                }],
+                "coverage": [{"source": "sharedCid", "status": "available", "reason": ""}],
+            }
+        return {"peers": [], "coverage": []}
+
+    service = AccountRelationshipRiskService(
+        _FlatEvidenceNetwork(), _projection,
+        lambda _login, _filters: {"peers": [], "coverage": []},
+        shared_cid_lookup=shared_cid,
+    )
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    assert cid_calls == ["100"]
+    assert {entity["label"] for entity in result["entities"]} == {"100", "500"}
+    edge = next(item for item in result["relationships"] if item["type"] == "client_id")
+    assert edge["label"] == "同当前 CID"
+    assert edge["evidence"] == ["CID：987654", "最后访问：2026-08-24 01:09:03"]
+
+
+def test_same_crm_relationship_is_presented_as_same_name_without_raw_schema_fields() -> None:
+    def legacy_call(name: str, *_args, **_kwargs) -> dict[str, Any]:
+        if name == "account_relationship_core_payload":
+            return {
+                "riskPanels": {
+                    "available": True,
+                    "databaseStatus": "P",
+                    "sameName": [{
+                        "account": "200", "platform": "MT5", "server": "AC CN MT5",
+                        "databaseStatus": "M", "comprehensiveProfit": 12.3, "rebate": 1.2,
+                        "currency": "USD",
+                    }],
+                }
+            }
+        return {}
+
+    service = AccountRelationshipNetworkService(legacy_call)
+    try:
+        result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"})
+    finally:
+        service.close()
+
+    edge = next(item for item in result["relationships"] if item["type"] == "same_crm_user")
+    assert edge["typeLabel"] == "同名账户"
+    assert edge["label"] == "同名账户"
+    visible_text = " ".join(edge["evidence"])
+    assert "mt_users_account" not in visible_text
+    assert "user_id" not in visible_text
+    assert "这些交易账户登记在同一客户名下" in visible_text
+
+
 def test_relationship_risk_adds_toxic_sync_edges_only_for_nodes_with_investigation_score() -> None:
     evidence = _EvidenceNetwork()
     toxic_calls: list[str] = []
@@ -356,6 +500,43 @@ def test_relationship_risk_adds_toxic_sync_edges_only_for_nodes_with_investigati
     edge = next(item for item in result["relationships"] if item["type"] == "toxic_sync_opposite")
     assert any("1s" in value for value in edge["evidence"])
     assert "500" in evidence.calls
+
+
+def test_relationship_risk_aggregates_repeated_trade_pairs_into_one_peer_relation() -> None:
+    evidence = _EvidenceNetwork()
+
+    def toxic(_login: str, _filters: dict[str, str]) -> dict[str, Any]:
+        if _login != "100":
+            return {"matches": [], "coverage": []}
+        return {
+            "matches": [
+                {
+                    "account": "500", "platform": "MT5", "server": "AC CN MT5",
+                    "relation": "same", "matchCount": 3, "matchRatioPct": 30.0,
+                    "matchedVolumeRatioPct": 42.0, "orderPairs": [
+                        {"symbol": "XAUUSD", "targetOrderId": "root-1", "orderId": "peer-1", "openDeltaSeconds": 1, "closeDeltaSeconds": 1},
+                        {"symbol": "XAUUSD", "targetOrderId": "root-2", "orderId": "peer-2", "openDeltaSeconds": 1, "closeDeltaSeconds": 2},
+                    ],
+                },
+                # Defensive duplicate from an adapter must merge into the same graph edge.
+                {
+                    "account": "500", "platform": "MT5", "server": "AC CN MT5",
+                    "relation": "same", "symbol": "XAUUSD", "targetOrderId": "root-3",
+                    "orderId": "peer-3", "openDeltaSeconds": 1, "closeDeltaSeconds": 1,
+                },
+            ],
+            "coverage": [],
+        }
+
+    service = AccountRelationshipRiskService(
+        evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []}, toxic,
+    )
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12, include_toxic=True)
+
+    edges = [item for item in result["relationships"] if item["type"] == "toxic_sync_same"]
+    assert len(edges) == 1
+    assert edges[0]["label"] == "主订单同向开平仓同步"
+    assert any("命中 4 笔主订单" in value for value in edges[0]["evidence"])
 
 
 def test_relationship_risk_expands_a_direct_ib_owned_account_but_not_a_top_ib_aggregate() -> None:

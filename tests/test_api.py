@@ -201,6 +201,8 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
             }]}
         if name == "account_shared_last_ip_payload":
             return {"peers": [{"account": "302365", "platform": "MT5", "server": "DBG MT5", "ip": "203.0.113.42", "lastAccessAt": "2026-07-29 10:00:00"}], "coverage": [{"source": "sharedLastIp", "status": "available", "reason": ""}]}
+        if name == "account_shared_cid_payload":
+            return {"peers": [], "coverage": [{"source": "sharedCid", "status": "available", "reason": "当前账户 CID 为空或 0"}]}
         if name == "account_ea_comment_profit_payload":
             return {"groups": [{
                 "comment": "GoldBot", "platform": "MT5", "server": "DBG MT5",
@@ -240,7 +242,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert payload["source"] == "kuzu-request-projection"
     assert payload["threshold"] == 12
     assert {item["id"] for item in payload["relationTypes"]} == {
-        "same_crm_user", "login_ip", "ea_feature", "copy_order", "copy_group", "rebate",
+        "same_crm_user", "login_ip", "client_id", "ea_feature", "copy_order", "copy_group", "rebate",
         "crm_owner", "direct_ib", "ib_owned_account", "ib_direct_account", "ib_identity", "ib_direct_rebate", "top_ib_group",
         "toxic_sync_same", "toxic_sync_opposite",
     }
@@ -262,7 +264,7 @@ def test_relationship_network_returns_kuzu_scored_evidence_with_partial_source_c
     assert {name for name, _args in calls} == {
         "account_relationship_core_payload", "account_copy_origins_payload",
         "account_copy_group_profit_payload", "account_ea_comment_profit_payload", "account_crm_ib_relationship_payload",
-        "account_shared_last_ip_payload",
+        "account_shared_last_ip_payload", "account_shared_cid_payload",
     }
     relationship_sources = {
         "account_relationship_core_payload", "account_copy_origins_payload",
@@ -283,6 +285,9 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "/api/accounts/by-login/" in page.text
     assert "关系路径说明" in page.text
     assert "问题账户的直属上级 IB 本人名下交易账户" in page.text
+    assert "同名账户" in page.text
+    assert "当前 CID 相同" in page.text
+    assert "原始依据：" not in page.text
     assert "directSubjectEdge" in page.text
     assert "ib_direct_account','ib_direct_rebate" in page.text
     assert "ib_direct_rebate" in page.text
@@ -371,6 +376,75 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "当前账户细查" in page.text
 
 
+def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert page.status_code == 200
+    assert "function galaxyRebuildHitFrame" in page.text
+    assert "function galaxyPickHit" in page.text
+    assert "function galaxyDispatchClick" in page.text
+    assert "function galaxyVisualEndpointKey" in page.text
+    assert "galaxyCanvas.addEventListener('click',galaxyDispatchClick,true)" in page.text
+    assert "event.stopImmediatePropagation()" in page.text
+
+    picker = page.text.split("function galaxyPickHit", 1)[1].split("function galaxyDispatchClick", 1)[0]
+    dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]
+    assert "ringLayout(" not in picker
+    assert "ringLayout(" not in dispatcher
+    assert picker.index("frame.markers") < picker.index("frame.nodes")
+    assert picker.index("frame.nodes") < picker.index("frame.groups")
+    assert picker.index("frame.groups") < picker.index("frame.edges")
+    assert "kind==='marker'" in dispatcher
+    assert "kind==='node'" in dispatcher
+    assert "kind==='group'" in dispatcher
+    assert "kind==='edge'" in dispatcher
+    assert "galaxyVisualEndpointKey(edge?.from)" in page.text
+    assert "galaxyVisualEndpointKey(edge?.to)" in page.text
+
+
+def test_kuzu_risk_galaxy_locator_is_independent_risk_colored_and_clickable(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert page.status_code == 200
+    assert "function galaxyLocatorNodes" in page.text
+    assert "function galaxyLocatorLayout" in page.text
+    assert "function galaxyLocatorStatusColor" in page.text
+    assert "function galaxyDispatchLocatorClick" in page.text
+    assert "locatorCanvas.addEventListener('click',galaxyDispatchLocatorClick,true)" in page.text
+
+    nodes_helper = page.text.split("function galaxyLocatorNodes", 1)[1].split(
+        "function galaxyLocatorLayout", 1
+    )[0]
+    assert "accounts()" in nodes_helper
+    assert "expandedRelationGroups" not in nodes_helper
+    assert "graphNodes()" not in nodes_helper
+
+    palette = page.text.split("function galaxyLocatorStatusColor", 1)[1].split(
+        "function galaxyLocatorLayout", 1
+    )[0]
+    assert "B:'#64748b'" in palette
+    assert "M:'#f59e0b'" in palette
+    assert "P:'#f97316'" in palette
+    assert "T:'#ef4444'" in palette
+    assert "A:'#dc2626'" in palette
+    assert "TA:'#991b1b'" in palette
+
+    dispatcher = page.text.split("function galaxyDispatchLocatorClick", 1)[1].split(
+        "locatorCanvas.addEventListener", 1
+    )[0]
+    assert "selectedId=hit.id" in dispatcher
+    assert "selectedEdgeKey=''" in dispatcher
+    assert "selectedEdgeNodes=new Set()" in dispatcher
+    assert "renderOverview()" in dispatcher
+    assert "renderDetail()" in dispatcher
+
+
 def test_kuzu_risk_defaults_to_the_current_focus_workspace(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
@@ -388,6 +462,37 @@ def test_kuzu_risk_defaults_to_the_current_focus_workspace(tmp_path: Path) -> No
     assert "p.inProgress" in page.text
     assert "setTimeout(resolve,500)" in page.text
     assert "graph_type','galaxy'" in page.text
+    assert "expandedGroups:new Set()" in page.text
+    assert "可以直接点击图中虚线圈的边缘" in page.text
+    assert "cluster-hit" in page.text
+    assert "addEventListener('pointerdown',activateGroup)" in page.text
+    assert "signatureOf(p)" in page.text
+    assert "signature!==S.graphSignature" in page.text
+    assert "const origin=S.by.get(S.subject)" in page.text
+    assert "function layoutCollapsedGroups" in page.text
+    assert "group.layoutX" in page.text
+    assert "Math.ceil(list.length/14)" in page.text
+    assert "marker-end','url(#edge-arrow)'" in page.text
+    assert "scheduleRender()" in page.text
+    assert "最高状态" in page.text
+    assert "Math.max(.05" in page.text
+
+
+def test_kuzu_risk_has_an_additive_3d_preview_mode(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=focus-3d")
+        chooser = client.get("/kuzu-risk?graph_type=choose")
+
+    assert page.status_code == 200
+    assert 'data-graph-type="focus-3d"' in page.text
+    assert 'canvas id="scene"' in page.text
+    assert "presentationGraph" in page.text
+    assert "requestAnimationFrame(render)" in page.text
+    assert "拖动：旋转空间" in page.text
+    assert "go('focus-force')" in page.text
+    assert 'data-type="focus-3d"' in chooser.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:

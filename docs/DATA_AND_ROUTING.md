@@ -8,9 +8,15 @@ accounts, account history, quick actions, login-IP observations, job runs, job e
 revision state. Excel files are import/export snapshots only.
 The account relationship network has no independent authoritative store. It recursively composes
 routed read-only account-risk, same-server MT5 current-LastIP, Copy, EA, CRM-rebate, exact CRM
-account-owner/direct-IB mappings and selected high-priority Toxic synchronisation payloads, and never
+account-owner/direct-IB mappings and selected high-priority principal-order synchronisation/opposite-lock
+payloads, and never
 writes an inferred cross-account relationship. A top-IB cohort is a count-only aggregate for the
 selected seed, not a source of unbounded account edges.
+Direct-IB anomaly discovery reads `rebate_task_detail` by `rebate_ib_id` and selected time range,
+groups by route/login, joins only routed MT4/MT5 status views for elevated status candidates, and
+batch-reads closed market P/L only for the bounded candidate set. USD/USC normalization is applied
+consistently to rebate and trading P/L. The source returns counts and evidence only; it does not alter
+CRM, rebate or trading data.
 Historical funds backtrace has no independent store. For one selected account route it reads the
 complete platform ledger/trade facts and daily account anchors through LegacyBridge. MT4 sources are
 `mt4_trades` plus `mt4_daily`; MT5 sources are the indexed `mt5_deals` and current `mt5_accounts`.
@@ -35,9 +41,9 @@ aggregated response to a temporary local Kuzu graph once, reads it and deletes i
 MT5 same-IP peers are same-server `LastIP` matches only. The account endpoint starts or reuses one
 bounded local background expansion and returns an in-progress read-only snapshot for page polling;
 it continues through score-eligible accounts until the threshold or the 2,000-node/10,000-score-
-expansion safety limits are reached. Each source has a six-second wait budget and the LastIP follow-up
-has a separately clamped three-second client/database timeout. Known members of one current-LastIP
-cohort skip redundant follow-up queries. Each legacy evidence family has one local shared execution
+expansion safety limits are reached. Each source has a six-second wait budget and the LastIP/CID follow-up
+has a separately clamped three-second client/database timeout. Known members of one current-LastIP or
+current-CID cohort skip redundant follow-up queries. Each legacy evidence family has one local shared execution
 lane; a source that exceeds its per-account wait budget remains bounded instead of accumulating
 threads during continued expansion. The temporary Kuzu write is limited
 to 400 selected entities and 1,200 selected relationships and runs in an isolated local child process
@@ -261,7 +267,8 @@ source and only after every other independent source on the same database host a
 that it does not contain the Login. A shared physical schema's other logical routes, any duplicate
 independent-source Login, missing users view, or users-view query failure remains unavailable. The
 lookup response exposes this as `routeValidation`; it is not CRM-route confirmation.
-Same-name discovery groups by CRM `user_id` across server codes within that CRM schema. Every
+Same-name discovery groups by CRM `user_id` across server codes within that CRM schema. The public
+graph presents this only as `同名账户` and does not expose the internal table or `user_id`. Every
 returned account retains its own server code and is queried through the corresponding logical
 trading source; the selected account's source must never be reused for a related account.
 
@@ -454,6 +461,15 @@ same-direction rows loaded by the shared candidate query are discarded. Open tar
 counted but excluded because synchronized closing cannot be verified. The target route and every peer's
 resolved logical route remain explicit in the response.
 
+The relationship investigation reuses the same bounded AC/DBG MT4+MT5 physical-source plan, but does
+not forward every historical order. It derives principal orders per symbol (95% cumulative volume with
+a five-order floor), submits them as one batch, then aggregates returned rows by peer route/account and
+relationship type. Same-direction evidence is restricted to two-second open and close deltas and a
+recurrence floor; opposite-direction evidence is restricted to five-second deltas and 80% lot similarity.
+The graph receives at most one relationship edge for each peer account and detection type, plus at most
+20 auditable order-pair examples. Source coverage remains explicit when one physical source times out or
+fails; a partial scan must not be represented as a complete no-match result.
+
 Position discovery's nullable minimum position, peak-lot and event-profit values are applied only
 after authoritative deep event reconstruction. Initial candidate position and lot values may
 prioritize likely matches inside the bounded queue but cannot satisfy or reject the final filter.
@@ -482,6 +498,11 @@ it is not a public API parameter and does not alter interactive dashboard cachin
 Within one discovered current-LastIP cohort, only the representative account runs EA and Copy
 discovery. Sibling accounts retain their CRM and LastIP reads and return explicit skipped-source
 coverage; the graph does not silently claim that their individual automation history was queried.
+
+Current-CID discovery reads `mt5_users_view.ClientID` on the already-routed MT5 server. It returns
+same-server peers only, ignores `ClientID` zero/null, is unavailable for the current MT4 export, and
+uses the same cohort de-duplication and automation-reuse rule as current LastIP. It is unrelated to
+order-comment text such as `CID=...`.
 
 ## Safety
 

@@ -3968,6 +3968,238 @@ def query_same_name_logins(source: dict, account: str) -> list[str]:
     ))
 
 
+def _ib_relationship_period(filters: dict) -> tuple[str, str]:
+    end = normalize_text(filters.get("end") or filters.get("endTime"))
+    start = normalize_text(filters.get("start") or filters.get("startTime"))
+    try:
+        end_dt = datetime.fromisoformat(end) if end else datetime.now()
+    except ValueError:
+        end_dt = datetime.now()
+    try:
+        start_dt = datetime.fromisoformat(start) if start else end_dt - timedelta(days=90)
+    except ValueError:
+        start_dt = end_dt - timedelta(days=90)
+    if start_dt >= end_dt:
+        start_dt = end_dt - timedelta(days=90)
+    return start_dt.strftime("%Y-%m-%d %H:%M:%S"), end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _ib_trade_profits(source: dict, accounts: list[str], start: str, end: str) -> dict[str, float]:
+    accounts = list(dict.fromkeys(account for account in accounts if normalize_text(account).isdigit()))
+    if not accounts:
+        return {}
+    output: dict[str, float] = {}
+    with mysql_trade_connect(source) as connection:
+        with connection.cursor() as cursor:
+            for offset in range(0, len(accounts), 100):
+                batch = accounts[offset:offset + 100]
+                placeholders = ",".join(["%s"] * len(batch))
+                if source.get("kind") == "mt5_deals":
+                    cursor.execute(
+                        f"select Login as Account, "
+                        "sum(coalesce(Profit,0)+coalesce(Commission,0)+coalesce(Storage,0)+coalesce(Fee,0)) as TradeProfit "
+                        f"from `{source['schema']}`.`{source['table']}` "
+                        f"where Login in ({placeholders}) and Action in (0,1) and Time >= %s and Time < %s "
+                        "group by Login",
+                        [*(int(account) for account in batch), start, end],
+                    )
+                else:
+                    cursor.execute(
+                        f"select LOGIN as Account, "
+                        "sum(coalesce(PROFIT,0)+coalesce(COMMISSION,0)+coalesce(SWAPS,0)+coalesce(TAXES,0)) as TradeProfit "
+                        f"from `{source['schema']}`.`{source['table']}` "
+                        f"where LOGIN in ({placeholders}) and CMD in (0,1) and CLOSE_TIME >= %s and CLOSE_TIME < %s "
+                        "group by LOGIN",
+                        [*(int(account) for account in batch), start, end],
+                    )
+                for row in cursor.fetchall() or []:
+                    output[normalize_text(row.get("Account"))] = numeric_value(row.get("TradeProfit"))
+    return output
+
+
+def _ib_statuses_by_route(rows: list[dict]) -> dict[tuple[str, str], str]:
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        source = row.get("_source")
+        account = normalize_text(row.get("account"))
+        if not source or not account:
+            continue
+        group = grouped.setdefault(normalize_text(source.get("name")), {"source": source, "accounts": []})
+        group["accounts"].append(account)
+    statuses: dict[tuple[str, str], str] = {}
+    for group in grouped.values():
+        source = group["source"]
+        query = query_mt5_database_statuses if source.get("kind") == "mt5_deals" else query_mt4_database_statuses
+        accounts = list(dict.fromkeys(group["accounts"]))
+        for offset in range(0, len(accounts), 200):
+            for account, status in query(source, accounts[offset:offset + 200]).items():
+                statuses[(normalize_text(source.get("name")), account)] = normalize_text(status)
+    return statuses
+
+
+def _ib_anomalous_direct_accounts(
+    cur,
+    crm_schema: str,
+    ib_user_id: int,
+    start: str,
+    end: str,
+    *,
+    candidate_limit: int = 500,
+) -> dict:
+    """Return a bounded anomaly projection, never the IB's entire downline graph."""
+    from kdesk.domain.ib_rebate_anomaly import rebate_candidate_floor, select_ib_rebate_anomalies
+
+    cache_key = (
+        "ib-selective-anomaly-v1",
+        crm_schema,
+        int(ib_user_id),
+        start,
+        end,
+        int(candidate_limit),
+    )
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    cur.execute(
+        f"select count(distinct mt_server_code, trade_mt_login) as TotalAccounts "
+        f"from `{crm_schema}`.`rebate_task_detail` force index (idx_covering) "
+        "where rebate_ib_id = %s and create_time >= %s and create_time < %s",
+        (ib_user_id, start, end),
+    )
+    total_accounts = mysql_int((cur.fetchone() or {}).get("TotalAccounts"))
+    if not total_accounts:
+        return account_cache_set(cache_key, {
+            "checked": True, "totalAccounts": 0, "candidateAccounts": 0,
+            "abnormalAccounts": 0, "highestStatus": "B", "accounts": [], "truncated": False,
+        })
+
+    # Stage 1: aggregate only direct-rebate facts.  A bounded list prevents a broad
+    # IB from materialising every subordinate account into the relationship graph.
+    cur.execute(
+        f"select trade_mt_login as Account, mt_server_code as ServerCode, "
+        "count(distinct coalesce(nullif(trade_mt_deal,0), trade_mt_ticket)) as RebateOrderCount, "
+        "sum(case when upper(coalesce(usd_or_usc,''))='USC' then rebate_amount/100 else rebate_amount end) as RebateAmount, "
+        "max(upper(coalesce(usd_or_usc,''))) as MoneyUnit, "
+        "max(create_time) as LastRebateAt "
+        f"from `{crm_schema}`.`rebate_task_detail` force index (idx_covering) "
+        "where rebate_ib_id = %s and create_time >= %s and create_time < %s "
+        "group by trade_mt_login, mt_server_code "
+        "having RebateOrderCount >= 3 and RebateAmount >= 20 "
+        "order by RebateAmount desc limit %s",
+        (ib_user_id, start, end, candidate_limit + 1),
+    )
+    raw_rows = cur.fetchall() or []
+    truncated = len(raw_rows) > candidate_limit
+    rows: list[dict] = []
+    row_keys: set[tuple[str, str]] = set()
+    for item in raw_rows[:candidate_limit]:
+        account = normalize_text(item.get("Account"))
+        server_code = normalize_text(item.get("ServerCode"))
+        source = source_for_crm_route(crm_schema, server_code)
+        if not account or not source:
+            continue
+        row_keys.add((server_code, account))
+        rows.append({
+            "account": account,
+            "serverCode": server_code,
+            "platform": normalize_text(source.get("platform")),
+            "server": normalize_text(source.get("server") or source.get("name")),
+            "rebateOrderCount": mysql_int(item.get("RebateOrderCount")),
+            "rebateAmount": numeric_value(item.get("RebateAmount")),
+            "moneyUnit": normalize_text(item.get("MoneyUnit")).upper() or "USD",
+            "_moneyScale": 0.01 if normalize_text(item.get("MoneyUnit")).upper() == "USC" else 1.0,
+            "lastRebateAt": normalize_text(item.get("LastRebateAt")),
+            "_source": source,
+        })
+
+    # Status P/T/A/TA is an independent inclusion path.  The joined query reads only
+    # elevated statuses and therefore does not load all ordinary IB members.
+    route_sources: dict[str, dict] = {}
+    for source in MYSQL_SOURCES:
+        for route in source_crm_routes(source):
+            if route["schema"] == crm_schema:
+                route_sources[normalize_text(route["mt_server_code"])] = source
+    for server_code, source in route_sources.items():
+        status_table = "mt5_users_view" if source.get("kind") == "mt5_deals" else "mt4_users_view"
+        login_column = "Login" if source.get("kind") == "mt5_deals" else "LOGIN"
+        status_column = "Status" if source.get("kind") == "mt5_deals" else "STATUS"
+        cur.execute(
+            f"select d.trade_mt_login as Account, d.mt_server_code as ServerCode, "
+            f"max(u.{status_column}) as DatabaseStatus, "
+            "count(distinct coalesce(nullif(d.trade_mt_deal,0), d.trade_mt_ticket)) as RebateOrderCount, "
+            "sum(case when upper(coalesce(d.usd_or_usc,''))='USC' then d.rebate_amount/100 else d.rebate_amount end) as RebateAmount, "
+            "max(upper(coalesce(d.usd_or_usc,''))) as MoneyUnit, "
+            "max(d.create_time) as LastRebateAt "
+            f"from `{crm_schema}`.`rebate_task_detail` d force index (idx_covering) "
+            f"join `{source['schema']}`.`{status_table}` u on u.{login_column}=d.trade_mt_login "
+            "where d.rebate_ib_id=%s and d.mt_server_code=%s and d.create_time >= %s and d.create_time < %s "
+            f"and upper(coalesce(u.{status_column},'')) in ('P','T','A','TA') "
+            f"group by d.trade_mt_login,d.mt_server_code limit {candidate_limit + 1}",
+            (ib_user_id, server_code, start, end),
+        )
+        elevated_rows = cur.fetchall() or []
+        truncated = truncated or len(elevated_rows) > candidate_limit
+        for item in elevated_rows[:candidate_limit]:
+            account = normalize_text(item.get("Account"))
+            key = (server_code, account)
+            if not account or key in row_keys:
+                continue
+            row_keys.add(key)
+            rows.append({
+                "account": account,
+                "serverCode": server_code,
+                "platform": normalize_text(source.get("platform")),
+                "server": normalize_text(source.get("server") or source.get("name")),
+                "databaseStatus": normalize_text(item.get("DatabaseStatus")),
+                "rebateOrderCount": mysql_int(item.get("RebateOrderCount")),
+                "rebateAmount": numeric_value(item.get("RebateAmount")),
+                "moneyUnit": normalize_text(item.get("MoneyUnit")).upper() or "USD",
+                "_moneyScale": 0.01 if normalize_text(item.get("MoneyUnit")).upper() == "USC" else 1.0,
+                "lastRebateAt": normalize_text(item.get("LastRebateAt")),
+                "_source": source,
+            })
+
+    statuses = _ib_statuses_by_route(rows)
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        source = row["_source"]
+        source_name = normalize_text(source.get("name"))
+        row["databaseStatus"] = statuses.get((source_name, row["account"]), row.get("databaseStatus") or "B")
+        group = grouped.setdefault(source_name, {"source": source, "accounts": []})
+        group["accounts"].append(row["account"])
+    profits: dict[tuple[str, str], float] = {}
+    for source_name, group in grouped.items():
+        for account, profit in _ib_trade_profits(group["source"], group["accounts"], start, end).items():
+            profits[(source_name, account)] = profit
+    for row in rows:
+        source_name = normalize_text(row["_source"].get("name"))
+        row["tradeProfit"] = (
+            profits.get((source_name, row["account"]), 0.0)
+            * numeric_value(row.get("_moneyScale") or 1.0)
+        )
+
+    # Stage 2: apply the auditable business rule only to the bounded candidate set.
+    # On ordinary IBs this is the exact cohort; on very broad IBs it is explicitly
+    # marked truncated and retains the strongest rebate/status candidates.
+    floor = rebate_candidate_floor(rows, absolute_floor=20.0)
+    selected = select_ib_rebate_anomalies(rows, absolute_rebate_floor=floor)
+    accounts = []
+    for row in selected["accounts"]:
+        clean = {key: value for key, value in row.items() if not key.startswith("_")}
+        accounts.append(clean)
+    return account_cache_set(cache_key, {
+        "checked": True,
+        "totalAccounts": total_accounts,
+        "candidateAccounts": len(rows),
+        "abnormalAccounts": len(accounts),
+        "highestStatus": selected["highestStatus"],
+        "rebateFloor": selected["rebateFloor"],
+        "accounts": accounts,
+        "truncated": truncated or total_accounts > candidate_limit,
+    })
+
+
 def account_crm_ib_relationship_payload(login: str, filters: dict | None = None) -> dict:
     """Return CRM routes plus a bounded, indexed direct-rebate branch for an IB owner."""
     filters = filters or {}
@@ -3978,7 +4210,8 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
     if not login.isdigit():
         raise ValueError("账号格式无效")
     # Version the key: pre-IB-branch payloads must not suppress the new direct-rebate read.
-    cache_key = ("crm-ib-relationship-v3", login, platform, server, include_ib_aggregate)
+    period_start, period_end = _ib_relationship_period(filters)
+    cache_key = ("crm-ib-relationship-v4", login, platform, server, include_ib_aggregate, period_start, period_end)
     cached = account_cache_get(cache_key)
     if cached is not None:
         return cached
@@ -4031,42 +4264,14 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                                 "server": normalize_text(account_source.get("server") or account_source.get("name")),
                             })
 
-                    # This is intentionally *not* a top-IB tree scan.  It asks one
-                    # indexed question: which trading accounts have actually produced
-                    # direct rebate records for the current CRM user?  Grouping returns
-                    # a single graph edge per account rather than raw rebate history.
-                    # The graph-wide account guard remains authoritative.  A much smaller
-                    # branch limit keeps one IB from materialising thousands of otherwise
-                    # unrelated query candidates into the 8777 process at once.
-                    cur.execute(
-                        f"select trade_mt_login as Account, mt_server_code as ServerCode, "
-                        "count(distinct coalesce(trade_mt_deal, trade_mt_ticket)) as RebateOrderCount, "
-                        "max(create_time) as LastRebateAt "
-                        f"from `{crm_schema}`.`rebate_task_detail` "
-                        "where rebate_ib_id = %s "
-                        "group by trade_mt_login, mt_server_code "
-                        # Do not order this potentially broad group.  The exact IB-ID
-                        # index can stop at the 2,001st distinct account; deterministic
-                        # recency ordering would force a full temporary/filesort scan.
-                        "limit 151",
-                        (crm_user_id,),
+                    own_ib_projection = _ib_anomalous_direct_accounts(
+                        cur, crm_schema, crm_user_id, period_start, period_end,
                     )
-                    own_ib_rows = cur.fetchall() or []
-                    own_ib_direct_rebate_truncated = len(own_ib_rows) > 150
-                    own_ib_direct_rebate_accounts: list[dict] = []
-                    for item in own_ib_rows[:150]:
-                        account = normalize_text(item.get("Account"))
-                        account_server_code = normalize_text(item.get("ServerCode"))
-                        account_source = source_for_crm_route(crm_schema, account_server_code)
-                        if not account or not account_source:
-                            continue
-                        own_ib_direct_rebate_accounts.append({
-                            "account": account,
-                            "platform": normalize_text(account_source.get("platform")),
-                            "server": normalize_text(account_source.get("server") or account_source.get("name")),
-                            "rebateOrderCount": mysql_int(item.get("RebateOrderCount")),
-                            "lastRebateAt": normalize_text(item.get("LastRebateAt")),
-                        })
+                    direct_ib_projection = (
+                        _ib_anomalous_direct_accounts(cur, crm_schema, direct_ib_user_id, period_start, period_end)
+                        if direct_ib_user_id and direct_ib_user_id != crm_user_id
+                        else own_ib_projection
+                    )
 
                     top_ib_account_count = top_ib_client_count = 0
                     if top_ib_user_id and include_ib_aggregate:
@@ -4093,9 +4298,20 @@ def account_crm_ib_relationship_payload(login: str, filters: dict | None = None)
                         # A user is represented as an expandable IB node only when
                         # direct-rebate evidence actually exists; an empty indexed probe
                         # is merely a fast negative check, not an IB classification.
-                        "ownIbDirectRebateChecked": bool(own_ib_rows),
-                        "ownIbDirectRebateAccounts": own_ib_direct_rebate_accounts,
-                        "ownIbDirectRebateTruncated": own_ib_direct_rebate_truncated,
+                        "ibAnomalyPeriodStart": period_start,
+                        "ibAnomalyPeriodEnd": period_end,
+                        "ownIbDirectRebateChecked": own_ib_projection["totalAccounts"] > 0,
+                        "ownIbDirectRebateAccounts": own_ib_projection["accounts"],
+                        "ownIbDirectRebateTruncated": own_ib_projection["truncated"],
+                        "ownIbTotalAccounts": own_ib_projection["totalAccounts"],
+                        "ownIbAbnormalAccounts": own_ib_projection["abnormalAccounts"],
+                        "ownIbHighestStatus": own_ib_projection["highestStatus"],
+                        "directIbAnomalyChecked": bool(direct_ib_user_id),
+                        "directIbAnomalousRebateAccounts": direct_ib_projection["accounts"],
+                        "directIbTotalAccounts": direct_ib_projection["totalAccounts"],
+                        "directIbAbnormalAccounts": direct_ib_projection["abnormalAccounts"],
+                        "directIbAnomalyTruncated": direct_ib_projection["truncated"],
+                        "directIbHighestStatus": direct_ib_projection["highestStatus"],
                         "topIbAggregateAvailable": include_ib_aggregate,
                         "topIbAccountCount": top_ib_account_count,
                         "topIbClientCount": top_ib_client_count,
@@ -4867,6 +5083,47 @@ def account_shared_last_ip_payload(login: str, filters: dict | None = None) -> d
         "ok": True,
         "peers": [{"account": str(row.get("Login")), "platform": "MT5", "server": server, "ip": ip, "lastAccessAt": normalize_text(row.get("LastAccess"))} for row in rows if row.get("Login")],
         "coverage": [{"source": "sharedLastIp", "status": "available", "reason": ""}],
+    }
+
+
+def account_shared_cid_payload(login: str, filters: dict | None = None) -> dict:
+    """Read-only same-server current ClientID relation for MT5 graph expansion."""
+    filters = filters or {}
+    login = normalize_text(login)
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    if not login.isdigit() or platform != "MT5" or not server:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedCid", "status": "skipped", "reason": "仅支持已路由 MT5 账户"}]}
+    source = next((item for item in MYSQL_SOURCES if source_allowed(item, platform=platform, server=server) and item.get("kind") == "mt5_deals"), None)
+    if not source:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedCid", "status": "skipped", "reason": "当前服务器没有 MT5 CID 数据源"}]}
+    try:
+        requested_timeout = float(filters.get("relationshipQueryTimeoutSeconds") or 3)
+    except (TypeError, ValueError):
+        requested_timeout = 3
+    query_timeout_seconds = min(max(int(requested_timeout + 0.999), 1), 3)
+    try:
+        with mysql_trade_connect(source, connect_timeout=query_timeout_seconds, read_timeout=query_timeout_seconds) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT ClientID FROM `{source['schema']}`.mt5_users_view WHERE Login = %s LIMIT 1", (int(login),))
+                target = cur.fetchone() or {}
+                cid = mysql_int(target.get("ClientID"))
+                if not cid:
+                    return {"ok": True, "peers": [], "coverage": [{"source": "sharedCid", "status": "available", "reason": "当前账号没有有效 CID"}]}
+                cur.execute(
+                    f"SELECT Login, ClientID, LastAccess FROM `{source['schema']}`.mt5_users_view WHERE ClientID = %s AND Login <> %s LIMIT 200",
+                    (cid, int(login)),
+                )
+                rows = cur.fetchall() or []
+    except Exception as exc:
+        return {"ok": True, "peers": [], "coverage": [{"source": "sharedCid", "status": "failed", "reason": str(exc)}]}
+    return {
+        "ok": True,
+        "peers": [{
+            "account": str(row.get("Login")), "platform": "MT5", "server": server,
+            "cid": str(cid), "lastAccessAt": normalize_text(row.get("LastAccess")),
+        } for row in rows if row.get("Login")],
+        "coverage": [{"source": "sharedCid", "status": "available", "reason": ""}],
     }
 
 

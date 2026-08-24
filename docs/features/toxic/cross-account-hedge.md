@@ -87,3 +87,8 @@ same 13 opposite synchronized pairs after SQL candidate pruning; the dense query
 `internal_lock_arbitrage`, `/account/{login}` and all existing Toxic job endpoints remain stable. The
 copied account-internal reverse-leg heuristic remains only as rollback behavior and is no longer
 authoritative after the Worker completes.
+## Relationship-investigation reuse
+
+`ACC-REL-003` can request optional opposite-direction principal-order timing evidence using this
+feature's hedge semantics. Matches are bounded, aggregated per peer and reported with coverage;
+the relationship view does not change hedge verdicts or any remote source state.

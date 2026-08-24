@@ -70,6 +70,10 @@ must not affect basic trade statistics: every routed tree account receives a com
 aggregate in ten-account indexed batches. The DBG CN non-candidate regression `2013813` must retain
 161 orders, 18.44 standard lots and 512.25 trading P/L alongside 791.75 raw CRM rebate, and an
 omitted-date request must report `query.fullHistory=true`.
+Direct-IB anomaly regressions additionally cover rebate-dominated positive combined profit, low-rebate
+and trade-dominated exclusion, `P/T/A/TA` status bypass, unioned inclusion reasons, cohort-percentile
+screening, cent scaling, exact abnormal/total counts, and the auditable account → CRM → IB → member
+path without a shortcut edge.
 MT4 account-detail regressions require open-position sentinel rows (`CLOSE_TIME=1970-01-01`) to be
 excluded from closed-order counts, holding duration, daily P/L and closed profit.
 Historical-funds regressions require an additive legacy-toolbar control immediately after Toxic with
@@ -93,12 +97,19 @@ selected filters, recursively request only score-eligible accounts, materialize 
 discovery, retain same-IP/Toxic order evidence ledgers, expose score/colour/threshold state without
 an automated risk conclusion, and flag safety truncation. Equivalent requests must join one active
 background expansion, return pollable in-progress state, continue through score-eligible nodes,
-skip duplicate same-current-LastIP cohort lookups, limit a timed-out evidence family to one
+skip duplicate same-current-LastIP and same-current-CID cohort lookups, limit a timed-out evidence family to one
 running local call, and obtain same-CRM edges through the mapping-only source rather than the full
 trade-history dashboard payload. Relationship-only EA/Copy/CRM calls must bypass the legacy result
 cache so multi-hop snapshots do not retain a full payload per account. Every visible relation edge
-must retain a readable type label. Current-LastIP cohort siblings must reuse their representative's
-EA/Copy read and expose an explicit skipped-coverage reason while CRM/LastIP propagation continues.
+must retain a readable type label. Current-LastIP/CID cohort siblings must reuse their representative's
+EA/Copy read and expose an explicit skipped-coverage reason while same-name/IP/CID propagation continues.
+CID tests must prove MT5 same-server peer lookup, `ClientID=0` suppression and absence of MT4 guessing.
+Same-name presentation tests must prohibit raw CRM table names and `user_id` in public evidence text.
+Principal-order relationship regressions must prove the per-symbol 95% cumulative-volume selector and
+five-order floor, the two-second same-direction open/close window and recurrence floor, the five-second
+opposite-direction window and 80% lot-similarity threshold, and the removal of duplicate order-pair graph
+edges. Tests must also prove that a failed or partial physical-source scan remains visible as incomplete
+coverage rather than becoming a complete no-match result.
 The global overview's radar scan must remain visible and rotate only while the poll status is
 `后台扩散中`, hide at completion, failure and idle states, and keep canvas pointer, wheel and drag
 interaction available. Its origin must track the subject account's current on-screen canvas position

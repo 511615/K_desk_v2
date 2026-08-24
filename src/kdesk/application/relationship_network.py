@@ -9,7 +9,7 @@ LegacyCall = Callable[..., dict[str, Any]]
 
 
 RELATION_TYPES = {
-    "same_crm_user": "同 CRM 客户",
+    "same_crm_user": "同名账户",
     "crm_owner": "CRM \u8d26\u6237\u5f52\u5c5e",
     "direct_ib": "\u76f4\u5c5e IB",
     "ib_owned_account": "IB \u81ea\u8eab\u4ea4\u6613\u8d26\u6237",
@@ -18,6 +18,7 @@ RELATION_TYPES = {
     "ib_direct_rebate": "IB \u76f4\u63a5\u8fd4\u4f63\u4eba\u5458",
     "top_ib_group": "\u9876\u7ea7 IB \u7fa4\u7ec4\uff08\u805a\u5408\uff09",
     "login_ip": "登录 IP",
+    "client_id": "CID",
     "ea_feature": "EA / 路由特征",
     "copy_order": "跟单订单",
     "copy_group": "跟单组",
@@ -257,10 +258,9 @@ class _EvidenceGraphBuilder:
                 "same_crm_user",
                 self.subject_id,
                 account_id,
-                "同一 CRM 用户账户",
+                "同名账户",
                 [
-                    "CRM mt_users_account 查询返回相同 user_id。",
-                    _route_text(platform, server),
+                    "这些交易账户登记在同一客户名下。",
                     _money_evidence("综合盈利", row.get("comprehensiveProfit"), row.get("currency")),
                     _money_evidence("返佣", row.get("rebate"), row.get("currency")),
                 ],
@@ -268,6 +268,28 @@ class _EvidenceGraphBuilder:
 
     def add_crm_ib_relationship(self, payload: dict[str, Any]) -> None:
         """Add exact CRM routes and a bounded, expandable direct-rebate IB branch."""
+        def anomaly_evidence(member: dict[str, Any], ib_user_id: str) -> list[str]:
+            status = _text(member.get("databaseStatus")) or "B"
+            rebate = _decimal_text(member.get("rebateAmount")) or "0"
+            trade_profit = _decimal_text(member.get("tradeProfit")) or "0"
+            combined = _decimal_text(member.get("combinedProfit")) or "0"
+            share = _float(member.get("rebateShare")) * 100
+            raw_reasons = member.get("inclusionReasons")
+            reasons = "、".join(
+                _text(item) for item in raw_reasons if _text(item)
+            ) if isinstance(raw_reasons, list) else ""
+            return [
+                f"直属 IB：{ib_user_id}",
+                f"纳入原因：{reasons or '返佣异常筛选'}",
+                f"数据库状态：{status}",
+                f"实际交易盈亏：{trade_profit} USD",
+                f"返佣：{rebate} USD",
+                f"综合盈利：{combined} USD",
+                f"返佣占综合盈利：{share:.1f}%",
+                _number_text(member.get("rebateOrderCount")) and f"返佣关联成交：{_number_text(member.get('rebateOrderCount'))} 笔",
+                _text(member.get("lastRebateAt")) and f"最近返佣记录：{_text(member.get('lastRebateAt'))}",
+            ]
+
         for record in _items(payload.get("records")):
             crm_user_id = _text(record.get("crmUserId"))
             if not crm_user_id:
@@ -294,11 +316,14 @@ class _EvidenceGraphBuilder:
             # IP/EA/copy/CRM/rebate discovery when their propagated score qualifies.
             own_ib_members = _items(record.get("ownIbDirectRebateAccounts"))
             if bool(record.get("ownIbDirectRebateChecked")):
+                own_total = _int(record.get("ownIbTotalAccounts"))
+                own_abnormal = _int(record.get("ownIbAbnormalAccounts"))
                 own_ib_entity = self.add_entity(
                     "ib_user",
                     f"IB {crm_user_id}",
                     detail=(
-                        f"该 CRM 用户为 IB；已读取 {len(own_ib_members)} 个直接返佣人员交易账户"
+                        f"该账户所属 CRM 用户也是 IB；异常 {own_abnormal} / 直属返佣账户共 {own_total} 个"
+                        f"；筛选期 {_text(record.get('ibAnomalyPeriodStart'))} 至 {_text(record.get('ibAnomalyPeriodEnd'))}"
                         + ("（结果达到安全上限，未完整展开）" if bool(record.get("ownIbDirectRebateTruncated")) else "")
                     ),
                     key=f"{_text(record.get('crmSchema'))}|{crm_user_id}",
@@ -325,7 +350,8 @@ class _EvidenceGraphBuilder:
                         account,
                         platform=platform,
                         server=server,
-                        detail="IB 直接返佣人员交易账户",
+                        detail="IB 直属返佣账户；因返佣主导盈利或数据库状态 P 及以上而纳入",
+                        database_status=_text(member.get("databaseStatus")),
                     )
                     if account_id == self.subject_id:
                         continue
@@ -333,14 +359,9 @@ class _EvidenceGraphBuilder:
                         "ib_direct_rebate",
                         own_ib_entity,
                         account_id,
-                        "IB 直接返佣人员",
-                        [
-                            f"IB CRM 用户：{crm_user_id}",
-                            _route_text(platform, server),
-                            _number_text(member.get("rebateOrderCount")) and f"返佣关联成交：{_number_text(member.get('rebateOrderCount'))} 笔",
-                            _text(member.get("lastRebateAt")) and f"最近返佣记录：{_text(member.get('lastRebateAt'))}",
-                        ],
-                        key=f"ib-direct-rebate|{own_ib_entity}|{account_id}",
+                        "IB 异常直属返佣账户",
+                        [*anomaly_evidence(member, crm_user_id), _route_text(platform, server)],
+                        key=f"ib-anomalous-rebate|{own_ib_entity}|{account_id}",
                     )
 
             direct_ib_user_id = _text(record.get("directIbUserId"))
@@ -349,7 +370,12 @@ class _EvidenceGraphBuilder:
                 direct_ib_entity = self.add_entity(
                     "ib_user",
                     f"IB {direct_ib_user_id}",
-                    detail="CRM \u76f4\u5c5e\u4e0a\u7ea7",
+                    detail=(
+                        f"CRM 直属上级；异常 {_int(record.get('directIbAbnormalAccounts'))} / "
+                        f"直属返佣账户共 {_int(record.get('directIbTotalAccounts'))} 个"
+                        f"；筛选期 {_text(record.get('ibAnomalyPeriodStart'))} 至 {_text(record.get('ibAnomalyPeriodEnd'))}"
+                        + ("（候选读取达到安全上限）" if bool(record.get("directIbAnomalyTruncated")) else "")
+                    ),
                     key=f"{_text(record.get('crmSchema'))}|{direct_ib_user_id}",
                 )
                 self.add_relationship(
@@ -396,6 +422,34 @@ class _EvidenceGraphBuilder:
                             ],
                             key=f"direct-ib-account|{self.subject_id}|{account_id}|{direct_ib_user_id}",
                         )
+
+                # Do not fan out every member below the direct IB.  Only members
+                # selected by the auditable rebate-dominance rule or P+ status are
+                # materialised, and their route remains A -> CRM -> IB -> member.
+                for member in _items(record.get("directIbAnomalousRebateAccounts")):
+                    account = _text(member.get("account"))
+                    platform = _text(member.get("platform"))
+                    server = _text(member.get("server"))
+                    if not account or not platform or not server:
+                        continue
+                    account_id = self.add_entity(
+                        "account",
+                        account,
+                        platform=platform,
+                        server=server,
+                        detail="直属 IB 下异常返佣账户；因返佣主导盈利或数据库状态 P 及以上而纳入",
+                        database_status=_text(member.get("databaseStatus")),
+                    )
+                    if account_id == self.subject_id:
+                        continue
+                    self.add_relationship(
+                        "ib_direct_rebate",
+                        direct_ib_entity,
+                        account_id,
+                        "IB 异常直属返佣账户",
+                        [*anomaly_evidence(member, direct_ib_user_id), _route_text(platform, server)],
+                        key=f"ib-anomalous-rebate|{direct_ib_entity}|{account_id}",
+                    )
 
             top_ib_user_id = _text(record.get("topIbUserId"))
             if top_ib_user_id and bool(record.get("topIbAggregateAvailable", True)):
@@ -652,6 +706,19 @@ def _int(value: Any) -> int:
 
 def _number_text(value: Any) -> str:
     return str(_int(value)) if value not in (None, "") else ""
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _decimal_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return f"{_float(value):.2f}"
 
 
 def _route_text(platform: str, server: str) -> str:

@@ -4,11 +4,11 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
-tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "legacy/apps/problem_account_registry/test_app.py"]
-depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
+tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
+depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-19
+last_verified_date: 2026-08-24
 ---
 
 # Account relationship network
@@ -30,6 +30,23 @@ source of truth. It polls the existing single-flight background expansion and re
 snapshot without starting duplicate work. Account nodes read `databaseStatus`; only a blank value
 falls back to `B`.
 
+An additive `graph_type=focus-3d` preview uses the same `presentationGraph` response and does not
+change discovery or scoring. It projects hop depth into a rotatable Canvas scene, fixes the subject at
+the sphere origin, and distributes each hop deterministically on spherical shells. A left-side 2D
+top-down (X/Z) locator remains stable while the 3D camera rotates; both views share selection and
+route highlighting. The 2D workspace and legacy galaxy renderer remain available for evidence review
+and compatibility.
+
+The detailed workspace starts each relationship community collapsed. A collapsed community draws
+one aggregate node and one aggregate edge; its displayed status is the highest-priority member status
+in `TA > A > T > P > M > B` order. The dashed community boundary is the primary interaction target:
+clicking the boundary expands that community into its member accounts and individual evidence edges,
+and clicking it again collapses only that community. A transparent widened stroke makes the boundary
+hit target usable without changing the visible ring width. The evidence panel repeats the same
+expand/collapse control and states the member count, highest status and highest propagated score.
+Initial view fitting includes every returned ring, manual wheel zoom can reach 5%, and later polling
+does not reset a user-adjusted zoom or pan position.
+
 The explicit legacy galaxy page has a linked overview and detail view. The overview renders every returned account and
 concrete IB-identity node exactly once in concentric rings by its logical account-to-account discovery
 depth. Nodes in each ring are distributed across the whole circle in deterministic order; they are not
@@ -44,6 +61,19 @@ relation colour and carries a compact relation label; a directional segment name
 `来源账号 → 目标账号（关系）` form and carries an arrowhead. In particular, a line named
 `直属上级 IB 本人账户` means the target is the source account's direct-superior IB's own trading
 account; it does not mean the target is a downline client.
+The galaxy workspace's left global locator is intentionally independent from the detailed graph's
+community presentation state. It always lays out every returned trading account from the account
+snapshot, even when a relationship community is collapsed in the detailed graph. Locator fill uses
+the routed database status in increasing severity order `B < M < P < T < A < TA`, with progressively
+darker colours. Clicking a locator account performs the same selection as clicking that account in
+the detailed graph: the selected account, its local evidence and its complete account path back to
+the investigation subject are rendered without changing community expansion state.
+Galaxy canvas interaction is owned by one capture-phase dispatcher. It reads an immutable hit map
+built after the last completed render and never invokes layout while classifying a click. Hit priority
+is expanded-community collapse marker, visible account/IB node, collapsed community boundary or
+anchor, relation edge, then blank canvas. The dispatcher consumes every canvas click before legacy
+compatibility listeners can act, so one gesture performs at most one expand, collapse, select or
+edge-inspection action. Members hidden by a collapsed group are excluded from node hit targets.
 The overview intentionally renders only the selected account's local evidence cluster and its
 deduplicated parent chain back to the problem account. Intermediate CRM/evidence entities remain
 hidden, but their relationship type is retained on the visible account-to-account segment. Siblings
@@ -85,9 +115,11 @@ state this explicitly. Future risk items may add rows to this table without chan
 Relationship labels must describe the evidence that produced an edge. `跟单订单匹配（开仓/平仓）`
 means the relationship came from matched copy-trading open and/or close orders; it is not a generic
 "order synchronization" claim. `跟单来源组匹配` means the accounts share an identified copy source
-group, but does not by itself prove every order was copied. Toxic edges are explicitly labeled as
-`Toxic 同向开平仓时间匹配` or `Toxic 反向开平仓时间匹配`, and the optional slow-query control says
-`包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
+group, but does not by itself prove every order was copied. Cross-account trade edges are explicitly
+labeled as `主订单同向开平仓同步` or `疑似对锁（反向同步开平仓）`. The former uses principal orders,
+same symbol/direction, two-second open/close windows and a recurrence floor; the latter uses opposite
+directions, five-second open/close windows and at least 80% lot similarity. One peer/detection type
+produces one edge even when many order pairs match; the pair rows remain auditable edge evidence.
 Every visible `跟单订单匹配（开仓/平仓）` line is an on-demand evidence control. Clicking the
 line opens a modal without restarting or blocking graph expansion. The first tab reads the existing
 read-only Copy-origin payload for the follower endpoint and shows only that line's follower-to-master
@@ -114,6 +146,12 @@ priorities only; they are not a fraud conclusion or an automated action.
 For CRM hierarchy, a verified direct-parent IB user's own trading account is a real account peer and
 is visible/expandable. A top-IB downline is rendered as one aggregate group with account/customer
 counts; its members are not automatically emitted as account nodes or expanded from that group.
+The direct-IB branch also uses a bounded anomaly projection rather than expanding the full downline.
+It materialises only accounts whose database status is `P`, `T`, `A` or `TA`, or whose selected-period
+combined profit is positive and rebate-dominated. Each IB entity reports `异常 n / 直属返佣账户总数`,
+and every materialised member retains its inclusion reason, trade P/L, rebate, combined profit,
+rebate share and period. The graph path remains account → CRM owner → direct IB → anomaly account;
+it never creates a false one-hop edge from the investigated account to the IB's other members.
 
 ## API contract
 
@@ -132,15 +170,18 @@ member edges, auditable subject paths and the unchanged account status fields.
 
 The service first reads the selected account's bounded CRM, EA, Copy and rebate evidence, then reads
 each account whose propagated score still meets the threshold. For MT5 it also reads
-same-server peers sharing the current `LastIP`. When the Kuzu page asks for it, high-priority nodes
-are additionally checked through the existing all-platform Toxic synchronised open/close matcher.
-Same-CRM account discovery uses a mapping-only legacy payload plus a bounded `Login/Status` lookup
+same-server peers sharing the current `LastIP` or current MT5 `ClientID` (CID). CID zero/null is ignored,
+and current MT4 exports do not synthesize CID. When the Kuzu page asks for it, high-priority nodes
+are additionally checked through the bounded all-platform MT4/MT5 principal-order open/close and
+suspected opposite-lock matcher.
+Same-name account discovery uses a mapping-only legacy payload plus a bounded `Login/Status` lookup
 on that same route; it never uses the full dashboard trade-history payload for a graph node.
+The UI calls this evidence `同名账户` and hides the internal CRM table name and `user_id`.
 EA and Copy evidence retain their normal relationship facts but are marked internally as
 relationship-only reads, bypassing the legacy dashboard result cache so completed nodes do not
 accumulate large payloads in 8777.
-When a node belongs to an already-read current-LastIP cohort, the cohort representative's EA/Copy
-evidence is reused: sibling nodes continue CRM and LastIP expansion but skip duplicate heavy EA/Copy
+When a node belongs to an already-read current-LastIP or current-CID cohort, the cohort representative's EA/Copy
+evidence is reused: sibling nodes continue same-name, LastIP and CID expansion but skip duplicate heavy EA/Copy
 reads. Source coverage records the skipped reads and reason, so this optimisation is never presented
 as an individual automation query.
 It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
@@ -149,6 +190,10 @@ The CRM hierarchy read resolves account-to-CRM-user, direct parent IB and accoun
 direct IB user through the exact CRM schema/server route. It performs the potentially broad top-IB
 aggregate only for the seed account; later score-eligible account reads retain direct-parent mapping
 but omit repeated group aggregation.
+For both an investigated account that is itself an IB and its direct parent IB, a two-stage read first
+aggregates indexed rebate rows and elevated database statuses, then reads trading P/L only for the
+bounded candidate set. Blank graph dates use the latest 90 days. Cent/USC rebate and trading P/L are
+both converted to the same display-currency scale before the dominance rule is evaluated.
 
 ## Business rules and units
 
@@ -183,6 +228,17 @@ then polls while background expansion continues. It labels processed and pending
 an incomplete view is not mistaken for threshold stopping. Independent source failure or timeout
 does not hide available facts and remains in source coverage. A Kuzu failure returns a sanitized
 unavailable response.
+The focus workspace compares a stable entity/relationship signature on each poll and only rebuilds
+the SVG when the graph snapshot changes. Group expansion therefore is not overwritten by identical
+half-second polling responses. Group boundaries and aggregate nodes react on primary pointer-down;
+pan and zoom redraws are animation-frame coalesced. Collapsed representative edges run only between
+the visible investigation subject and the visible aggregate node, preventing line fragments whose
+original account endpoint is hidden by another collapsed community.
+Collapsed communities are assigned deterministic multi-ring radial slots rather than member-derived
+coordinates. This keeps each aggregate endpoint visible and separates center-to-community spokes;
+only an explicit expansion reintroduces member coordinates and member-level edges.
+Evidence paths show a small arrowhead so the rendered source and target are unambiguous; repeated
+expand/merge instructions remain in the side panel rather than being duplicated around every ring.
 
 ## Code and dependencies
 

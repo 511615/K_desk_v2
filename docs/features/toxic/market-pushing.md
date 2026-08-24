@@ -141,3 +141,8 @@ deposit-relative economic boundaries.
 ## Compatibility and deprecation
 
 Legacy Toxic polling keys remain supported by `_legacy_job_view`.
+## Relationship-investigation reuse
+
+`ACC-REL-003` reuses this feature's governed principal-order selection rule for optional open/close
+synchronization evidence. The relationship adapter performs bounded, read-only peer matching and
+aggregates results per peer; it does not change this feature's detection verdicts or source data.

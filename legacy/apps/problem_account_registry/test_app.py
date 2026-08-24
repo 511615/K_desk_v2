@@ -2621,6 +2621,61 @@ class LoginIpTests(unittest.TestCase):
         self.assertEqual(geo["status"], "private")
         self.assertEqual(geo["isp"], "内网或保留地址")
 
+    def test_shared_cid_payload_returns_same_server_mt5_peers_and_ignores_zero(self):
+        class Cursor:
+            def __init__(self, cid):
+                self.cid = cid
+                self.executed = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, sql, args):
+                self.executed.append((sql, args))
+
+            def fetchone(self):
+                return {"ClientID": self.cid}
+
+            def fetchall(self):
+                return [{"Login": 900002, "ClientID": self.cid, "LastAccess": "2026-08-24 10:00:00"}]
+
+        class Connection:
+            def __init__(self, cursor):
+                self.value = cursor
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def cursor(self):
+                return self.value
+
+        source = {"name": "Live MT5", "platform": "MT5", "server": "Live MT5", "kind": "mt5_deals", "schema": "live"}
+        cursor = Cursor(987654)
+        with patch.object(app, "MYSQL_SOURCES", [source]), patch.object(
+            app, "mysql_trade_connect", return_value=Connection(cursor)
+        ):
+            payload = app.account_shared_cid_payload("900001", {"platform": "MT5", "server": "Live MT5"})
+
+        self.assertEqual(payload["peers"][0]["account"], "900002")
+        self.assertEqual(payload["peers"][0]["cid"], "987654")
+        self.assertEqual(len(cursor.executed), 2)
+        self.assertIn("ClientID", cursor.executed[0][0])
+        self.assertIn("ClientID = %s", cursor.executed[1][0])
+
+        zero_cursor = Cursor(0)
+        with patch.object(app, "MYSQL_SOURCES", [source]), patch.object(
+            app, "mysql_trade_connect", return_value=Connection(zero_cursor)
+        ):
+            zero_payload = app.account_shared_cid_payload("900001", {"platform": "MT5", "server": "Live MT5"})
+        self.assertEqual(zero_payload["peers"], [])
+        self.assertEqual(len(zero_cursor.executed), 1)
+
 
 class MarkAccountTests(unittest.TestCase):
     def test_batch_mark_creates_and_updates_each_local_ledger_record(self):

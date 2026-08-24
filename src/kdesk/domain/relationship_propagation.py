@@ -28,6 +28,7 @@ RELATIONSHIP_STRENGTHS = {
     # broad top-IB aggregate, so it may continue normal evidence discovery when eligible.
     "ib_direct_rebate": 0.70,
     "login_ip": 0.90,
+    "client_id": 0.90,
     "ea_feature": 0.80,
     "copy_order": 0.80,
     "copy_group": 0.75,

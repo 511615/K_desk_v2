@@ -4,11 +4,11 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
-tests: ["tests/test_api.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py"]
-depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
+depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
-last_verified_date: 2026-08-19
+last_verified_date: 2026-08-24
 ---
 
 # Score-propagated Kuzu relationship investigation
@@ -29,6 +29,19 @@ pairwise edge web. Clicking an account exposes its routed database status and co
 detail link. It polls the existing single-flight expansion snapshots every 500 ms, updates available
 partial evidence immediately, and stops polling only when `inProgress=false` or the bounded client
 poll window expires. It reads `databaseStatus` directly and uses `B` only for a blank value.
+
+Relationship communities are collapsed by default. Their boundary is clickable and toggles a local
+presentation state without restarting the investigation: collapsed state shows the member count,
+the highest member status in `TA > A > T > P > M > B` order and one aggregate edge; expanded state
+shows the individual accounts and evidence edges inside that community. Each community toggles
+independently, and the right evidence panel exposes the same action for keyboard-accessible use.
+
+The selector also exposes the isolated `focus-3d` preview. It is a Canvas projection of the same
+read-only snapshot: the subject remains at the sphere origin, each hop is distributed on a deterministic
+spherical shell, drag rotates the camera, and the wheel changes camera distance. A stable left-side 2D
+top-down X/Z locator shows the same nodes and selection path while the 3D view rotates. Selecting a
+node highlights its path to the subject. This mode is presentation-only and does not replace the default
+2D evidence workspace.
 
 The explicit galaxy compatibility view retains the following behavior. There is no fixed hop limit: a node is visible when it has a contribution, but forwards only when
 its aggregate reaches the threshold. The overview projects every returned account node and concrete
@@ -58,6 +71,12 @@ same parent IB remain in their actual evidence family. Each evidence-family sele
 relationship-specific explanation instead of a generic secondary-clue label. The seed account is bright red,
 expandable accounts progress from red to lighter orange as score/depth falls, and a retained
 non-expandable clue is green. The overview supports pointer-centred mouse-wheel zoom and drag-to-pan.
+The galaxy workspace locator is a separate, account-only projection rather than a miniature of the
+currently expanded detailed graph. It always shows all returned trading accounts, assigns their rings
+from logical account depth, and therefore does not lose nodes when a detailed relationship community
+is collapsed or expanded. Locator colour comes from routed database status with severity order
+`B < M < P < T < A < TA`. Selecting a locator node updates the shared selected-account state and
+renders the same complete subject path and evidence detail as a direct click in the detailed graph.
 Account circles, IB glyphs, in-node status badges and terminal markers render at 2× the original
 canvas radius. Their click target scales with that visual size. The in-node badge reads only the
 routed risk-system database `Status`: blank or unavailable values render as `B`, while `P`, `T`,
@@ -69,8 +88,16 @@ risk calculation. Clicking a row selects the identical rendered node, highlighti
 existing graph path and local relation evidence.
 Edge captions and detail explanations use explicit evidence names: `跟单订单匹配（开仓/平仓）`
 for matched copy-trading open/close orders, `跟单来源组匹配` for a shared identified source group,
-and `Toxic 同向开平仓时间匹配` / `Toxic 反向开平仓时间匹配` for same-direction or opposite-direction
-Toxic open/close time matches. The optional control is named `包含 Toxic 同向/反向开平仓时间匹配（较慢）`.
+and `主订单同向开平仓同步` / `疑似对锁（反向同步开平仓）` for the two cross-account trade
+detections. The same-direction detector uses principal orders, two-second open/close windows and a
+recurrence floor. The opposite detector uses five-second open/close windows and at least 80% lot
+similarity. Repeated order pairs are evidence details of one peer relationship, not parallel graph edges.
+The compatibility canvas has one authoritative capture-phase click dispatcher backed by a frozen
+post-render hit frame. It does not recompute or mutate ring layout during hit testing. Expanded-group
+collapse markers take precedence over overlapping member nodes; visible nodes take precedence over
+collapsed boundaries; boundaries take precedence over edges. Every click is consumed by this
+dispatcher, including blank clicks, so older compatibility listeners cannot cause double toggles,
+stale-coordinate misses or a node selection and group toggle from the same gesture.
 Clicking a visible copy-order edge opens an on-demand, read-only modal. Its first tab is scoped to
 the clicked follower/master pair and lists the matched master and follower orders. Its second tab
 keeps the identified master as the centre and shows every follower discovered by the existing copy
@@ -82,7 +109,7 @@ The score fill and visual identity are kept independent: account circles use the
 IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
 that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
 this is distinct from a threshold-stopped node and explains a first-ring leaf. The enclosing relation
-band has a separate fixed palette (CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo,
+band has a separate fixed palette (same-name blue, LastIP purple, CID violet, EA cyan, Copy pink, rebate gold, IB indigo,
 same-name teal and Toxic rose), shown in the UI. Every sufficiently wide band carries its short
 relationship label. Selecting a cluster preserves its fixed relation colour and adds a white dashed
 outline instead of recolouring the band. Zoom reaches 10% to permit every ring to fit; double
@@ -131,11 +158,13 @@ recursively reads relations while a node remains at or above the selected thresh
 path has a 30-second request-wide discovery budget, a 48-account remote-expansion cap and a
 150-account direct-IB-branch cap; these return an explicitly truncated partial graph rather than
 allowing one broad cluster to block 8777. Each account evidence source has a six-second wait budget.
-Toxic runs only for nodes at least 30 and has a two-check budget. Each evidence read has its own
+The optional cross-account trade detector runs only for nodes at least 30 and has a two-check budget.
+It scans the configured AC/DBG MT4+MT5 sources in one bounded batch per account, reports partial source
+coverage, and emits at most one edge per peer and detection type. Each evidence read has its own
 six-second source timeout; a source failure is retained in coverage but does not stop later eligible
-accounts. A started same-server `LastIP` follow-up has a separate three-second maximum wait. The
+accounts. A started same-server `LastIP` or current MT5 `ClientID` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
-launching duplicate scans. Accounts in the same current-LastIP cohort skip repeat LastIP reads.
+launching duplicate scans. Accounts in the same current-LastIP/CID cohort skip repeat cohort reads.
 Each legacy evidence family has one shared local execution lane, preventing timed-out sources from
 accumulating unbounded worker threads. The fixed 2,000-node and 10,000-score-expansion caps remain
 as secondary graph guards and set `truncated=true` rather than claiming complete coverage. The final
@@ -149,14 +178,17 @@ CRM hierarchy adds explanatory ownership/direct-parent/top-group bridges at `0.0
 the auditable path without allowing a large distribution tree to amplify risk. The separately verified
 direct-IB-owned trading-account edge is `0.60`, so that account may be investigated normally. If a
 discovered account's CRM user is an IB, the graph renders an explicit `IB {CRM user}` identity node.
-`ib_identity` is lossless because it only exposes that same business identity. Each actual direct-rebate
-payee is emitted once through `ib_direct_rebate` at `0.70`, then can continue normal IP, EA, Copy,
-CRM and rebate discovery if its score meets the selected threshold. The CRM source uses one grouped
-IB-ID query and returns at most 150 direct payees; an over-limit branch is explicitly marked
-truncated rather than silently omitted. A top-IB aggregate remains aggregate-only and never emits
-all historic downline accounts.
+`ib_identity` is lossless because it only exposes that same business identity. A direct-IB branch no
+longer emits every payee. It emits a payee once through `ib_direct_rebate` at `0.70` only when the
+selected-period account is rebate-dominated profitable or its database status is `P` or higher; that
+account can then continue normal IP, EA, Copy, CRM and rebate discovery if its score meets the selected
+threshold. The source reports the exact period direct-payee denominator and the selected anomaly count,
+while a 500-candidate safety cap is explicit as truncated. A top-IB aggregate remains aggregate-only
+and never emits all historic downline accounts.
 
-The overview renderer groups identical relationship branches into one representative path edge,
+The overview renderer resolves each account's ancestry with a bounded evidence-graph search rather
+than blindly following the first score-ledger entry. This prevents reciprocal same-CRM evidence from
+forming a parent cycle and hiding the selected account's route. It then groups identical relationship branches into one representative path edge,
 while the detail panel retains member-level evidence. Every rendered node keeps its ancestry path
 back to the subject. Ring captions are positioned on their actual ring and empty rings are omitted.
 Optional start/end datetime filters are forwarded to the read-only relationship endpoint; leaving
@@ -171,6 +203,19 @@ Selecting an account uses the same grouped-edge policy as the overview: one rela
 one parent/type community. The detail relation control can explicitly expand that community to show
 member edges, then merge it again without rerunning the database scan.
 The coloured community band is also a direct click target for the same expand/merge action.
+The focus workspace activates that band on primary pointer-down and keeps a wider transparent stroke
+as its hit target. Background snapshot polling skips DOM reconstruction when the entity/relationship
+signature has not changed, while pan and wheel redraws are coalesced through one animation frame.
+Collapsed community edges are anchored only to the visible subject and visible aggregate node; an
+account hidden inside another collapsed community cannot remain as an orphan edge endpoint.
+The collapsed projection uses deterministic multi-ring radial slots for community anchors. It does
+not position aggregate circles from hidden member coordinates, so the investigation spokes terminate
+at visible group anchors; member-level routing is introduced only after that group is expanded.
+After expansion, the community band is removed from the band hit-test projection; clicking a member
+node is handled first and opens that account's complete route to the subject. The remaining band stays
+the direct collapse target.
+Evidence edges include a direction marker in the detail canvas, while repeated interaction instructions
+remain available in the evidence panel instead of being drawn beside every ring.
 
 Canvas relation communities use one canonical key (`source account + relation family`). Therefore
 same-CRM, same-IP, EA, rebate, copy-order and IB communities render as one representative line by
@@ -181,6 +226,10 @@ Collapsed communities are rendered as their own canvas anchors instead of borrow
 account node: members share the community anchor, the common edge terminates on that anchor, and the
 anchor displays the member count. Clicking the anchor expands the members; clicking the expanded
 community band or its detail control collapses them again.
+If a multi-member community has no drawable member route after aggregation, the renderer adds one
+presentation-only bridge from its actual parent community (or the subject) to that anchor, so every
+non-scattered community remains visibly connected to the investigation chain without inventing
+evidence or expanding singleton clues.
 Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
 the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
 make the lines unclickable.
@@ -222,6 +271,23 @@ API tests cover account-route replacement, page request targeting and invalid th
 mocks; they make no live writes.
 
 ## Compatibility and deprecation
+
+When a galaxy community is collapsed, its visible anchor is connected through the complete
+score-ledger route from the subject to the owning intermediate community. If a source route is
+missing, the renderer uses an explicitly presentation-only connector and does not treat it as
+new evidence or a score contribution.
+
+Galaxy route lookup is now built once per response data snapshot and reused by the renderer;
+the selected account's complete subject route is redrawn after aggregation so collapsed groups
+cannot hide an otherwise valid path. This is a presentation/performance change only and does not
+alter the read-only API or source database contract.
+
+Galaxy group rings use a two-state interaction. Clicking a collapsed ring/anchor expands that one
+community. Once expanded, a small minus marker is drawn beside the ring; clicking that marker merges
+the community again. Account and evidence-edge clicks retain their selection behavior, while blank-
+canvas clicks leave the current selection unchanged. The temporary DOM group-operation list is not
+shown in the workspace. A small “恢复初始” control is the only action that clears the selection,
+collapsed/expanded state, and route highlight.
 
 The former relationship button view/response is replaced at the user's request. The standalone
 Kuzu demo, account route, Copy, EA and Toxic contracts remain available.

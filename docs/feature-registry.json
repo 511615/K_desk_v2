@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "9c47407610be",
+  "registryVersion": "c5a553af2e79",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -53,8 +53,11 @@
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_risk.py",
+        "src/kdesk/application/trade_relationship_detection.py",
+        "src/kdesk/domain/ib_rebate_anomaly.py",
         "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_3d_preview_page.py",
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
@@ -63,8 +66,11 @@
       ],
       "tests": [
         "tests/test_api.py",
+        "tests/test_ib_rebate_anomaly.py",
         "tests/test_kuzu_risk_graph.py",
         "tests/test_relationship_graph.py",
+        "tests/test_relationship_risk.py",
+        "tests/test_trade_relationship_detection.py",
         "legacy/apps/problem_account_registry/test_app.py"
       ],
       "depends_on": [
@@ -74,10 +80,12 @@
         "AUT-EA-001",
         "AUT-FOLLOWER-001",
         "FIN-REBATE-001",
-        "ACC-REL-003"
+        "ACC-REL-003",
+        "TOX-PUSH-001",
+        "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-19",
+      "last_verified_date": "2026-08-24",
       "document": "docs/features/account/relationship-network.md"
     },
     {
@@ -120,12 +128,15 @@
       "code": [
         "legacy/apps/problem_account_registry/app.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/kuzu_3d_preview_page.py",
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_risk.py",
+        "src/kdesk/application/trade_relationship_detection.py",
+        "src/kdesk/domain/ib_rebate_anomaly.py",
         "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/domain/relationship_propagation.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
@@ -133,18 +144,22 @@
       ],
       "tests": [
         "tests/test_api.py",
+        "tests/test_ib_rebate_anomaly.py",
         "tests/test_kuzu_risk_graph.py",
         "tests/test_relationship_graph.py",
         "tests/test_relationship_propagation.py",
-        "tests/test_relationship_risk.py"
+        "tests/test_relationship_risk.py",
+        "tests/test_trade_relationship_detection.py"
       ],
       "depends_on": [
         "ACC-REL-001",
         "ACC-REL-002",
-        "TOX-POSITION-001"
+        "TOX-POSITION-001",
+        "TOX-PUSH-001",
+        "TOX-HEDGE-001"
       ],
       "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-19",
+      "last_verified_date": "2026-08-24",
       "document": "docs/features/account/score-propagated-kuzu-investigation.md"
     },
     {

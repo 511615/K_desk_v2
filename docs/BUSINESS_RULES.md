@@ -249,12 +249,22 @@
   matches a numeric prefix. At least five complete non-zero ExpertIDs, 80% overlap in both directions,
   matching symbol/direction within two seconds, three distinct times and a 60-second span are required.
   Qualifying groups remain `可能是跟单路由`, have `countedAsEa=false` and do not change EA KPIs.
-- Relationship-network scoring is an investigation-priority rule: same-CRM-user, current `LastIP`,
-  EA/route, Copy, CRM-rebate, verified direct-IB-owned accounts and qualified Toxic sync facts
+- Relationship-network scoring is an investigation-priority rule: same-name accounts (trading
+  accounts mapped to one CRM customer), current `LastIP`, current MT5 `ClientID` (CID),
+  EA/route, Copy, CRM-rebate, verified direct-IB-owned accounts, principal-order open/close
+  synchronisation and suspected opposite-lock facts
   contribute through the ACC-REL-003 strength table, but never produce an automated fraud conclusion
   or trading action. CRM ownership, direct-parent and top-IB group edges are explanatory bridges;
   top-IB membership alone cannot create or expand downline account nodes. A current `LastIP` is an
-  observation of shared current login IP, not proof of shared device ownership.
+  observation of shared current login IP, not proof of shared device ownership. CID is a same-server
+  current MT5 identifier: zero and null values are ignored, and it is not treated as historical CID,
+  device ownership, or the unrelated `CID=...` text sometimes found in order comments.
+- A relationship-network direct-IB branch is selective. Database status `P`, `T`, `A` or `TA` always
+  qualifies. Otherwise the period account must have at least three rebate rows, positive combined
+  profit (`trading P/L + rebate`), rebate at or above both 20 display-currency units and the IB cohort
+  75th percentile, rebate share at least 70%, and trading P/L no more than 30% of rebate. Qualified
+  status and rebate reasons are unioned without duplicating an account. These are investigation clues,
+  not a fraud conclusion.
 
 ## Toxic and market-pushing
 
@@ -379,9 +389,16 @@ residual score forwards through one relation as `residual × fixed relation stre
 is visible once it has a contribution; it only forwards when its combined noisy-OR score meets the
 operator threshold. Duplicate evidence within one relation family retains the maximum contribution;
 different families combine as `100 × (1 - product(1 - contribution/100))`. The displayed score is
-an investigation priority, not a fraud decision. `login_ip` is current `LastIP` only. Toxic sync
-uses only governed main/heavy orders with the complete open/close synchronization and opposite-lot
-requirements owned by `TOX-POSITION-001`. The implementation has 2,000-node and 10,000-expansion
+an investigation priority, not a fraud decision. `login_ip` is current `LastIP` only and `client_id`
+is current same-server MT5 `ClientID` only; both use strength `0.90`. Cross-account trade matching first
+selects principal orders independently per canonical symbol: symbols with fewer than five closed entry
+orders retain all orders; other symbols retain the largest orders covering at least 95% of total volume,
+with a five-order floor. A same-direction relationship requires the same symbol and direction, opening
+and final closing deltas no greater than two seconds, and at least `max(2, ceil(5% of principal orders))`
+distinct principal-order hits for the peer account. A suspected opposite lock requires the same symbol,
+opposite direction, opening and final closing deltas no greater than five seconds, and lot similarity of
+at least 80%. Repeated order pairs are evidence details under one account-to-account relationship edge;
+they never create parallel graph edges. The implementation has 2,000-node and 10,000-expansion
 safety caps, a 12-second discovery budget and reports truncation rather than implying complete coverage.
 The replaced account relationship endpoint applies this scorer to a request-scoped temporary Kuzu
 projection and reads the next account only if its score remains at least the operator threshold.
