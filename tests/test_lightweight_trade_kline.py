@@ -114,3 +114,18 @@ def test_lightweight_renderer_orders_same_minute_by_their_second_and_draws_overl
     assert "intraMinuteFraction(t['Open Time'])" in html
     assert "intraMinuteFraction(t['Close Time'])" in html
     assert "positionTradeMarkers(candle,rows)" in html
+
+
+def test_lightweight_renderer_batches_only_visible_trade_overlays_while_panning():
+    """Dense order history must not rebuild one DOM node per order for every pan event."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_performance", trades, bars, mapping)
+
+    assert "const OVERLAY_DRAG_INTERVAL_MS=50" in html
+    assert "function visibleOverlayRows(rows)" in html
+    assert "const holdingPath=document.createElementNS" in html
+    assert "const openMarkerPath=document.createElementNS" in html
+    assert "holdingPath.setAttribute('d',segments.join(''))" in html
+    assert "openMarkerPath.setAttribute('d',openSegments.join(''))" in html
+    assert "function scheduleOverlayRefresh(settled=false)" in html
+    assert "scheduleOverlayRefresh();scheduleSettledOverlayRefresh()" in html

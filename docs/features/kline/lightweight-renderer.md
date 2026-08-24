@@ -94,6 +94,13 @@ halo, so holding evidence remains visible without obscuring candlesticks. The SV
 explicit z-index above the Lightweight Charts canvas and below trade markers, so the chart
 background cannot cover any in-plot portion of a holding line.
 
+During pan, zoom and resize the overlay is recomputed at most once every 50 ms and receives one
+final exact refresh after the interaction settles. It renders only orders intersecting the visible
+bar range plus a three-bar boundary buffer. Holding lines, opening triangles and close squares are
+batched into three SVG paths rather than creating one DOM node per order, so a large account's
+off-screen history does not make drag interaction progressively slower. The visible data, order
+limit, filters, execution prices and marker/line semantics are unchanged.
+
 M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
 (the most recent bar at or before the trade time), while the buy/sell node, close node and holding
 line retain their second-level fraction within that interval. Earlier events appear to the left and
