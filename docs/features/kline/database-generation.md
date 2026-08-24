@@ -101,7 +101,9 @@ time-window positioning, summary metrics, order table and optional funds replay.
 is separated from rendering: `generate_trade_kline_from_statement.py --offline-cache` reads an
 existing mapping and M1 cache only, so it does not initialize MT5. The cache is produced by the
 upstream read-only quote adapter and can later be replaced by a live Terminal feed without changing
-the browser contract.
+the browser contract. The generator keeps its display-price alignment helper at module scope in
+both offline-cache and live-quote paths, so an offline-only import cannot shadow that helper and
+abort a live database-generation job before a structured result is emitted.
 
 ## Loading, empty and failure behavior
 

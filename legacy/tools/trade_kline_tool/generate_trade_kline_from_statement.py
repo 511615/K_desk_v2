@@ -644,7 +644,7 @@ def main() -> None:
     quote_sources: dict[str, dict] = {}
     symbol_groups = sorted(trades.groupby("Item", sort=True), key=lambda item: len(item[1]), reverse=True)
     if args.offline_cache:
-        from build_enhanced_trade_kline_from_cache import apply_display_price_alignment, load_bars_for_symbol
+        from build_enhanced_trade_kline_from_cache import load_bars_for_symbol
 
         cache_dir = Path(args.quote_cache_dir or args.out_dir)
         mapping_path = cache_dir / f"{stem}_mapping.json"

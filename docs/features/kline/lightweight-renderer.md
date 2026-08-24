@@ -83,13 +83,15 @@ The marker overlay is a child of the exact Lightweight Charts host, rather than 
 chart shell. Its x/y coordinates therefore share the candle canvas origin and price scale when the
 browser lays out the right axis, preventing a horizontal left shift of evidence nodes.
 
-The Profit indicator uses one symmetric absolute-value scale for positive and negative values and a
-shared dashed zero baseline. Profit bars are therefore anchored to the same baseline; positive bars
-extend upward and negative bars downward with equal visual magnitude.
+The Profit indicator explicitly uses `base=0`, one symmetric absolute-value scale for positive and
+negative values, and a shared high-contrast dashed zero baseline. Profit bars are therefore
+anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
+green and extend downward with equal visual magnitude for equal absolute profit.
 
-Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with density-aware opacity
-from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
-the dark TradingView-style background.
+Holding lines use a two-stroke treatment: a density-aware dark halo followed by a solid bright
+lavender foreground (`#d8b4fe`). The fixed-width, rounded foreground keeps open-to-close evidence
+readable on the dark TradingView-style background without changing the order price or time used by
+the line.
 
 M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
 (the most recent bar at or before the trade time), while the buy/sell node, close node and holding

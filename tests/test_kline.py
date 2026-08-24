@@ -202,6 +202,14 @@ def test_chart_preserves_white_workspace_and_embeds_gap_controls() -> None:
     assert "overflow-wrap:anywhere" in builder
 
 
+def test_live_quote_generation_does_not_shadow_display_price_alignment() -> None:
+    root = Path(__file__).resolve().parents[1]
+    generator = (root / "legacy" / "tools" / "trade_kline_tool" / "generate_trade_kline_from_statement.py").read_text(encoding="utf-8")
+
+    assert "from build_enhanced_trade_kline_from_cache import apply_display_price_alignment, load_bars_for_symbol" not in generator
+    assert "from build_enhanced_trade_kline_from_cache import load_bars_for_symbol" in generator
+
+
 def test_worker_reads_additive_kline_result() -> None:
     result = Worker._parse_kline_result(
         'progress\nKLINE_RESULT {"partial": true, "symbols": [{"symbol": "XAUUSD"}], "failures": []}\n'
