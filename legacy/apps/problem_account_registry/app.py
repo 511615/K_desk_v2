@@ -1758,6 +1758,99 @@ def query_mysql_mt4_source(
     return out
 
 
+def query_mysql_current_positions(source: dict, account: str) -> list[dict]:
+    """Read current market positions only; no MT/CRM state is changed."""
+    if not source or not normalize_text(account).isdigit():
+        return []
+    now = datetime.now()
+    now_text = trade_time_text(now)
+    try:
+        with mysql_trade_connect(source) as conn:
+            with conn.cursor() as cur:
+                if not source_account_exists(cur, source, account):
+                    return []
+                if source.get("kind") == "mt5_deals":
+                    cur.execute(
+                        f"""
+                        select Position, Login, Symbol, Action, TimeCreate, TimeCreateMsc,
+                               PriceOpen, PriceCurrent, PriceSL, PriceTP, Volume, VolumeExt,
+                               Profit, Storage, Comment, ExpertID
+                        from `{source['schema']}`.`mt5_positions`
+                        where Login = %s and Action in (0, 1)
+                        order by TimeCreate, Position
+                        limit 1000
+                        """,
+                        (int(account),),
+                    )
+                    raw_rows = cur.fetchall()
+                    meta = query_mysql_mt5_account_meta(cur, source, account)
+                    scale = numeric_value(meta.get("moneyScale")) or 1.0
+                    return [
+                        {
+                            "id": normalize_text(row.get("Position")),
+                            "source_id": normalize_text(source.get("name")), "data_source": "mysql",
+                            "platform": source.get("platform", "MT5"), "server": source.get("server", source.get("name", "")),
+                            "account": account, "ticket": normalize_text(row.get("Position")),
+                            "open_time": mysql_datetime_text(row.get("TimeCreateMsc") or row.get("TimeCreate")),
+                            "close_time": now_text, "type": "buy" if mysql_int(row.get("Action")) == 0 else "sell",
+                            "volume": normalize_mt5_volume(row.get("VolumeExt") or row.get("Volume")),
+                            "symbol": normalize_text(row.get("Symbol")), "open_price": row.get("PriceOpen") or 0,
+                            "close_price": row.get("PriceCurrent") or 0,
+                            "commission": 0, "taxes": 0, "swap": numeric_value(row.get("Storage")) * scale,
+                            "profit": numeric_value(row.get("Profit")) * scale,
+                            "sl": row.get("PriceSL") or "", "tp": row.get("PriceTP") or "",
+                            "comment": normalize_text(row.get("Comment")), "expert_id": normalize_text(row.get("ExpertID")),
+                            "holding_seconds": max(0, (now - (parse_trade_time(row.get("TimeCreateMsc") or row.get("TimeCreate")) or now)).total_seconds()),
+                            "account_currency": meta.get("currency", ""), "display_currency": meta.get("displayCurrency", ""),
+                            "money_scale": scale, "is_cent_account": bool(meta.get("isCentAccount")), "is_open_position": True,
+                        }
+                        for row in raw_rows
+                    ]
+                cur.execute(
+                    f"""
+                    select TICKET, LOGIN, CMD, SYMBOL, VOLUME, OPEN_TIME, OPEN_PRICE,
+                           SL, TP, COMMISSION, TAXES, SWAPS, PROFIT, REASON, MAGIC, COMMENT
+                    from `{source['schema']}`.`mt4_trades`
+                    where LOGIN = %s and CMD in (0, 1) and CLOSE_TIME <= OPEN_TIME
+                    order by OPEN_TIME, TICKET
+                    limit 1000
+                    """,
+                    (int(account),),
+                )
+                raw_rows = cur.fetchall()
+                meta = account_money_meta(source_name=source.get("name"))
+                if raw_rows:
+                    cur.execute(
+                        f"select CURRENCY, `GROUP` as AccountGroup from `{source['schema']}`.`mt4_users_view` where LOGIN = %s limit 1",
+                        (int(account),),
+                    )
+                    user = cur.fetchone() or {}
+                    meta = account_money_meta(user.get("CURRENCY"), user.get("AccountGroup"), source.get("name"), "mt4_users_view")
+                scale = numeric_value(meta.get("moneyScale")) or 1.0
+                return [
+                    {
+                        "id": normalize_text(row.get("TICKET")), "source_id": normalize_text(source.get("name")), "data_source": "mysql",
+                        "platform": source.get("platform", "MT4"), "server": source.get("server", source.get("name", "")),
+                        "account": account, "ticket": normalize_text(row.get("TICKET")), "open_time": mysql_datetime_text(row.get("OPEN_TIME")),
+                        "close_time": now_text, "type": "buy" if mysql_int(row.get("CMD")) == 0 else "sell",
+                        "volume": normalize_mt4_volume(row.get("VOLUME")), "symbol": normalize_text(row.get("SYMBOL")),
+                        "open_price": row.get("OPEN_PRICE") or 0, "close_price": 0,
+                        "commission": numeric_value(row.get("COMMISSION")) * scale, "taxes": numeric_value(row.get("TAXES")) * scale,
+                        "swap": numeric_value(row.get("SWAPS")) * scale, "profit": numeric_value(row.get("PROFIT")) * scale,
+                        "sl": row.get("SL") or "", "tp": row.get("TP") or "", "reason": trade_reason_label("MT4", row.get("REASON")),
+                        "comment": normalize_text(row.get("COMMENT")), "expert_id": normalize_text(row.get("MAGIC")) if mysql_int(row.get("MAGIC")) else "",
+                        "holding_seconds": max(0, (now - (parse_trade_time(row.get("OPEN_TIME")) or now)).total_seconds()),
+                        "account_currency": meta.get("currency", ""), "display_currency": meta.get("displayCurrency", ""),
+                        "money_scale": scale, "is_cent_account": bool(meta.get("isCentAccount")), "is_open_position": True,
+                    }
+                    for row in raw_rows
+                ]
+    except Exception:
+        # Current-position coverage augments the chart; unavailable snapshots
+        # must not block the completed-order direct chart.
+        return []
+
+
 def query_mysql_mt4_orders_page_source(
     source: dict,
     account: str,
@@ -2167,6 +2260,31 @@ def recent_chartable_kline_trades(rows: list[dict], limit: int) -> list[dict]:
     return selected
 
 
+def inline_kline_trade_rows(closed_rows: list[dict], current_rows: list[dict], limit: int) -> list[dict]:
+    """Return the bounded closed window plus every currently open market position."""
+    selected = recent_chartable_kline_trades(closed_rows, limit)
+    seen = {
+        (normalize_text(row.get("platform")), normalize_text(row.get("server")), normalize_text(row.get("ticket")))
+        for row in selected
+    }
+    for row in current_rows:
+        if clean_trade_type(row.get("type", "")) not in {"buy", "sell"} or not row.get("open_time"):
+            continue
+        item = dict(row)
+        item["is_open_position"] = True
+        key = (normalize_text(item.get("platform")), normalize_text(item.get("server")), normalize_text(item.get("ticket")))
+        if key not in seen:
+            seen.add(key)
+            selected.append(item)
+    selected.sort(
+        key=lambda row: (
+            parse_trade_time(row.get("open_time") or row.get("close_time")) or datetime.min,
+            normalize_text(row.get("ticket")),
+        ),
+    )
+    return selected
+
+
 def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
     """Build the bounded account-detail chart without creating a K-line job.
 
@@ -2190,19 +2308,23 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
     if not platform or not server:
         raise ValueError("请先选择平台和服务器")
 
-    rows = recent_chartable_kline_trades(
-        query_db_trades(account, platform=platform, server=server, limit=50000),
-        recent_orders,
-    )
+    source = next((item for item in MYSQL_SOURCES if source_allowed(item, platform=platform, server=server)), None)
+    closed_rows = query_db_trades(account, platform=platform, server=server, limit=50000)
+    current_rows = query_mysql_current_positions(source, account) if source and TRADE_DB_SOURCE in {"mysql", "auto"} else []
+    rows = inline_kline_trade_rows(closed_rows, current_rows, recent_orders)
     if not rows:
-        raise RuntimeError("账户暂未找到可展示的已平仓买卖订单")
+        raise RuntimeError("账户暂未找到可展示的已平仓买卖订单或当前持仓")
     newest = max(
         rows,
         key=lambda row: (
-            normalize_text(row.get("close_time") or row.get("open_time")),
+            normalize_text(row.get("open_time") if row.get("is_open_position") else row.get("close_time") or row.get("open_time")),
             normalize_text(row.get("ticket")),
         ),
     )
+    open_signature = tuple(sorted(
+        (normalize_text(row.get("ticket")), normalize_text(row.get("open_time")))
+        for row in rows if row.get("is_open_position")
+    ))
     cache_key = (
         "inline-kline-html",
         account,
@@ -2210,7 +2332,8 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
         server,
         recent_orders,
         normalize_text(newest.get("ticket")),
-        normalize_text(newest.get("close_time") or newest.get("open_time")),
+        normalize_text(newest.get("open_time") if newest.get("is_open_position") else newest.get("close_time") or newest.get("open_time")),
+        open_signature,
     )
     cached = account_cache_get(cache_key)
     if cached is not None:
@@ -2260,6 +2383,13 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
         errors: list[str] = []
         for report_symbol, group in trades.groupby("Item", sort=True):
             group = group.sort_values("Open Time").reset_index(drop=True)
+            alignment_group = group[~group["Is Open"].astype(bool)].copy()
+            if alignment_group.empty:
+                # A position-only account still has an authoritative opening
+                # quote.  Calibrate that endpoint without inventing a close.
+                alignment_group = group.copy()
+                alignment_group["Close Time"] = alignment_group["Open Time"]
+                alignment_group["Close Price"] = alignment_group["Open Price"]
             source_candidates = registry.candidates(platform, server)
             if not source_candidates:
                 errors.append(f"{report_symbol}: 未配置 {platform} / {server} 的同源报价")
@@ -2276,7 +2406,7 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
                     terminal_server = str(getattr(quote_generator.mt5.account_info(), "server", "") or "")
                     mapping, _align, sample = quote_generator.choose_by_m1_envelope(
                         str(report_symbol),
-                        group,
+                        alignment_group,
                         aliases=provider.aliases,
                         fallback_source=is_fallback,
                         allowed_hour_offsets=provider.allowed_hour_offsets,
@@ -8161,6 +8291,7 @@ def canonical_trade_row(row: dict) -> dict[str, object]:
         holding_seconds = (close_time - open_time).total_seconds()
     return {
         "Ticket": normalize_text(row.get("ticket")),
+        "Is Open": bool(row.get("is_open_position")),
         "Open Time": trade_time_text(open_time),
         "Close Time": trade_time_text(close_time),
         "Type": clean_trade_type(row.get("type", "")),
@@ -8172,8 +8303,8 @@ def canonical_trade_row(row: dict) -> dict[str, object]:
         "Taxes": row.get("taxes") or 0,
         "Swap": row.get("swap") or 0,
         "Profit": row.get("profit") or 0,
-        "S/L": "",
-        "T/P": "",
+        "S/L": row.get("sl") or "",
+        "T/P": row.get("tp") or "",
         "Reason": normalize_text(row.get("reason")),
         "Comment": normalize_text(row.get("comment")),
         "Expert ID": normalize_text(row.get("expert_id")),
@@ -12495,7 +12626,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     async function saveStatusOnly(){if($("status").disabled)return;const accounts=targetAccounts(),value=$("status").value;$("status").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号状态...`:'正在保存状态...';try{await markRequest({status:value},accounts);$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent='状态已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("status").disabled=false;}}
     async function save(){const action=state.selectedAction==='自定义'?($("customAction").value.trim()||'自定义'):state.selectedAction,accounts=targetAccounts();$("saveBtn").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号...`:'正在保存...';try{await markRequest({action,group:$("group").value.trim(),tags:$("tags").value.trim(),note:$("note").value.trim(),status:$("status").value,owner:$("owner").value.trim()},accounts);applyLocalAction(action,accounts);state.formDirty=false;$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent=accounts.length>1?`已保存 ${accounts.length} 个账号`:'已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("saveBtn").disabled=false;}}
     function preview(url){$("previewFrame").src=url;$("previewOpen").href=url;$("previewDialog").showModal();}
-    async function loadInlineKline(){const db=state.detail?.database||{},source=db.latestSource||{},section=$("inlineKlineSection"),status=$("inlineKlineStatus"),frame=$("inlineKlineFrame");if(!db.exists||!source.platform||!source.server){section.hidden=true;return;}const current=filters(),query=new URLSearchParams({platform:current.platform||source.platform,server:current.server||source.server,recentOrders:'300'}),key=`${query.toString()}|${db.lastTime||db.orderCount||0}`;section.hidden=false;if(state.inlineKlineKey===key)return;state.inlineKlineKey=key;status.textContent='正在读取最近 300 笔订单与 M1 报价...';frame.removeAttribute('srcdoc');try{const response=await fetch(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/inline-kline?${query}`);if(!response.ok){let issue={};try{issue=await response.json();}catch(_){ }throw new Error(issue.error||issue.detail||`HTTP ${response.status}`);}frame.srcdoc=await response.text();status.textContent='最近 300 笔订单 · 已直接加载';}catch(err){frame.srcdoc='';status.textContent=`K 线暂时无法加载：${err.message}`;}}
+    async function loadInlineKline(){const db=state.detail?.database||{},source=db.latestSource||{},section=$("inlineKlineSection"),status=$("inlineKlineStatus"),frame=$("inlineKlineFrame");if(!source.platform||!source.server){section.hidden=true;return;}const current=filters(),query=new URLSearchParams({platform:current.platform||source.platform,server:current.server||source.server,recentOrders:'300'}),key=`${query.toString()}|${db.lastTime||db.orderCount||0}`;section.hidden=false;if(state.inlineKlineKey===key)return;state.inlineKlineKey=key;status.textContent='正在读取最近 300 笔订单与当前持仓及 M1 报价...';frame.removeAttribute('srcdoc');try{const response=await fetch(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/inline-kline?${query}`);if(!response.ok){let issue={};try{issue=await response.json();}catch(_){ }throw new Error(issue.error||issue.detail||`HTTP ${response.status}`);}frame.srcdoc=await response.text();status.textContent='最近 300 笔订单与当前持仓 · 已直接加载';}catch(err){frame.srcdoc='';if(String(err.message||'').includes('当前持仓')){section.hidden=true;return;}status.textContent=`K 线暂时无法加载：${err.message}`;}}
     async function generate(){const start=databaseTime($("chartStart").value),end=databaseTime($("chartEnd").value,true);if(start&&end&&start>end){$("jobText").textContent='开始时间不能晚于结束时间';return;}$("generateBtn").disabled=true;$("jobText").textContent='正在提交生成任务...';$("jobProgress").style.width='3%';try{const current=filters(),includeTimeline=$("includeTimeline").checked,payload={account:LOGIN,platform:current.platform,server:current.server,symbol:$("chartSymbol").value,start,end,includeTimeline,refreshTimelineCache:includeTimeline&&$("refreshTimelineCache").checked};const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});$("jobText").textContent=`已提交 · ${payload.symbol||'全部品种'} · ${start||'全量'} 至 ${end||'全量'}${includeTimeline?' · 含资金回放':''}`;poll(data.job.id);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     async function poll(id,options={}){clearTimeout(state.jobTimer);try{const data=await json(`/api/kline/jobs/${encodeURIComponent(id)}`),job=data.job||{};$("jobProgress").style.width=`${Math.max(0,Math.min(100,Number(job.percent||0)))}%`;$("jobText").textContent=[job.message,job.elapsedSeconds?`${job.elapsedSeconds}s`:''].filter(Boolean).join(' · ');if(job.status==='done'){if(job.chart){state.detail.charts=[job.chart,...(state.detail.charts||[]).filter(c=>c.name!==job.chart.name)];renderCharts(state.detail.charts);if(!options.auto)preview(job.chart.url);}$("generateBtn").disabled=false;return;}if(job.status==='failed'||job.status==='missing'){$("generateBtn").disabled=false;return;}state.jobTimer=setTimeout(()=>poll(id,options),1000);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     function toxicMode(){return document.querySelector('input[name="toxicMode"]:checked')?.value||'selected';}

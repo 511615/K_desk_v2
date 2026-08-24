@@ -33,7 +33,7 @@ from kdesk.application.kline_generation import generation_result, missing_same_s
 from kdesk.domain.kline import (
     canonical_symbol,
     confidence_for,
-    endpoint_check,
+    execution_endpoint_check,
     symbol_candidates,
     validation_metrics,
     validation_passes,
@@ -393,18 +393,21 @@ def _evaluate_alignment(mt5_symbol: str, sample: pd.DataFrame, hour_delta: int) 
             bar = min(rates, key=lambda row: abs(int(row["time"]) - target))
             if abs(int(bar["time"]) - target) > 60:
                 continue
-            check = endpoint_check(
+            endpoint = "open" if time_column == "Open Time" else "close"
+            check = execution_endpoint_check(
                 float(trade[price_column]),
                 float(bar["low"]),
                 float(bar["high"]),
                 point=point,
                 spread_points=float(bar["spread"]),
+                trade_type=str(trade.get("Type", "")),
+                endpoint=endpoint,
             )
             checks.append(check)
             evidence.append(
                 {
                     "ticket": str(trade.get("Ticket", "")),
-                    "endpoint": "open" if time_column == "Open Time" else "close",
+                    "endpoint": endpoint,
                     "inside": check.inside,
                     "distance": check.distance,
                     "normalizedDistance": check.normalized_distance,
@@ -471,6 +474,7 @@ def choose_by_m1_envelope(
         "max_distance_to_m1_range": float(best["maxNormalizedDistance"]),
         "validation_status": "accepted",
         "confidence": confidence_for(best, fallback=fallback_source),
+        "endpoint_price_basis": "direction-aware bid/ask M1 envelope",
         "fallback_source": fallback_source,
     }
     align = pd.DataFrame(
@@ -552,7 +556,8 @@ def make_price_check_from_bars(report_symbol: str, sample: pd.DataFrame, bars: p
                     "M1 High": float(row["high"]),
                     "M1 Low": float(row["low"]),
                     "M1 Close": float(row["close"]),
-                    "Open Price Distance To M1 Range": distance_to_bar(float(tr["Open Price"]), row),
+                    "M1 Spread Points": float(row.get("spread", 0) or 0),
+                    "Open Price Distance To Bid M1 Range": distance_to_bar(float(tr["Open Price"]), row),
                 }
             )
         rows.append(out)

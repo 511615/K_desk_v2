@@ -100,6 +100,30 @@ def endpoint_check(price: float, low: float, high: float, *, point: float, sprea
     return EndpointCheck(inside=distance == 0, distance=distance, tolerance=tolerance)
 
 
+def execution_endpoint_check(
+    price: float,
+    low: float,
+    high: float,
+    *,
+    point: float,
+    spread_points: float = 0.0,
+    trade_type: str,
+    endpoint: str,
+) -> EndpointCheck:
+    """Compare an endpoint with its executable Bid/Ask M1 envelope.
+
+    MT M1 OHLC values are Bid prices. A buy opens and a sell closes at Ask,
+    whose upper envelope is the Bid high plus the recorded spread. The lower
+    envelope remains the Bid low because a minute's spread value is sampled,
+    not a historical minimum during spread changes.
+    """
+    side = str(trade_type or "").strip().casefold()
+    event = str(endpoint or "").strip().casefold()
+    ask_endpoint = (side == "buy" and event == "open") or (side == "sell" and event == "close")
+    executable_high = float(high) + (abs(float(point)) * max(float(spread_points), 0.0) if ask_endpoint else 0.0)
+    return endpoint_check(price, low, executable_high, point=point, spread_points=spread_points)
+
+
 def validation_metrics(checks: Sequence[EndpointCheck]) -> dict:
     normalized = [item.normalized_distance for item in checks if math.isfinite(item.normalized_distance)]
     inside = sum(item.inside for item in checks)

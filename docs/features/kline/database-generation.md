@@ -84,6 +84,13 @@ within tolerance. A narrowly bounded fallback near-match is also accepted only w
 hits, 90% endpoint tolerance hits, median normalized distance at most 0.25 and maximum normalized
 distance at most 1.25. Price correction is applied only when declared by the selected provider.
 
+Cached M1 OHLC values are Bid candles. Execution-price calibration therefore uses a direction-aware
+envelope: buy openings and sell closings may fall above the Bid high by the recorded M1 spread, while
+sell openings and buy closings are validated against the Bid range. This preserves the source trade
+price rather than clamping a marker into a candle. A fallback provider remains a visibly labelled
+reference source; exact same-server confirmation still requires a configured same-source provider or
+matching historical Bid/Ask data.
+
 Gaps over five minutes form segment boundaries and gaps over sixty minutes are labelled closed/no
 quote. Long-history aggregation occurs within each segment. Missing-minute trades retain their real
 time and use hollow warning markers rather than moving to the next quote.

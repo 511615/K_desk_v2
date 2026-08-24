@@ -469,6 +469,13 @@ stricter fallback validation threshold rather than inferred to be same-source. W
 registry is configured, missing database routes fail before quote access and expose the requested
 route plus credential-free configured-provider metadata.
 
+M1 OHLC cache rows are Bid values. K-line endpoint calibration retains the source deal price and
+uses the executable side by direction: buy opens and sell closes compare against Bid high plus the
+recorded M1 spread, while sell opens and buy closes compare against Bid high/low. The M1 spread is a
+sample rather than a full tick history, so a fallback provider can remain reference-only even when
+this envelope passes; exact cross-server execution verification requires a configured same-server
+provider or historical Bid/Ask ticks.
+
 ## Relationship-expansion source profile
 
 Same-CRM-user graph evidence uses the read-only legacy

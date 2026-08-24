@@ -28,8 +28,11 @@ start/end controls and an explicit query action; each dialog's visible result an
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
 After a unique platform/server source with completed orders loads, a `交易 K 线` section appears
-immediately above `所有订单`. It directly requests the latest 300 completed buy/sell orders and
-their read-only M1 quotes from the account service, then embeds the Lightweight Chart in place. The
+immediately above `所有订单`. It directly requests the latest 300 completed buy/sell orders together
+with current positions and their read-only M1 quotes from the account service, then embeds the
+Lightweight Chart in place. Current positions retain their real opening node and extend their holding
+line to the latest cached M1 quote; their floating result is not included in closed-order Profit bars.
+The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits
 a durable job, never waits on port `8766`, and never creates a chart HTML artifact. The existing
@@ -123,7 +126,8 @@ zero-duration factual trade row; they are not discarded as an empty account.
 The account-source lookup includes those entries before conversion, so the detail page cannot report
 an empty account solely because its available execution uses an `Entry` 2/3 form.
 The inline chart uses the selected source's configured read-only quote provider and the same
-alignment/mapping rules as `KLN-RENDER-001`. It may refresh only the bounded local M1 quote cache;
+alignment/mapping rules as `KLN-RENDER-001`. It visibly identifies a fallback quote provider rather
+than presenting it as a same-server source. It may refresh only the bounded local M1 quote cache;
 it does not write an order, remote database, MT4/MT5 Manager state, job row or generated HTML file.
 
 ## Business rules and units

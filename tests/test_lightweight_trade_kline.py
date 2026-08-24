@@ -83,3 +83,29 @@ def test_lightweight_renderer_embeds_quote_and_trade_payload():
     assert '"EURUSD"' in html
     assert '"Ticket":1' in html
     assert '"events":[]' in html
+
+
+def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():
+    trades, bars, mapping = _fixture()
+    trades.loc[0, "Is Open"] = True
+    html = build_lightweight_html("10001", "10001_current", trades, bars, mapping)
+
+    assert "function isOpen(t)" in html
+    assert "function tradeEndIndex(t)" in html
+    assert "isOpen(t)?bars.length-1" in html
+    assert "持仓中" in html
+    assert "rows.filter(t=>!isOpen(t))" in html
+
+
+def test_lightweight_renderer_orders_same_minute_by_their_second_and_draws_overlay_lines():
+    trades, bars, mapping = _fixture()
+    trades.loc[0, "Open Time"] = pd.Timestamp("2026-08-20 10:00:05")
+    trades.loc[0, "Close Time"] = pd.Timestamp("2026-08-20 10:00:52")
+    html = build_lightweight_html("10001", "10001_seconds", trades, bars, mapping)
+
+    assert "function intraMinuteFraction(t)" in html
+    assert "function tradeX(t,endpoint)" in html
+    assert "const holdingOverlay=document.createElementNS" in html
+    assert "intraMinuteFraction(t['Open Time'])" in html
+    assert "intraMinuteFraction(t['Close Time'])" in html
+    assert "positionTradeMarkers(candle,rows)" in html

@@ -12,6 +12,7 @@ from kdesk.domain.kline import (
     EndpointCheck,
     alignment_offsets,
     canonical_symbol,
+    execution_endpoint_check,
     gap_segments,
     partial_result,
     split_indices_at_gaps,
@@ -100,6 +101,42 @@ def test_fallback_source_uses_harder_acceptance_gate() -> None:
         + [EndpointCheck(False, 1.26, 1)]
     )
     assert not validation_passes(distant_outlier, fallback=True)
+
+
+def test_execution_endpoint_check_uses_bid_or_ask_by_trade_direction() -> None:
+    # A buy opens at Ask.  It may therefore be above the bid M1 wick while
+    # still matching the contemporaneous bid+spread execution envelope.
+    buy_open = execution_endpoint_check(
+        62.378,
+        62.291,
+        62.329,
+        point=0.001,
+        spread_points=69,
+        trade_type="buy",
+        endpoint="open",
+    )
+    buy_close = execution_endpoint_check(
+        62.378,
+        62.291,
+        62.329,
+        point=0.001,
+        spread_points=69,
+        trade_type="buy",
+        endpoint="close",
+    )
+    sell_close = execution_endpoint_check(
+        62.378,
+        62.291,
+        62.329,
+        point=0.001,
+        spread_points=69,
+        trade_type="sell",
+        endpoint="close",
+    )
+
+    assert buy_open.inside
+    assert not buy_close.inside
+    assert sell_close.inside
 
 
 def test_gmt_expansion_only_runs_after_initial_low_confidence() -> None:

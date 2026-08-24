@@ -91,7 +91,13 @@ Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with dens
 from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
 the dark TradingView-style background.
 
-M1 timestamps identify the start of a one-minute interval. Orders with second-level timestamps map
-to their containing M1 interval (the most recent bar at or before the trade time). The same index
-drives the buy/sell node, close node, holding line and Profit or Volume indicator bar, so every
-plotted order shares one horizontal time coordinate.
+M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
+(the most recent bar at or before the trade time), while the buy/sell node, close node and holding
+line retain their second-level fraction within that interval. Earlier events appear to the left and
+later events to the right without adding synthetic K bars or changing the M1 candle. Profit and
+Volume indicators intentionally remain grouped to their containing M1 interval.
+
+M1 OHLC bars are Bid values. Endpoint validation is direction-aware: buy opens and sell closes are
+checked against the Bid high plus the recorded spread (Ask upper envelope); sell opens and buy closes
+are checked against Bid. Markers retain the original execution quote instead of being clamped into a
+wick, so a confirmed Ask execution may remain above a Bid-only candle.
