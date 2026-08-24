@@ -2144,6 +2144,28 @@ def is_chartable_trade(row: dict) -> bool:
     return clean_trade_type(row.get("type", "")) in {"buy", "sell"} and bool(row.get("open_time")) and bool(row.get("close_time"))
 
 
+def recent_chartable_kline_trades(rows: list[dict], limit: int) -> list[dict]:
+    """Keep the newest completed trade window while retaining chronological chart input."""
+    if limit <= 0:
+        return rows
+    chartable = [row for row in rows if is_chartable_trade(row)]
+    chartable.sort(
+        key=lambda row: (
+            parse_trade_time(row.get("close_time") or row.get("open_time")) or datetime.min,
+            normalize_text(row.get("ticket")),
+        ),
+        reverse=True,
+    )
+    selected = chartable[:limit]
+    selected.sort(
+        key=lambda row: (
+            parse_trade_time(row.get("open_time") or row.get("close_time")) or datetime.min,
+            normalize_text(row.get("ticket")),
+        ),
+    )
+    return selected
+
+
 def _query_db_trades_uncached(
     account: str,
     platform: str = "",
@@ -8138,6 +8160,9 @@ def run_db_kline_job(job_id: str, account: str, filters: dict) -> None:
             end=normalize_text(filters.get("end")),
             limit=50000,
         )
+        recent_orders = max(0, min(1000, int(filters.get("recentOrders") or 0)))
+        if recent_orders:
+            rows = recent_chartable_kline_trades(rows, recent_orders)
         update_kline_job(job_id, message=f"已读取 {len(rows)} 条订单，正在写入标准 CSV", percent=20)
         trades_path, stem = write_trades_csv_from_db(account, rows)
         include_timeline = bool(filters.get("includeTimeline"))
@@ -11893,7 +11918,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     const LOGIN=__ACCOUNT_LOGIN_JSON__;
     const $=id=>document.getElementById(id);
     const initialParams=new URLSearchParams(location.search);
-    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null},accountLookupMatches:[]};
+    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,autoKlineKey:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null},accountLookupMatches:[]};
     const TOXIC_TYPES=[
       {id:'market_pushing',label:'推盘',tick:true},{id:'quote_latency_arbitrage',label:'报价延迟套利',tick:true},{id:'cross_platform_spread_arbitrage',label:'跨平台点差套利',tick:true},
       {id:'rebate_churning',label:'刷返佣'},{id:'bonus_arbitrage',label:'赠金套利'},{id:'short_close_trading',label:'短平交易'},
@@ -12294,15 +12319,16 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       }catch(err){status.textContent=err.message||'报表导出失败';}finally{button.disabled=false;}
     }
     async function loadRiskPanels(q){const request=++state.riskRequest;try{const data=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/risk-panels?${q}`);if(request!==state.riskRequest)return;if(state.detail?.database)state.detail.database.riskPanels=data.riskPanels;renderRiskPanels(data.riskPanels);}catch(err){if(request===state.riskRequest)renderRiskPanels({available:false,reason:err.message});}}
-    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{const detail=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`);if(detail.database?.requiresSourceSelection){openAccountSourceDialog(LOGIN,(detail.database.sourceCandidates||[]).map(item=>({exists:true,orderCount:item.orderCount,latestSource:{platform:item.platform,server:item.server}})));$("metricStatus").textContent='请先选择平台 / 服务器';return;}render(detail,keepFilters);loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
+    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{const detail=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`);if(detail.database?.requiresSourceSelection){openAccountSourceDialog(LOGIN,(detail.database.sourceCandidates||[]).map(item=>({exists:true,orderCount:item.orderCount,latestSource:{platform:item.platform,server:item.server}})));$("metricStatus").textContent='请先选择平台 / 服务器';return;}render(detail,keepFilters);autoLoadKline();loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
     function targetAccounts(){return $("batchSameName").checked&&!$("batchSameName").disabled?state.sameNameAccounts:[String(LOGIN)];}
     async function markRequest(payload,accounts=targetAccounts()){const batch=accounts.length>1;return json(batch?'/api/accounts/mark-batch':'/api/accounts/mark',{method:'POST',body:JSON.stringify(batch?{...payload,accounts}:{...payload,account:LOGIN})});}
     function applyLocalAction(action,accounts){const panels=state.detail?.database?.riskPanels;if(!panels?.sameName)return;const targets=new Set(accounts.map(String));panels.sameName.forEach(row=>{if(targets.has(String(row.account)))row.localStatus=action;});renderRiskPanels(panels);}
     async function saveStatusOnly(){if($("status").disabled)return;const accounts=targetAccounts(),value=$("status").value;$("status").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号状态...`:'正在保存状态...';try{await markRequest({status:value},accounts);$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent='状态已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("status").disabled=false;}}
     async function save(){const action=state.selectedAction==='自定义'?($("customAction").value.trim()||'自定义'):state.selectedAction,accounts=targetAccounts();$("saveBtn").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号...`:'正在保存...';try{await markRequest({action,group:$("group").value.trim(),tags:$("tags").value.trim(),note:$("note").value.trim(),status:$("status").value,owner:$("owner").value.trim()},accounts);applyLocalAction(action,accounts);state.formDirty=false;$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent=accounts.length>1?`已保存 ${accounts.length} 个账号`:'已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("saveBtn").disabled=false;}}
     function preview(url){$("previewFrame").src=url;$("previewOpen").href=url;$("previewDialog").showModal();}
+    async function autoLoadKline(){const db=state.detail?.database||{},source=db.latestSource||{};if(!db.exists||!source.platform||!source.server)return;const current=filters(),payload={account:LOGIN,platform:current.platform||source.platform,server:current.server||source.server,symbol:'',start:'',end:'',recentOrders:300,cacheVersion:db.lastTime||String(db.orderCount||0),includeTimeline:false,refreshTimelineCache:false};const key=JSON.stringify(payload);if(state.autoKlineKey===key)return;state.autoKlineKey=key;$("jobText").textContent='正在自动加载最近 300 笔订单的 K 线图...';$("jobProgress").style.width='3%';try{const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});poll(data.job.id,{auto:true});}catch(err){$("jobText").textContent=`自动加载失败：${err.message}`;}}
     async function generate(){const start=databaseTime($("chartStart").value),end=databaseTime($("chartEnd").value,true);if(start&&end&&start>end){$("jobText").textContent='开始时间不能晚于结束时间';return;}$("generateBtn").disabled=true;$("jobText").textContent='正在提交生成任务...';$("jobProgress").style.width='3%';try{const current=filters(),includeTimeline=$("includeTimeline").checked,payload={account:LOGIN,platform:current.platform,server:current.server,symbol:$("chartSymbol").value,start,end,includeTimeline,refreshTimelineCache:includeTimeline&&$("refreshTimelineCache").checked};const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});$("jobText").textContent=`已提交 · ${payload.symbol||'全部品种'} · ${start||'全量'} 至 ${end||'全量'}${includeTimeline?' · 含资金回放':''}`;poll(data.job.id);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
-    async function poll(id){clearTimeout(state.jobTimer);try{const data=await json(`/api/kline/jobs/${encodeURIComponent(id)}`),job=data.job||{};$("jobProgress").style.width=`${Math.max(0,Math.min(100,Number(job.percent||0)))}%`;$("jobText").textContent=[job.message,job.elapsedSeconds?`${job.elapsedSeconds}s`:''].filter(Boolean).join(' · ');if(job.status==='done'){if(job.chart){state.detail.charts=[job.chart,...(state.detail.charts||[]).filter(c=>c.name!==job.chart.name)];renderCharts(state.detail.charts);preview(job.chart.url);}$("generateBtn").disabled=false;return;}if(job.status==='failed'||job.status==='missing'){$("generateBtn").disabled=false;return;}state.jobTimer=setTimeout(()=>poll(id),1000);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
+    async function poll(id,options={}){clearTimeout(state.jobTimer);try{const data=await json(`/api/kline/jobs/${encodeURIComponent(id)}`),job=data.job||{};$("jobProgress").style.width=`${Math.max(0,Math.min(100,Number(job.percent||0)))}%`;$("jobText").textContent=[job.message,job.elapsedSeconds?`${job.elapsedSeconds}s`:''].filter(Boolean).join(' · ');if(job.status==='done'){if(job.chart){state.detail.charts=[job.chart,...(state.detail.charts||[]).filter(c=>c.name!==job.chart.name)];renderCharts(state.detail.charts);if(!options.auto)preview(job.chart.url);}$("generateBtn").disabled=false;return;}if(job.status==='failed'||job.status==='missing'){$("generateBtn").disabled=false;return;}state.jobTimer=setTimeout(()=>poll(id,options),1000);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     function toxicMode(){return document.querySelector('input[name="toxicMode"]:checked')?.value||'selected';}
     function renderToxicSelector(){
       $("toxicSelector").innerHTML=TOXIC_TYPES.map(item=>`<label class="toxic-check"><input type="checkbox" value="${esc(item.id)}" /><span>${esc(item.label)}${item.tick?' · Tick':''}</span></label>`).join('');

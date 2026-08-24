@@ -49,6 +49,9 @@ Database chart requests additively accept `includeTimeline=false|true` and
 `refreshTimelineCache=false|true`. The replay is omitted unless explicitly selected; when selected,
 the complete account-route replay is cache-backed as specified by `KLN-TIMELINE-001`. No endpoint or
 chart URL changes.
+Additive `recentOrders=0..1000` keeps only the latest completed buy/sell orders after read-only route
+selection, then restores chronological input for rendering. `cacheVersion` is an opaque idempotency
+component used by account-detail automatic chart refreshes and is not a data filter.
 
 ## Data, routing and read-only constraints
 
@@ -112,6 +115,8 @@ the web and worker processes start.
 ## Code and dependencies
 
 FastAPI validates/submits; the worker owns quote sessions and generator execution.
+The legacy detail page uses the existing persistent worker path for its automatic recent-order chart;
+it never creates a browser-owned thread or waits for quotes inside the detail HTTP request.
 
 ## Tests and acceptance
 

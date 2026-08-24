@@ -65,6 +65,8 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "subscribeVisibleLogicalRangeChange" in html
     assert "priceToCoordinate" in html
     assert "tradeMarkers" in html
+    assert "host.appendChild(markerHost)" in html
+    assert "host.parentElement.insertBefore(markerHost,host.nextSibling)" not in html
     assert "border-left:4px solid transparent" in html
     assert "border-bottom-color:#101b2c" in html
     assert "filter:drop-shadow(0 0 1px #e5f2ff)" in html

@@ -743,6 +743,12 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     @app.post("/api/kline/generate-from-db")
     def generate_kline(payload: dict = Body(default_factory=dict)) -> dict:
         login = _safe_login(str(payload.get("account", "")))
+        try:
+            recent_orders = int(payload.get("recentOrders", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="recentOrders 必须是整数") from exc
+        if not 0 <= recent_orders <= 1000:
+            raise HTTPException(status_code=400, detail="recentOrders 必须在 0 到 1000 之间")
         clean_payload = {
             "account": login,
             "platform": str(payload.get("platform", "")),
@@ -750,6 +756,8 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             "symbol": str(payload.get("symbol", "")),
             "start": str(payload.get("start", "")),
             "end": str(payload.get("end", "")),
+            "recentOrders": recent_orders,
+            "cacheVersion": str(payload.get("cacheVersion", "")),
             "includeTimeline": _payload_bool(payload, "includeTimeline", False),
             "refreshTimelineCache": _payload_bool(payload, "refreshTimelineCache", False),
         }

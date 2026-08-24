@@ -74,6 +74,9 @@ the order's normalized open/close plot price and the chart time coordinate. Buy/
 small (4px side, 7px height) and sit on the exact execution quote rather than using the native
 `aboveBar`/`belowBar` placement; close squares use the exact close quote. The overlay is repositioned
 after fit, pan, zoom and resize so nodes remain attached to their quotes.
+The marker overlay is a child of the exact Lightweight Charts host, rather than a sibling of the
+chart shell. Its x/y coordinates therefore share the candle canvas origin and price scale when the
+browser lays out the right axis, preventing a horizontal left shift of evidence nodes.
 
 The Profit indicator uses one symmetric absolute-value scale for positive and negative values and a
 shared dashed zero baseline. Profit bars are therefore anchored to the same baseline; positive bars

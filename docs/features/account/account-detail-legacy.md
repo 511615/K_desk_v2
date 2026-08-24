@@ -27,6 +27,12 @@ profit report using the current platform/server filters. Copy and EA expose opti
 start/end controls and an explicit query action; each dialog's visible result and Excel export always
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
+After a unique platform/server source has loaded and the account has completed orders, the chart
+card automatically submits one durable K-line job for the latest 300 completed orders. The key
+includes the selected route and the latest order version, so refreshes neither duplicate work nor
+reuse an obsolete chart after a new deal. The chart is added to the existing list when ready without
+opening an intrusive dialog; the original manual controls remain available for full-history,
+symbol-scoped and funds-timeline charts.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
 ledger. It reuses the read-only account lookup route. When the Login exists on multiple platforms or
 servers, a source-selection dialog lists every candidate and the user must choose one before
@@ -83,6 +89,9 @@ the rest of the account page.
 ## API contract
 
 The HTML URL and supporting detail/risk API response structures remain backward compatible.
+Its existing K-line submission additively sends `recentOrders=300` and an opaque `cacheVersion` only
+for the automatic detail-page task; both fields are accepted by `KLN-DB-001` without changing
+legacy requests.
 The additive relationship-network response is governed by `ACC-REL-001`.
 The additive historical-funds response is governed by `FIN-HISTORY-001` and accepts the existing
 platform/server selection; it deliberately ignores the page symbol filter because funding history is

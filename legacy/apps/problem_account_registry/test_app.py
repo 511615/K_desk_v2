@@ -2428,6 +2428,24 @@ class OrderListTests(unittest.TestCase):
         self.assertIn('id="accountSourceDialog"', html)
         self.assertIn("matches.length>1", html)
 
+    def test_account_detail_auto_loads_a_bounded_cached_kline_job(self):
+        html = app.ACCOUNT_DETAIL_HTML
+        self.assertIn("autoKlineKey:null", html)
+        self.assertIn("async function autoLoadKline()", html)
+        self.assertIn("recentOrders:300", html)
+        self.assertIn("state.autoKlineKey===key", html)
+        self.assertIn("autoLoadKline();", html)
+        self.assertIn("poll(data.job.id,{auto:true})", html)
+
+    def test_recent_chartable_kline_trades_use_latest_completed_orders(self):
+        rows = [
+            {"ticket": "old", "type": "buy", "open_time": "2026-08-01 10:00:00", "close_time": "2026-08-01 10:01:00"},
+            {"ticket": "open", "type": "buy", "open_time": "2026-08-04 10:00:00", "close_time": ""},
+            {"ticket": "new", "type": "sell", "open_time": "2026-08-03 10:00:00", "close_time": "2026-08-03 10:01:00"},
+        ]
+        selected = app.recent_chartable_kline_trades(rows, 1)
+        self.assertEqual([row["ticket"] for row in selected], ["new"])
+
     def test_account_detail_embedded_script_has_valid_javascript(self):
         script = re.search(r"<script>(.*?)</script>", app.ACCOUNT_DETAIL_HTML, re.DOTALL)
         self.assertIsNotNone(script)

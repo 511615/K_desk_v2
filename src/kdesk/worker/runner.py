@@ -246,7 +246,7 @@ class Worker:
         legacy = self.legacy.module()
         filters = {
             key: payload.get(key, "")
-            for key in ("platform", "server", "symbol", "start", "end", "includeTimeline", "refreshTimelineCache")
+            for key in ("platform", "server", "symbol", "start", "end", "recentOrders", "includeTimeline", "refreshTimelineCache")
         }
         self._run_legacy_monitored(
             job,

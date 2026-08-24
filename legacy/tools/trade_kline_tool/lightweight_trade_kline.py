@@ -88,7 +88,7 @@ body{background:radial-gradient(circle at 50% 0,#12345b,#061322 55%);color:#dcec
 <script id="accountTimelineData" type="application/json">__TIMELINE__</script>
 <script>
 const DATA=__PAYLOAD__, LC=window.LightweightCharts; const host=document.getElementById('chart');
-const markerHost=document.createElement('div'); markerHost.id='tradeMarkers'; markerHost.className='tradeMarkers'; markerHost.setAttribute('aria-hidden','true'); host.parentElement.insertBefore(markerHost,host.nextSibling);
+host.style.position='relative';const markerHost=document.createElement('div'); markerHost.id='tradeMarkers'; markerHost.className='tradeMarkers'; markerHost.setAttribute('aria-hidden','true'); host.appendChild(markerHost);
 const chart=LC.createChart(host,{autoSize:true,layout:{background:{type:'solid',color:'#061322'},textColor:'#9fc5e5'},grid:{vertLines:{color:'rgba(29,76,116,.42)'},horzLines:{color:'rgba(29,76,116,.42)'}},crosshair:{mode:LC.CrosshairMode.Normal,vertLine:{color:'#4c7194'},horzLine:{color:'#4c7194'}},rightPriceScale:{borderColor:'#1d4c74'},timeScale:{timeVisible:true,secondsVisible:true,borderColor:'#1d4c74'} });
 let symbol=Object.keys(DATA.barsBySymbol||{})[0]||'', bars=[], trades=[], actualTimes=[], compactTimes=[], showRealGaps=false, panel='profit', barStack=false, series=[];
 const $=id=>document.getElementById(id), n=v=>Number.isFinite(Number(v))?Number(v):0, ms=s=>Date.parse(String(s).replace(' ','T'))||0, sec=s=>Math.floor(ms(s)/1000), fmt=v=>n(v).toFixed(2);
