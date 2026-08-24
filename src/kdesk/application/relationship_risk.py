@@ -19,6 +19,7 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 MAX_ACCOUNT_EXPANSIONS = 48
 MAX_TOXIC_CHECKS = 2
 MAX_SHARED_IP_SECONDS = 3.0
+PROGRESS_SNAPSHOT_INTERVAL_SECONDS = 2.0
 MAX_KUZU_PROJECTION_ENTITIES = 120
 MAX_KUZU_PROJECTION_RELATIONSHIPS = 360
 BUILTIN_RELATION_TYPES = [
@@ -41,11 +42,13 @@ class AccountRelationshipRiskService:
         discovery_timeout_seconds: float | None = None,
         shared_ip_timeout_seconds: float = MAX_SHARED_IP_SECONDS,
         max_account_expansions: int = MAX_ACCOUNT_EXPANSIONS,
+        progress_snapshot_interval_seconds: float = PROGRESS_SNAPSHOT_INTERVAL_SECONDS,
     ) -> None:
         if (
             (discovery_timeout_seconds is not None and discovery_timeout_seconds <= 0)
             or shared_ip_timeout_seconds <= 0
             or max_account_expansions < 1
+            or progress_snapshot_interval_seconds <= 0
         ):
             raise ValueError("relationship query timeouts must be positive")
         self._evidence_network = evidence_network
@@ -56,6 +59,7 @@ class AccountRelationshipRiskService:
         self._discovery_timeout_seconds = discovery_timeout_seconds
         self._shared_ip_timeout_seconds = shared_ip_timeout_seconds
         self._max_account_expansions = max_account_expansions
+        self._progress_snapshot_interval_seconds = progress_snapshot_interval_seconds
 
     def build(
         self,
@@ -77,6 +81,7 @@ class AccountRelationshipRiskService:
         query_budget_exhausted = False
         known_shared_ip_members: set[str] = set()
         known_shared_cid_members: set[str] = set()
+        last_progress_snapshot_at = 0.0
         root_key = self._account_key(login, filters)
         deadline = (
             time.monotonic() + self._discovery_timeout_seconds
@@ -213,16 +218,19 @@ class AccountRelationshipRiskService:
                         "start": "",
                         "end": "",
                     }
-            self._report_progress(
-                on_progress,
-                latest_scored,
-                login,
-                filters,
-                relation_types,
-                coverage,
-                len(visited),
-                len(pending),
-            )
+            now = time.monotonic()
+            if last_progress_snapshot_at == 0.0 or now - last_progress_snapshot_at >= self._progress_snapshot_interval_seconds:
+                self._report_progress(
+                    on_progress,
+                    latest_scored,
+                    login,
+                    filters,
+                    relation_types,
+                    coverage,
+                    len(visited),
+                    len(pending),
+                )
+                last_progress_snapshot_at = now
         if latest_scored is None:
             raise RuntimeError("关系图没有可用的账户证据")
         projection_entities, projection_relationships, projection_truncated = self._bounded_projection(

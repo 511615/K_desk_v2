@@ -134,6 +134,10 @@ assert a risk score or conclusion.
 Kuzu-risk regressions cover score propagation and request-scoped Kuzu materialization/readback.
 The replaced relationship-network endpoint must retain partial read-only source coverage, return
 score/colour/ledger data, and account detail must preserve filters while navigating to `/kuzu-risk`.
+Relationship-expansion regressions must prove distinct resident tasks are capped at three, excess work
+receives a lightweight retry response, completed snapshots expire after 90 seconds, polling does not
+deep-copy graph arrays, progress graph materialization is throttled to two seconds, and hidden pages do
+not continue issuing relationship requests. Readiness must expose the coordinator counts.
 Kuzu-risk regressions create and close a separate temporary direct-account evidence file, then verify
 that score-based propagation is not limited by depth, retains low-score outer clues without expanding
 them, combines independent evidence only once per family, terminates a cycle, uses the visible urgent

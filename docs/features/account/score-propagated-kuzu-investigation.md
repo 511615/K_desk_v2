@@ -26,9 +26,10 @@ separate static local-file trial.
 The default focus workspace separates global location, local relationship detail and evidence. It
 renders a relationship entity once, connects its member accounts to that entity and avoids the
 pairwise edge web. Clicking an account exposes its routed database status and compatible account
-detail link. It polls the existing single-flight expansion snapshots every 500 ms, updates available
-partial evidence immediately, and stops polling only when `inProgress=false` or the bounded client
-poll window expires. It reads `databaseStatus` directly and uses `B` only for a blank value.
+detail link. It polls the existing single-flight expansion snapshots every two seconds, pauses polling
+while the page is hidden, updates available partial evidence immediately, and stops polling only when
+`inProgress=false` or the bounded client poll window expires. A saturated coordinator asks the page to
+retry after three seconds. It reads `databaseStatus` directly and uses `B` only for a blank value.
 
 Relationship communities are collapsed by default. Their boundary is clickable and toggles a local
 presentation state without restarting the investigation: collapsed state shows the member count,
@@ -260,10 +261,18 @@ For a current-LastIP cohort, EA/Copy discovery is performed by the representativ
 accounts still expand through CRM and LastIP evidence but report their skipped automation source
 coverage explicitly.
 
+The expansion coordinator retains at most three distinct running, queued or completed investigation
+snapshots. Completed snapshots expire after 90 seconds and the least recently accessed completed
+snapshot is evicted before admitting a new account. Poll reads make only a shallow response envelope
+copy; the immutable graph arrays are not duplicated on every request. Progress presentation graphs are
+materialized at most once every two seconds. `/health/ready.relationshipExpansion` exposes resident,
+running, queued and completed counts so resource pressure is observable without opening the UI.
+
 ## Tests and acceptance
 
 Unit tests cover recursive source expansion through its score threshold, one final Kuzu materialization,
 single-flight pollable progress, redundant same-IP cohort lookup avoidance, bounded same-IP timeout,
+resident-job admission control, non-deep-copy polling, throttled progress materialization,
 Kuzu projection caps and process timeout termination, threshold stopping, noisy-OR, de-duplication,
 cycles, same-IP and Toxic evidence ledger construction, and risk colour. Repository tests cover
 request-scoped Kuzu materialization/readback.

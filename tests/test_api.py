@@ -56,7 +56,16 @@ def test_account_relationship_runtime_keeps_ea_read_budget_inside_the_global_dea
 def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
-        assert client.get("/health/ready").json()["ok"] is True
+        health = client.get("/health/ready").json()
+        assert health["ok"] is True
+        assert health["relationshipExpansion"] == {
+            "residentJobs": 0,
+            "runningJobs": 0,
+            "queuedJobs": 0,
+            "completedJobs": 0,
+            "maxResidentJobs": 3,
+            "cacheSeconds": 90.0,
+        }
         saved = client.post("/api/accounts/mark", json={"account": "302360", "action": "M", "status": "观察中"})
         assert saved.status_code == 200
         ledger = client.get("/api/accounts/by-login/302360/ledger").json()
@@ -331,6 +340,9 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "ib_direct_rebate" in page.text
     assert "graphNodes" in page.text
     assert "function queuePoll" in page.text
+    assert "queuePoll=function(delay=2000)" in page.text
+    assert "document.hidden" in page.text
+    assert "pagehide" in page.text
     assert "data.inProgress" in page.text
     assert "后台扩散中：已处理" in page.text
     assert "关系扩散扫描中" in page.text
@@ -498,7 +510,9 @@ def test_kuzu_risk_defaults_to_the_current_focus_workspace(tmp_path: Path) -> No
     assert "presentationGraph" in page.text
     assert "databaseStatus||n.status||'B'" in page.text
     assert "p.inProgress" in page.text
-    assert "setTimeout(resolve,500)" in page.text
+    assert "function waitForNextPoll" in page.text
+    assert "state==='busy'?3000:2000" in page.text
+    assert "document.hidden" in page.text
     assert "graph_type','galaxy'" in page.text
     assert "expandedGroups:new Set()" in page.text
     assert "可以直接点击图中虚线圈的边缘" in page.text

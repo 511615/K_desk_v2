@@ -119,6 +119,89 @@ def test_relationship_expansion_runs_once_in_the_background_and_returns_progress
         coordinator.close()
 
 
+def test_relationship_expansion_bounds_distinct_resident_jobs_and_reports_pressure() -> None:
+    started = Event()
+    release = Event()
+
+    class _BlockingRiskService:
+        def build(self, login: str, filters: dict[str, str], threshold: float, *, include_toxic: bool, on_progress) -> dict[str, Any]:
+            started.set()
+            release.wait(1)
+            return {
+                "ok": True, "account": login, "filters": filters, "entities": [], "relationships": [],
+                "relationTypes": [], "coverage": [], "limitations": [],
+                "summary": {"discoveryAccountCount": 1}, "inProgress": False,
+            }
+
+    coordinator = AccountRelationshipExpansionCoordinator(
+        _BlockingRiskService(), max_concurrent_jobs=1, max_resident_jobs=3,
+    )
+    try:
+        for login in ("100", "200", "300"):
+            coordinator.get_or_start(login, {"platform": "MT5"}, 20, False)
+        assert started.wait(0.5)
+
+        rejected = coordinator.get_or_start("400", {"platform": "MT5"}, 20, False)
+        stats = coordinator.stats()
+
+        assert rejected["progress"]["state"] == "busy"
+        assert rejected["retryAfterSeconds"] == 3
+        assert stats["residentJobs"] == 3
+        assert stats["runningJobs"] == 1
+        assert stats["queuedJobs"] == 2
+    finally:
+        release.set()
+        coordinator.close()
+
+
+def test_relationship_expansion_poll_does_not_deepcopy_the_full_graph() -> None:
+    class _NoDeepcopy(dict):
+        def __deepcopy__(self, _memo):
+            raise AssertionError("polling must not deepcopy a complete graph")
+
+    class _ImmediateRiskService:
+        def build(self, login: str, filters: dict[str, str], threshold: float, *, include_toxic: bool, on_progress) -> dict[str, Any]:
+            return {
+                "ok": True, "account": login, "filters": filters,
+                "entities": [_NoDeepcopy(id=f"account:{login}")], "relationships": [],
+                "relationTypes": [], "coverage": [], "limitations": [],
+                "summary": {"discoveryAccountCount": 1}, "inProgress": False,
+            }
+
+    coordinator = AccountRelationshipExpansionCoordinator(_ImmediateRiskService())
+    try:
+        snapshot = coordinator.get_or_start("100", {"platform": "MT5"}, 20, False)
+        deadline = time.monotonic() + 1
+        while snapshot["inProgress"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+            snapshot = coordinator.get_or_start("100", {"platform": "MT5"}, 20, False)
+        assert snapshot["entities"][0]["id"] == "account:100"
+        assert snapshot["revision"] >= 1
+    finally:
+        coordinator.close()
+
+
+def test_relationship_risk_throttles_heavy_progress_graph_materialization() -> None:
+    evidence = _EvidenceNetwork()
+    snapshots: list[dict[str, Any]] = []
+    service = AccountRelationshipRiskService(
+        evidence,
+        _projection,
+        lambda _login, _filters: {"peers": [], "coverage": []},
+        progress_snapshot_interval_seconds=60,
+    )
+
+    service.build(
+        "100",
+        {"platform": "MT5", "server": "AC CN MT5"},
+        threshold=12,
+        on_progress=snapshots.append,
+    )
+
+    assert evidence.calls == ["100", "200", "300"]
+    assert len(snapshots) == 1
+
+
 def test_relationship_risk_materializes_kuzu_only_once_after_recursive_discovery() -> None:
     evidence = _EvidenceNetwork()
     projections: list[tuple[int, int]] = []

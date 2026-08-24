@@ -271,6 +271,15 @@ Check readiness, process ownership, latest error logs, SQLite free space/lock st
 availability and job events in that order. Do not retry remote calls indefinitely. Never use an MT
 Manager write operation as a recovery action.
 
+For relationship-network memory pressure, inspect
+`/health/ready.relationshipExpansion` before restarting anything. `residentJobs` cannot exceed three;
+`runningJobs=1` with queued work is normal, while a persistent full coordinator means callers should
+wait instead of opening more account investigations. The relationship pages pause their two-second poll
+when hidden. Process private/committed memory should also be checked read-only: MT Manager and trading
+Terminal reservations are outside K_desk and may reduce the machine's remaining commit headroom even
+when K_desk workers are small. K_desk must not close or mutate those applications as an automatic
+recovery action.
+
 ## K-line quote sources
 
 Production K-line jobs use the dedicated read-only quote Terminal at

@@ -246,7 +246,13 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     @app.get("/health/ready")
     def health_ready() -> dict:
         database.create_schema()
-        return {"ok": True, "status": "ready", "database": str(config.database_path), "profile": config.profile}
+        return {
+            "ok": True,
+            "status": "ready",
+            "database": str(config.database_path),
+            "profile": config.profile,
+            "relationshipExpansion": relationship_expansion.stats(),
+        }
 
     @app.get("/api/meta")
     def api_meta() -> dict:
