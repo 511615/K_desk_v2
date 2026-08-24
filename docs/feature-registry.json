@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "142c66f8f05a",
+  "registryVersion": "d29a1e5376f2",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -135,6 +135,7 @@
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_network.py",
+        "src/kdesk/application/relationship_process.py",
         "src/kdesk/application/relationship_risk.py",
         "src/kdesk/application/trade_relationship_detection.py",
         "src/kdesk/domain/ib_rebate_anomaly.py",

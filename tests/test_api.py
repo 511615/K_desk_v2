@@ -16,6 +16,7 @@ from kdesk.api.account_app import (
     create_account_app,
 )
 from kdesk.api.kline_app import create_kline_app
+from kdesk.application.relationship_process import IsolatedRelationshipRiskBuilder
 from kdesk.infrastructure.legacy_bridge import LegacyBridge
 from kdesk.settings import Settings
 
@@ -51,6 +52,15 @@ def test_account_relationship_runtime_keeps_ea_read_budget_inside_the_global_dea
     assert RELATIONSHIP_SOURCE_TIMEOUT_SECONDS == 6.0
     assert app.state.relationship_risk._discovery_timeout_seconds == 30.0
     assert app.state.relationship_network._source_timeout_seconds == 6.0
+
+
+def test_production_relationship_runtime_uses_a_disposable_process(tmp_path: Path) -> None:
+    settings = replace(make_test_settings(tmp_path), profile="prod")
+
+    app = create_account_app(settings)
+
+    assert isinstance(app.state.relationship_risk, IsolatedRelationshipRiskBuilder)
+    assert app.state.relationship_expansion._risk_builder is app.state.relationship_risk
 
 
 def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -29,6 +30,7 @@ from kdesk.application.ledger_service import LedgerService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
 from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
+from kdesk.application.relationship_process import IsolatedRelationshipRiskBuilder
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.application.trade_relationship_detection import TradeRelationshipDetectionService
 from kdesk.build_info import build_metadata
@@ -186,21 +188,30 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     compat_workbook = config.legacy_compat_dir / "problematic_accounts.xlsx"
     ledger = LedgerService(database, compatibility_workbook=compat_workbook)
     legacy = LegacyBridge(config)
-    relationship_network = AccountRelationshipNetworkService(
-        legacy.call,
-        source_timeout_seconds=RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
-    )
     historical_funds = HistoricalFundsService(legacy.call)
     kuzu_demo = KuzuRelationshipDemoRepository(config.kuzu_demo_path) if config.kuzu_demo_path else None
     kuzu_risk = KuzuRiskGraphRepository(config.kuzu_risk_path or config.runtime_dir / "relationship_risk_graph.kuzu")
-    relationship_risk = AccountRelationshipRiskService(
-        relationship_network,
-        kuzu_risk.score_projection,
-        lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
-        lambda login, filters: _toxic_sync_payload(legacy, login, filters),
-        shared_cid_lookup=lambda login, filters: legacy.call("account_shared_cid_payload", login, filters),
-        discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
-    )
+    if config.profile == "prod":
+        relationship_runtime: Any = IsolatedRelationshipRiskBuilder(
+            config,
+            discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
+            source_timeout_seconds=RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
+        )
+        relationship_network = relationship_runtime
+        relationship_risk = relationship_runtime
+    else:
+        relationship_network = AccountRelationshipNetworkService(
+            legacy.call,
+            source_timeout_seconds=RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
+        )
+        relationship_risk = AccountRelationshipRiskService(
+            relationship_network,
+            kuzu_risk.score_projection,
+            lambda login, filters: legacy.call("account_shared_last_ip_payload", login, filters),
+            lambda login, filters: _toxic_sync_payload(legacy, login, filters),
+            shared_cid_lookup=lambda login, filters: legacy.call("account_shared_cid_payload", login, filters),
+            discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
+        )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
 
     copy_pool = CopyPoolMonitorService(
@@ -219,7 +230,9 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             relationship_expansion.close()
-            relationship_network.close()
+            close_relationship_network = getattr(relationship_network, "close", None)
+            if callable(close_relationship_network):
+                close_relationship_network()
 
     app = FastAPI(title="K_desk Account API", version=__version__, lifespan=lifespan)
     app.middleware("http")(request_context)

@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
@@ -268,11 +268,19 @@ copy; the immutable graph arrays are not duplicated on every request. Progress p
 materialized at most once every two seconds. `/health/ready.relationshipExpansion` exposes resident,
 running, queued and completed counts so resource pressure is observable without opening the UI.
 
+In production, each admitted investigation runs inside one disposable spawned process. Remote-source
+threads, legacy payloads, parsing caches and native allocations therefore belong to that child and are
+released by Windows when the investigation completes. The 8777 process receives only normalized progress
+and final graph snapshots. A 45-second hard process deadline terminates stale source work; if progress was
+already returned, the current partial graph remains available with explicit truncated coverage. Test and
+development profiles retain the injectable in-process builder for deterministic source tests.
+
 ## Tests and acceptance
 
 Unit tests cover recursive source expansion through its score threshold, one final Kuzu materialization,
 single-flight pollable progress, redundant same-IP cohort lookup avoidance, bounded same-IP timeout,
 resident-job admission control, non-deep-copy polling, throttled progress materialization,
+production process isolation, progress forwarding and forced termination of a stuck child,
 Kuzu projection caps and process timeout termination, threshold stopping, noisy-OR, de-duplication,
 cycles, same-IP and Toxic evidence ledger construction, and risk colour. Repository tests cover
 request-scoped Kuzu materialization/readback.

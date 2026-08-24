@@ -280,6 +280,12 @@ Terminal reservations are outside K_desk and may reduce the machine's remaining 
 when K_desk workers are small. K_desk must not close or mutate those applications as an automatic
 recovery action.
 
+Production relationship work is process-isolated. After an investigation reaches complete/failed state,
+no `relationship_process` child should remain. A child that exceeds 45 seconds is terminated and its last
+available partial snapshot is retained. If 8777 private memory rises materially after `residentJobs` has
+returned to zero, verify the deployed SHA and confirm the runtime uses the production profile before
+starting additional investigations; do not compensate by increasing thread or job counts.
+
 ## K-line quote sources
 
 Production K-line jobs use the dedicated read-only quote Terminal at

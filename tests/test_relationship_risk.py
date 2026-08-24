@@ -1,13 +1,58 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from threading import Event, Lock
 from typing import Any
 
 from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
+from kdesk.application.relationship_process import IsolatedRelationshipRiskBuilder
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
 from kdesk.domain.relationship_propagation import propagate_scores
+from kdesk.settings import Settings
+
+
+def _isolated_success_worker(
+    result_queue, _settings, login, filters, _threshold, _include_toxic, _discovery_timeout, _source_timeout
+) -> None:
+    progress = {
+        "ok": True, "account": login, "filters": filters, "entities": [], "relationships": [],
+        "relationTypes": [], "coverage": [], "limitations": [],
+        "summary": {"discoveryAccountCount": 1}, "inProgress": True,
+    }
+    result_queue.put(("progress", progress))
+    result_queue.put(("complete", {**progress, "inProgress": False}))
+
+
+def _isolated_stuck_worker(
+    _result_queue, _settings, _login, _filters, _threshold, _include_toxic, _discovery_timeout, _source_timeout
+) -> None:
+    time.sleep(5)
+
+
+def _test_settings(root: Path, profile: str = "prod") -> Settings:
+    runtime = root / "runtime"
+    return Settings(
+        root=root,
+        profile=profile,
+        host="127.0.0.1",
+        account_port=8777,
+        kline_port=8766,
+        runtime_dir=runtime,
+        database_path=runtime / "kdesk.sqlite",
+        queue_database_path=runtime / "jobs.sqlite",
+        artifact_dir=runtime / "artifacts",
+        upload_dir=runtime / "uploads",
+        log_dir=runtime / "logs",
+        legacy_root=root / "legacy",
+        legacy_output=root / "legacy-output",
+        legacy_trade_database=root / "trades.sqlite",
+        bootstrap_xlsx=runtime / "bootstrap.xlsx",
+        legacy_compat_dir=runtime / "legacy-compat",
+        frontend_dist=root / "frontend",
+        ui_mode="vue",
+    )
 
 
 class _EvidenceNetwork:
@@ -200,6 +245,45 @@ def test_relationship_risk_throttles_heavy_progress_graph_materialization() -> N
 
     assert evidence.calls == ["100", "200", "300"]
     assert len(snapshots) == 1
+
+
+def test_isolated_relationship_builder_forwards_progress_and_returns_complete_graph(tmp_path: Path) -> None:
+    snapshots: list[dict[str, Any]] = []
+    builder = IsolatedRelationshipRiskBuilder(
+        _test_settings(tmp_path),
+        discovery_timeout_seconds=30,
+        source_timeout_seconds=6,
+        process_timeout_seconds=5,
+        worker_target=_isolated_success_worker,
+    )
+
+    result = builder.build(
+        "100", {"platform": "MT5", "server": "AC CN MT5"}, 20, on_progress=snapshots.append,
+    )
+
+    assert result["inProgress"] is False
+    assert result["account"] == "100"
+    assert len(snapshots) == 1
+
+
+def test_isolated_relationship_builder_terminates_a_worker_without_evidence(tmp_path: Path) -> None:
+    builder = IsolatedRelationshipRiskBuilder(
+        _test_settings(tmp_path),
+        discovery_timeout_seconds=30,
+        source_timeout_seconds=6,
+        process_timeout_seconds=0.1,
+        worker_target=_isolated_stuck_worker,
+    )
+
+    started_at = time.monotonic()
+    try:
+        builder.build("100", {"platform": "MT5"}, 20)
+    except RuntimeError as exc:
+        assert "没有返回可用证据" in str(exc)
+    else:
+        raise AssertionError("stuck isolated worker must fail")
+
+    assert time.monotonic() - started_at < 3
 
 
 def test_relationship_risk_materializes_kuzu_only_once_after_recursive_discovery() -> None:

@@ -138,6 +138,9 @@ Relationship-expansion regressions must prove distinct resident tasks are capped
 receives a lightweight retry response, completed snapshots expire after 90 seconds, polling does not
 deep-copy graph arrays, progress graph materialization is throttled to two seconds, and hidden pages do
 not continue issuing relationship requests. Readiness must expose the coordinator counts.
+Production-profile regressions must select the disposable process builder, forward normalized progress,
+return the final graph and terminate a child that misses its hard deadline. Test-profile API fixtures remain
+in process so monkeypatched read-only providers are deterministic.
 Kuzu-risk regressions create and close a separate temporary direct-account evidence file, then verify
 that score-based propagation is not limited by depth, retains low-score outer clues without expanding
 them, combines independent evidence only once per family, terminates a cycle, uses the visible urgent
