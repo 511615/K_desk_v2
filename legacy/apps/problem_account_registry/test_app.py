@@ -2417,6 +2417,19 @@ class OrderListTests(unittest.TestCase):
         self.assertIn('<summary class="copy-group-head">', app.ACCOUNT_DETAIL_HTML)
         self.assertIn(".ea-group-block[open] > summary::before", app.ACCOUNT_DETAIL_HTML)
 
+    def test_account_detail_keeps_all_analysis_actions_visible_for_zero_order_accounts(self):
+        html = app.ACCOUNT_DETAIL_HTML
+
+        self.assertNotIn('id="copyOriginBtn" type="button" hidden', html)
+        self.assertNotIn('id="eaCommentBtn" class="ea-query-entry" type="button" hidden', html)
+        self.assertNotIn('id="relationshipNetworkBtn" class="relationship-entry" type="button" hidden', html)
+        self.assertNotIn('$("copyOriginBtn").hidden=!db.exists', html)
+        self.assertNotIn('$("eaCommentBtn").hidden=!db.exists', html)
+        self.assertNotIn('$("relationshipNetworkBtn").hidden=!db.exists', html)
+        self.assertNotIn('$("generateBtn").disabled=!db.exists', html)
+        self.assertNotIn('$("toxicBtn").disabled=!db.exists', html)
+        self.assertNotIn('$("historicalFundsBtn").disabled=!db.exists', html)
+
     def test_account_detail_ui_exposes_header_account_search(self):
         html = app.ACCOUNT_DETAIL_HTML
         self.assertIn('id="detailAccountSearchForm"', html)

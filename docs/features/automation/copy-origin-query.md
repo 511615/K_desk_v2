@@ -19,6 +19,10 @@ The old detail page's copy query lists detected source accounts and their matche
 
 ## UI and behavior
 
+The detail-page `跟单查询` control is visible for an account with or without completed orders.
+For an account with no matching order evidence, the dialog opens normally and reports its empty
+result without changing the detail-page toolbar.
+
 Each source is shown separately with matching ratio, source order samples and linked follower details.
 The relationship-network copy-edge inspector may also consume this same payload on demand. It keeps
 the clicked follower/master pair in its first tab and the identified master with all discovered

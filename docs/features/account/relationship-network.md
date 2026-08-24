@@ -17,6 +17,8 @@ last_verified_date: 2026-08-24
 
 The `关系网络` button on the legacy account-detail page opens
 `/kuzu-risk?account={login}` while retaining the current platform, server and symbol filters.
+The button remains visible for a confirmed account route even when it has no completed order, so
+non-trade evidence such as CRM identity or current-IP evidence can still be investigated.
 The default renderer is the current center-constrained relationship workspace. The original galaxy
 renderer remains available only through explicit `graph_type=galaxy`; missing or stale graph-type
 values cannot silently return the legacy view.

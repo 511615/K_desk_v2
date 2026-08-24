@@ -28,6 +28,9 @@ evidence and never an EA-family conclusion.
 
 ## UI and behavior
 
+The detail-page `EA 查询` control is visible for an account with or without completed orders. An
+empty account opens the same dialog and returns the existing factual no-valid-Comment empty state.
+
 Groups list EA identity, database/server, accounts, profitable/losing counts, orders, lots and
 profit components. Dynamic groups may contain AC and DBG members in one table; every member carries
 its own database, platform and server, and account links retain that route.

@@ -27,6 +27,9 @@ profit report using the current platform/server filters. Copy and EA expose opti
 start/end controls and an explicit query action; each dialog's visible result and Excel export always
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
+All analysis controls remain visible and enabled for every confirmed account route, including an
+account with no completed order. Empty analyses report their own factual empty state (for example,
+`账户暂未做单` or no matching Comment) instead of changing the page layout or hiding the control.
 After a unique platform/server source with completed orders loads, a `交易 K 线` section appears
 immediately above `所有订单`. It directly requests the latest 300 completed buy/sell orders together
 with current positions and their read-only M1 quotes from the account service, then embeds the

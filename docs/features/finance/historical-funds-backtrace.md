@@ -18,7 +18,8 @@ last_verified_date: 2026-08-07
 `历史资金回溯` is a factual account-history view for reviewing the state around large losses,
 negative balances, clear-to-zero entries, Credit changes and later funding. It is opened from the
 legacy account detail toolbar immediately after `Toxic 检测` and always uses the selected
-platform/server route.
+platform/server route. Its control remains visible and enabled when an account has no completed
+order; the dialog then reports the available funding-history facts or its explicit empty state.
 
 ## UI and behavior
 

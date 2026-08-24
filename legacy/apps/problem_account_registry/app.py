@@ -11728,7 +11728,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .badge.ea { color:#075c78; background:#dff6ff; border:1px solid #66b9d8; font-weight:700; }
     .badge.action { min-width:34px; text-align:center; border-radius:4px; padding:3px 7px; font-weight:700; }
     .head-meta { text-align:right; color:var(--muted); font-size:12px; line-height:1.8; }
-    .toolbar { border:1px solid var(--line); border-top:0; background:#f8fafa; padding:12px 16px; display:grid; grid-template-columns:1fr 1fr 1fr 120px 150px 130px; gap:8px; align-items:end; }
+    .toolbar { border:1px solid var(--line); border-top:0; background:#f8fafa; padding:12px 16px; display:grid; grid-template-columns:repeat(3,minmax(160px,1fr)) repeat(5,auto); gap:8px; align-items:end; }
     label { display:block; color:#536067; font-size:12px; }
     input,select,textarea { width:100%; border:1px solid #bcc6c9; border-radius:5px; background:#fff; padding:8px 10px; color:var(--ink); }
     input,select { min-height:38px; }
@@ -12277,9 +12277,9 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       <label>服务器<select id="server"><option value="">全部服务器</option></select></label>
       <label>品种<select id="symbol"><option value="">全部品种</option></select></label>
       <button id="refreshBtn" class="primary">刷新指标</button>
-      <button id="copyOriginBtn" type="button" hidden>跟单查询</button>
-      <button id="eaCommentBtn" class="ea-query-entry" type="button" hidden>EA 查询</button>
-      <button id="relationshipNetworkBtn" class="relationship-entry" type="button" hidden>关系网络</button>
+      <button id="copyOriginBtn" type="button">跟单查询</button>
+      <button id="eaCommentBtn" class="ea-query-entry" type="button">EA 查询</button>
+      <button id="relationshipNetworkBtn" class="relationship-entry" type="button">关系网络</button>
       <button id="toxicBtn" class="toxic-entry" type="button">Toxic 检测</button>
       <button id="historicalFundsBtn" class="historical-funds-entry" type="button">历史资金回溯</button>
     </section>
@@ -12673,12 +12673,12 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     function render(detail,keepFilters=false){
       state.detail=detail;const db=detail.database||{},source=db.latestSource||{},meta=db.accountMeta||{};$("accountId").textContent=detail.account;document.title=`账号 ${detail.account} · 风控台账`;
       const currencyText=meta.isCentAccount?'USC 美分账户 · 金额已按 USD 折算':(meta.currency==='USD'?'USD 美元账户':(meta.currency?`${meta.currency} 账户`:'币种未识别 · 金额未缩放'));
-      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'账户暂未做单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;$("copyOriginBtn").hidden=!db.exists;$("eaCommentBtn").hidden=!db.exists;$("relationshipNetworkBtn").hidden=!db.exists;
+      const hasEa=Boolean(db.allMetrics?.hasEaTrades||db.metrics?.hasEaTrades),hasCopy=Boolean(db.allMetrics?.hasCopyTrades||db.metrics?.hasCopyTrades);$("badges").innerHTML=`<span class="badge ${detail.marked?'marked':''}">${detail.marked?'已标记':'未标记'}</span><span class="badge ${db.exists?'':'empty'}">${db.exists?'数据库有订单':'账户暂未做单'}</span><span class="badge">${esc(currencyText)}</span>${hasEa?'<span class="badge ea">EA</span>':''}${hasCopy?'<span class="badge marked">跟单</span>':''}${detail.record?.['建议动作']?`<span class="badge action">${esc(detail.record['建议动作'])}</span>`:''}`;
       $("headMeta").innerHTML=`${esc([source.platform,source.server].filter(Boolean).join(' / ')||'未识别平台')}<br>最近交易 ${esc(db.lastTime||'-')}<br>刷新 ${esc(db.refreshedAt||'-')}`;
       $("metricStatus").textContent=db.exists?`${db.orderCount} 条订单 · ${db.firstTime||'-'} 至 ${db.lastTime||'-'}`:(db.error||'账户暂未做单');$("dbSource").textContent=db.dbSource?db.dbSource.toUpperCase():'';
       if(!keepFilters){optionList($("platform"),db.platforms||[],'全部平台');optionList($("server"),db.servers||[],'全部服务器');optionList($("symbol"),db.symbols||[],'全部品种');if(state.initialFilters){for(const key of ['platform','server','symbol'])if(state.initialFilters[key])$(key).value=state.initialFilters[key];state.initialFilters=null;}}
       renderChartProducts(db);
-      renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);$("generateBtn").disabled=!db.exists;$("toxicBtn").disabled=!db.exists;$("historicalFundsBtn").disabled=!db.exists;
+      renderRiskPanels(db.riskPanels);renderMetrics(db);renderVisualizations(db);if(!state.ledgerLoaded)renderRecord(detail,!state.formDirty);renderCharts(detail.charts||[]);renderHistory(detail.history||[]);
     }
     function filters(){return state.initialFilters||{platform:$("platform").value,server:$("server").value,symbol:$("symbol").value};}
     async function openAccountFromDetailSearch(event){
