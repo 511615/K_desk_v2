@@ -83,6 +83,7 @@ Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with dens
 from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
 the dark TradingView-style background.
 
-Orders with second-level timestamps map to the nearest M1 quote bar, matching the legacy canvas
-renderer. The same nearest-bar index drives the buy/sell node, close node, holding line and Profit
-or Volume indicator bar, so every plotted order shares one horizontal time coordinate.
+M1 timestamps identify the start of a one-minute interval. Orders with second-level timestamps map
+to their containing M1 interval (the most recent bar at or before the trade time). The same index
+drives the buy/sell node, close node, holding line and Profit or Volume indicator bar, so every
+plotted order shares one horizontal time coordinate.
