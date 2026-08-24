@@ -101,6 +101,10 @@ batched into three SVG paths rather than creating one DOM node per order, so a l
 off-screen history does not make drag interaction progressively slower. The visible data, order
 limit, filters, execution prices and marker/line semantics are unchanged.
 
+The time scale sets `minBarSpacing` to `0.12`, below the library default, then fits content on
+initial render. Users can therefore zoom out to a long M1 history rather than stopping at an
+artificially short range. Viewport-scoped overlay batching remains active at this limit.
+
 M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
 (the most recent bar at or before the trade time), while the buy/sell node, close node and holding
 line retain their second-level fraction within that interval. Earlier events appear to the left and

@@ -129,3 +129,11 @@ def test_lightweight_renderer_batches_only_visible_trade_overlays_while_panning(
     assert "openMarkerPath.setAttribute('d',openSegments.join(''))" in html
     assert "function scheduleOverlayRefresh(settled=false)" in html
     assert "scheduleOverlayRefresh();scheduleSettledOverlayRefresh()" in html
+
+
+def test_lightweight_renderer_allows_a_longer_minimum_zoom_range():
+    """Users must be able to zoom out past the default Lightweight Charts spacing."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_zoom", trades, bars, mapping)
+
+    assert "minBarSpacing:.12" in html
