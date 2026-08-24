@@ -82,3 +82,7 @@ extend upward and negative bars downward with equal visual magnitude.
 Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with density-aware opacity
 from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
 the dark TradingView-style background.
+
+Orders with second-level timestamps map to the nearest M1 quote bar, matching the legacy canvas
+renderer. The same nearest-bar index drives the buy/sell node, close node, holding line and Profit
+or Volume indicator bar, so every plotted order shares one horizontal time coordinate.

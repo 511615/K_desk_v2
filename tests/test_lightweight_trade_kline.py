@@ -71,6 +71,7 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "profitZero" in html
     assert "minValue:-profitMaxAbs" in html
     assert "rgba(192,145,255,${alpha})" in html
+    assert "Math.abs(ms(bars[right].time)-x)" in html
     assert "MetaTrader5" not in html
 
 
