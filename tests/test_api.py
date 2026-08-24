@@ -61,7 +61,7 @@ def test_production_relationship_runtime_uses_a_disposable_process(tmp_path: Pat
 
     assert isinstance(app.state.relationship_risk, IsolatedRelationshipRiskBuilder)
     assert app.state.relationship_expansion._risk_builder is app.state.relationship_risk
-    assert app.state.relationship_risk._process_timeout_seconds is None
+    assert app.state.relationship_risk._process_timeout_seconds == 45.0
 
 
 def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:

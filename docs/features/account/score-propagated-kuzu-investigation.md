@@ -166,6 +166,10 @@ coverage, and emits at most one edge per peer and detection type. Each evidence 
 accounts. A started same-server `LastIP` or current MT5 `ClientID` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
 launching duplicate scans. Accounts in the same current-LastIP/CID cohort skip repeat cohort reads.
+In production, that expansion always runs in a disposable child process with a 45-second wall-clock
+ceiling. This outer ceiling is independent of the source budgets: it terminates an over-limit child,
+retains the newest available partial snapshot as truncated evidence, and releases its process memory
+without blocking the 8777 account service.
 Each legacy evidence family has one shared local execution lane, preventing timed-out sources from
 accumulating unbounded worker threads. The fixed 2,000-node and 10,000-score-expansion caps remain
 as secondary graph guards and set `truncated=true` rather than claiming complete coverage. The final

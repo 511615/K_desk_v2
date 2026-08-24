@@ -59,6 +59,10 @@ logger = logging.getLogger("kdesk.account")
 # from blocking the sole relationship worker forever.
 RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS: float | None = None
 RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 120.0
+# The expansion is isolated so a single investigation cannot retain native/Kuzu
+# or provider allocations in 8777. This is a process wall-clock ceiling, not a
+# source timeout: it returns the newest partial snapshot and reclaims the child.
+RELATIONSHIP_PROCESS_TIMEOUT_SECONDS = 45.0
 
 
 class CopyPoolControlsRequest(BaseModel):
@@ -199,6 +203,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             config,
             discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
             source_timeout_seconds=RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
+            process_timeout_seconds=RELATIONSHIP_PROCESS_TIMEOUT_SECONDS,
         )
         relationship_network = relationship_runtime
         relationship_risk = relationship_runtime
