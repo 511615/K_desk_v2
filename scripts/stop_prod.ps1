@@ -8,6 +8,7 @@ foreach ($port in @(8777, 8766)) {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)"
         if ($process.CommandLine -like "*$expectedModule*") {
             Stop-Process -Id $listener.OwningProcess -Force
+            Wait-Process -Id $listener.OwningProcess -Timeout 10 -ErrorAction SilentlyContinue
         } else {
             $details = [ordered]@{
                 Port = $port

@@ -98,6 +98,9 @@ claim/recover their assigned job kinds. Production readiness also checks that bo
 have a live process; an account-only start must explicitly use the account-only health check.
 The controlled promotion script reads full Git output lines before checking branch names and SHAs;
 PowerShell scalar-string indexing must not turn those values into individual characters.
+The controlled stop script waits for each owned web listener to exit before the start phase. A
+successful readiness response alone is insufficient because an old Uvicorn process can otherwise
+keep a previous legacy-page module in memory while exposing current file-based release metadata.
 
 ## Tests and acceptance
 
