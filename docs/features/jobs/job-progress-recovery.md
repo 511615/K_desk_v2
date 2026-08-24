@@ -4,7 +4,7 @@ title: Persistent job progress and recovery
 module: jobs
 status: active
 apis: ["GET /api/kline/jobs/{job_id}", "GET /api/toxic/jobs/{job_id}", "GET /api/push-discovery/jobs/{job_id}", "GET /api/push-discovery/active", "GET /api/rebate-churning/scans/{job_id}", "GET /api/bonus-arbitrage/scans/active", "GET /api/bonus-arbitrage/scans/{job_id}", "GET /api/position-risk/scans/active", "GET /api/position-risk/scans/{job_id}", "POST /api/jobs/{job_id}/cancel"]
-code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "src/kdesk/api/account_app.py", "frontend/src/pushDiscovery.ts", "frontend/src/frontendUpdate.ts", "frontend/src/components/BonusArbitrageDiscoveryPanel.vue", "frontend/src/components/PositionRiskDiscoveryPanel.vue", "scripts/start_dev.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1"]
+code: ["src/kdesk/infrastructure/database.py", "src/kdesk/worker/runner.py", "src/kdesk/api/account_app.py", "frontend/src/pushDiscovery.ts", "frontend/src/frontendUpdate.ts", "frontend/src/components/BonusArbitrageDiscoveryPanel.vue", "frontend/src/components/PositionRiskDiscoveryPanel.vue", "scripts/start_dev.ps1", "scripts/start_prod.ps1", "scripts/stop_prod.ps1", "scripts/health_check_prod.ps1", "scripts/promote_dev.ps1"]
 tests: ["tests/test_api.py", "tests/test_ledger.py", "tests/test_worker.py", "frontend/src/pushDiscovery.spec.ts", "frontend/src/frontendUpdate.spec.ts", "frontend/src/bonusDiscovery.spec.ts", "frontend/src/positionRiskDiscovery.spec.ts", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: []
 last_verified_version: 2.1.0
@@ -96,6 +96,8 @@ second interruption remains terminal and explicit.
 Web processes submit/read only; interactive and discovery workers execute separate queues and only
 claim/recover their assigned job kinds. Production readiness also checks that both Worker queues
 have a live process; an account-only start must explicitly use the account-only health check.
+The controlled promotion script reads full Git output lines before checking branch names and SHAs;
+PowerShell scalar-string indexing must not turn those values into individual characters.
 
 ## Tests and acceptance
 

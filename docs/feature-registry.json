@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "df15b84b8bf8",
+  "registryVersion": "b13487fe8d2b",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -565,7 +565,8 @@
         "scripts/start_dev.ps1",
         "scripts/start_prod.ps1",
         "scripts/stop_prod.ps1",
-        "scripts/health_check_prod.ps1"
+        "scripts/health_check_prod.ps1",
+        "scripts/promote_dev.ps1"
       ],
       "tests": [
         "tests/test_api.py",
