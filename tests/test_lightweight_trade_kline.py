@@ -131,9 +131,9 @@ def test_lightweight_renderer_batches_only_visible_trade_overlays_while_panning(
     assert "scheduleOverlayRefresh();scheduleSettledOverlayRefresh()" in html
 
 
-def test_lightweight_renderer_allows_a_longer_minimum_zoom_range():
-    """Users must be able to zoom out past the default Lightweight Charts spacing."""
+def test_lightweight_renderer_allows_the_full_generated_kline_range():
+    """Zooming out must follow the legacy full-axis rule rather than stop at a pixel floor."""
     trades, bars, mapping = _fixture()
     html = build_lightweight_html("10001", "10001_zoom", trades, bars, mapping)
 
-    assert "minBarSpacing:.12" in html
+    assert "minBarSpacing:.01" in html
