@@ -258,6 +258,7 @@ SOURCE_TXT = Path(os.environ.get("ACCOUNT_REGISTRY_SOURCE_TXT", ROOT / "local_da
 WORKBOOK_PATH = OUT_DIR / "problematic_accounts.xlsx"
 KLINE_JOBS: dict[str, dict] = {}
 KLINE_JOBS_LOCK = threading.Lock()
+INLINE_KLINE_LOCK = threading.Lock()
 TOXIC_JOBS: dict[str, dict] = {}
 TOXIC_JOBS_LOCK = threading.Lock()
 PUSH_DISCOVERY_JOBS: dict[str, dict] = {}
@@ -2164,6 +2165,167 @@ def recent_chartable_kline_trades(rows: list[dict], limit: int) -> list[dict]:
         ),
     )
     return selected
+
+
+def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
+    """Build the bounded account-detail chart without creating a K-line job.
+
+    The manual K-line flow deliberately remains a durable :8766 task that
+    writes artifacts.  This page-only path reads the chosen trading source and
+    the configured quote Terminal, uses its M1 cache when available, then
+    returns a self-contained Lightweight Charts document for an in-page iframe.
+    It never writes trades, generated HTML, jobs or remote trading state.
+    """
+    filters = filters or {}
+    account = normalize_text(account)
+    platform = normalize_text(filters.get("platform")).upper()
+    server = normalize_text(filters.get("server"))
+    try:
+        recent_orders = int(filters.get("recentOrders") or 300)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("最近订单数量必须是整数") from exc
+    recent_orders = max(1, min(300, recent_orders))
+    if not account:
+        raise ValueError("账号不能为空")
+    if not platform or not server:
+        raise ValueError("请先选择平台和服务器")
+
+    rows = recent_chartable_kline_trades(
+        query_db_trades(account, platform=platform, server=server, limit=50000),
+        recent_orders,
+    )
+    if not rows:
+        raise RuntimeError("账户暂未找到可展示的已平仓买卖订单")
+    newest = max(
+        rows,
+        key=lambda row: (
+            normalize_text(row.get("close_time") or row.get("open_time")),
+            normalize_text(row.get("ticket")),
+        ),
+    )
+    cache_key = (
+        "inline-kline-html",
+        account,
+        platform,
+        server,
+        recent_orders,
+        normalize_text(newest.get("ticket")),
+        normalize_text(newest.get("close_time") or newest.get("open_time")),
+    )
+    cached = account_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # MT5's local terminal IPC is process-global.  Serialise only this bounded
+    # reader so an account page cannot race a quote calibration on another tab.
+    with INLINE_KLINE_LOCK:
+        cached = account_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        tool_dir = TRADE_KLINE_TOOL_DIR
+        if not (tool_dir / "generate_trade_kline_from_statement.py").is_file():
+            raise RuntimeError("未配置账户详情直出 K 线报价工具")
+        if str(tool_dir) not in sys.path:
+            sys.path.insert(0, str(tool_dir))
+        try:
+            import pandas as pd
+            import generate_trade_kline_from_statement as quote_generator
+            from kdesk.infrastructure.quote_sources import QuoteSourceRegistry
+            from lightweight_trade_kline import build_lightweight_html
+        except Exception as exc:  # pragma: no cover - deployment dependency guard
+            raise RuntimeError(f"账户详情直出 K 线组件不可用：{exc}") from exc
+        if quote_generator.mt5 is None:
+            raise RuntimeError("账户详情直出 K 线缺少 MT5 只读报价组件")
+
+        canonical = [canonical_trade_row(row) for row in rows]
+        trades = pd.DataFrame(canonical)
+        for column in ("Open Time", "Close Time"):
+            trades[column] = pd.to_datetime(trades[column], errors="coerce")
+        trades = trades.dropna(subset=["Open Time", "Close Time", "Open Price", "Close Price"])
+        if trades.empty:
+            raise RuntimeError("账户订单缺少完整开平仓时间或价格，无法展示 K 线")
+        trades = trades.sort_values("Open Time").reset_index(drop=True)
+        stem = f"inline_{safe_stem_text(account)}_{recent_orders}"
+        # The page never creates an output HTML or a durable job, but it may
+        # refresh the bounded, reusable local M1 quote cache used for display.
+        KLINE_OUT_DIR.mkdir(parents=True, exist_ok=True)
+        quote_generator.OUT_DIR = KLINE_OUT_DIR
+        registry = QuoteSourceRegistry.load(
+            str(TRADE_KLINE_TERMINAL),
+            os.environ.get("KDESK_KLINE_QUOTE_SOURCES") or None,
+        )
+        bars_by_symbol: dict[str, object] = {}
+        mapping_by_symbol: dict[str, dict] = {}
+        errors: list[str] = []
+        for report_symbol, group in trades.groupby("Item", sort=True):
+            group = group.sort_values("Open Time").reset_index(drop=True)
+            source_candidates = registry.candidates(platform, server)
+            if not source_candidates:
+                errors.append(f"{report_symbol}: 未配置 {platform} / {server} 的同源报价")
+                continue
+            attempted: list[str] = []
+            for provider, is_fallback in source_candidates:
+                attempted.append(provider.id)
+                if not quote_generator.mt5.initialize(path=str(provider.terminal), timeout=6000):
+                    errors.append(
+                        f"{report_symbol} / {provider.id}: M1 报价终端连接失败：{quote_generator.mt5.last_error()}"
+                    )
+                    continue
+                try:
+                    terminal_server = str(getattr(quote_generator.mt5.account_info(), "server", "") or "")
+                    mapping, _align, sample = quote_generator.choose_by_m1_envelope(
+                        str(report_symbol),
+                        group,
+                        aliases=provider.aliases,
+                        fallback_source=is_fallback,
+                        allowed_hour_offsets=provider.allowed_hour_offsets,
+                    )
+                    correction = provider.price_corrections.get(str(report_symbol))
+                    if correction is None:
+                        correction = provider.price_corrections.get(quote_generator.canonical_symbol(str(report_symbol)), 0.0)
+                    mapping.update(
+                        {
+                            "provider": provider.id,
+                            "provider_server": terminal_server,
+                            "requested_server": server,
+                            "tried_quote_sources": list(attempted),
+                            "configured_price_correction": float(correction or 0.0),
+                            "render_mode": "inline-direct",
+                        }
+                    )
+                    bars = quote_generator.load_or_fetch_bars(
+                        stem,
+                        str(report_symbol),
+                        mapping["mt5_symbol"],
+                        mapping["time_mode"],
+                        mapping["hour_delta"],
+                        group,
+                        provider_id=provider.id,
+                    )
+                    bars_by_symbol[str(report_symbol)] = quote_generator.apply_display_price_alignment(
+                        str(report_symbol), bars, sample, mapping
+                    )
+                    mapping_by_symbol[str(report_symbol)] = mapping
+                    break
+                except Exception as exc:
+                    errors.append(f"{report_symbol} / {provider.id}: {exc}")
+                finally:
+                    quote_generator.mt5.shutdown()
+
+        if not bars_by_symbol:
+            detail = "；".join(errors[-3:]) or "同源 M1 报价不可用"
+            raise RuntimeError(f"账户详情 K 线暂时无法加载：{detail}")
+        if errors:
+            for report_symbol in set(trades["Item"].astype(str)) - set(bars_by_symbol):
+                mapping_by_symbol.setdefault(
+                    report_symbol,
+                    {"report_symbol": report_symbol, "validation_status": "rejected", "failure": {"reason": "报价不可用"}},
+                )
+        return account_cache_set(
+            cache_key,
+            build_lightweight_html(account, stem, trades, bars_by_symbol, mapping_by_symbol),
+        )
 
 
 def _query_db_trades_uncached(
@@ -11236,6 +11398,8 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     .order-type.buy { color:#177245; } .order-type.sell { color:#b42318; }
     .order-pager { min-height:54px; padding:9px 18px; display:flex; align-items:center; justify-content:flex-end; gap:10px; border-top:1px solid var(--line); }
     .order-pager button { min-height:32px; padding:5px 10px; }
+    .inline-kline-frame { display:block; width:100%; height:680px; border:0; background:#061322; }
+    .inline-kline-note { padding:9px 18px; color:var(--muted); font-size:12px; border-top:1px solid var(--line); }
     .quick-mark { border:1px solid var(--line); border-top:0; background:#fff; padding:13px 16px 14px; }
     .quick-mark-main { display:grid; grid-template-columns:minmax(0,1fr) 190px 120px; gap:12px; align-items:end; }
     .quick-label { color:#536067; font-size:12px; margin-bottom:6px; }
@@ -11827,6 +11991,11 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       </div>
     </div>
 
+    <section class="section" id="inlineKlineSection" hidden>
+      <div class="section-head"><h2>交易 K 线</h2><div class="section-sub" id="inlineKlineStatus">正在读取最近 300 笔订单与 M1 报价...</div></div>
+      <iframe class="inline-kline-frame" id="inlineKlineFrame" title="账户交易 K 线" sandbox="allow-scripts"></iframe>
+      <div class="inline-kline-note">此处直接由账户详情服务只读加载，不创建 K 线任务；下方“生成 K 线图”功能仍可用于全量、筛选或资金回放。</div>
+    </section>
     <details class="section order-details" id="orderDetails">
       <summary><span>所有订单</span><span class="order-summary-meta" id="orderSummary">展开后加载</span></summary>
       <div class="table-wrap"><table class="order-table"><thead><tr><th>订单号</th><th>平台 / 服务器</th><th>品种</th><th>方向</th><th>原因</th><th>注释 / EA</th><th>开仓时间</th><th>平仓时间</th><th>持仓时间</th><th>手数</th><th>毛盈亏</th><th>手续费</th><th>利息</th><th>税费</th><th>净盈亏</th><th>币种</th></tr></thead><tbody id="orderRows"><tr><td colspan="16"><div class="empty-state">展开后读取该账号全部订单</div></td></tr></tbody></table></div>
@@ -11918,7 +12087,7 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
     const LOGIN=__ACCOUNT_LOGIN_JSON__;
     const $=id=>document.getElementById(id);
     const initialParams=new URLSearchParams(location.search);
-    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,autoKlineKey:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null},accountLookupMatches:[]};
+    const state={detail:null,initialFilters:{platform:initialParams.get('platform')||'',server:initialParams.get('server')||'',symbol:initialParams.get('symbol')||''},riskRequest:0,automationRequest:0,selectedAction:'',jobTimer:null,inlineKlineKey:null,ledgerLoaded:false,formDirty:false,chartFiltersInitialized:false,chartSymbols:[],quickActions:[],protectedActions:['自定义'],sameNameAccounts:[LOGIN],orders:{page:1,pages:1,loading:false,loaded:false},ips:{loading:false},dialogCache:{copy:new Map(),ea:new Map(),relationship:new Map()},relationshipNetwork:null,historicalFunds:{loading:false,data:null,page:1,pageSize:100},toxic:{jobTimer:null,running:false,lastResult:null},accountLookupMatches:[]};
     const TOXIC_TYPES=[
       {id:'market_pushing',label:'推盘',tick:true},{id:'quote_latency_arbitrage',label:'报价延迟套利',tick:true},{id:'cross_platform_spread_arbitrage',label:'跨平台点差套利',tick:true},
       {id:'rebate_churning',label:'刷返佣'},{id:'bonus_arbitrage',label:'赠金套利'},{id:'short_close_trading',label:'短平交易'},
@@ -12319,14 +12488,14 @@ ACCOUNT_DETAIL_HTML = r"""<!doctype html>
       }catch(err){status.textContent=err.message||'报表导出失败';}finally{button.disabled=false;}
     }
     async function loadRiskPanels(q){const request=++state.riskRequest;try{const data=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/risk-panels?${q}`);if(request!==state.riskRequest)return;if(state.detail?.database)state.detail.database.riskPanels=data.riskPanels;renderRiskPanels(data.riskPanels);}catch(err){if(request===state.riskRequest)renderRiskPanels({available:false,reason:err.message});}}
-    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{const detail=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`);if(detail.database?.requiresSourceSelection){openAccountSourceDialog(LOGIN,(detail.database.sourceCandidates||[]).map(item=>({exists:true,orderCount:item.orderCount,latestSource:{platform:item.platform,server:item.server}})));$("metricStatus").textContent='请先选择平台 / 服务器';return;}render(detail,keepFilters);autoLoadKline();loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
+    async function load(keepFilters=false){$("refreshBtn").disabled=true;$("metricStatus").textContent='正在读取最新订单...';const q=new URLSearchParams(filters());[...q.keys()].forEach(k=>{if(!q.get(k))q.delete(k)});try{const detail=await json(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/detail?${q}`);if(detail.database?.requiresSourceSelection){openAccountSourceDialog(LOGIN,(detail.database.sourceCandidates||[]).map(item=>({exists:true,orderCount:item.orderCount,latestSource:{platform:item.platform,server:item.server}})));$("metricStatus").textContent='请先选择平台 / 服务器';return;}render(detail,keepFilters);loadInlineKline();loadRiskPanels(q);loadAutomation(q);}catch(err){$("metricStatus").textContent=err.message;}finally{$("refreshBtn").disabled=false;}}
     function targetAccounts(){return $("batchSameName").checked&&!$("batchSameName").disabled?state.sameNameAccounts:[String(LOGIN)];}
     async function markRequest(payload,accounts=targetAccounts()){const batch=accounts.length>1;return json(batch?'/api/accounts/mark-batch':'/api/accounts/mark',{method:'POST',body:JSON.stringify(batch?{...payload,accounts}:{...payload,account:LOGIN})});}
     function applyLocalAction(action,accounts){const panels=state.detail?.database?.riskPanels;if(!panels?.sameName)return;const targets=new Set(accounts.map(String));panels.sameName.forEach(row=>{if(targets.has(String(row.account)))row.localStatus=action;});renderRiskPanels(panels);}
     async function saveStatusOnly(){if($("status").disabled)return;const accounts=targetAccounts(),value=$("status").value;$("status").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号状态...`:'正在保存状态...';try{await markRequest({status:value},accounts);$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent='状态已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("status").disabled=false;}}
     async function save(){const action=state.selectedAction==='自定义'?($("customAction").value.trim()||'自定义'):state.selectedAction,accounts=targetAccounts();$("saveBtn").disabled=true;$("saveStatus").textContent=accounts.length>1?`正在保存 ${accounts.length} 个账号...`:'正在保存...';try{await markRequest({action,group:$("group").value.trim(),tags:$("tags").value.trim(),note:$("note").value.trim(),status:$("status").value,owner:$("owner").value.trim()},accounts);applyLocalAction(action,accounts);state.formDirty=false;$("markState").textContent=accounts.length>1?`已批量记录 ${accounts.length} 个同名账户`:'已记录本地台账';$("saveStatus").textContent=accounts.length>1?`已保存 ${accounts.length} 个账号`:'已保存';}catch(err){$("saveStatus").textContent=err.message;}finally{$("saveBtn").disabled=false;}}
     function preview(url){$("previewFrame").src=url;$("previewOpen").href=url;$("previewDialog").showModal();}
-    async function autoLoadKline(){const db=state.detail?.database||{},source=db.latestSource||{};if(!db.exists||!source.platform||!source.server)return;const current=filters(),payload={account:LOGIN,platform:current.platform||source.platform,server:current.server||source.server,symbol:'',start:'',end:'',recentOrders:300,cacheVersion:db.lastTime||String(db.orderCount||0),includeTimeline:false,refreshTimelineCache:false};const key=JSON.stringify(payload);if(state.autoKlineKey===key)return;state.autoKlineKey=key;$("jobText").textContent='正在自动加载最近 300 笔订单的 K 线图...';$("jobProgress").style.width='3%';try{const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});poll(data.job.id,{auto:true});}catch(err){$("jobText").textContent=`自动加载失败：${err.message}`;}}
+    async function loadInlineKline(){const db=state.detail?.database||{},source=db.latestSource||{},section=$("inlineKlineSection"),status=$("inlineKlineStatus"),frame=$("inlineKlineFrame");if(!db.exists||!source.platform||!source.server){section.hidden=true;return;}const current=filters(),query=new URLSearchParams({platform:current.platform||source.platform,server:current.server||source.server,recentOrders:'300'}),key=`${query.toString()}|${db.lastTime||db.orderCount||0}`;section.hidden=false;if(state.inlineKlineKey===key)return;state.inlineKlineKey=key;status.textContent='正在读取最近 300 笔订单与 M1 报价...';frame.removeAttribute('srcdoc');try{const response=await fetch(`/api/accounts/by-login/${encodeURIComponent(LOGIN)}/inline-kline?${query}`);if(!response.ok){let issue={};try{issue=await response.json();}catch(_){ }throw new Error(issue.error||issue.detail||`HTTP ${response.status}`);}frame.srcdoc=await response.text();status.textContent='最近 300 笔订单 · 已直接加载';}catch(err){frame.srcdoc='';status.textContent=`K 线暂时无法加载：${err.message}`;}}
     async function generate(){const start=databaseTime($("chartStart").value),end=databaseTime($("chartEnd").value,true);if(start&&end&&start>end){$("jobText").textContent='开始时间不能晚于结束时间';return;}$("generateBtn").disabled=true;$("jobText").textContent='正在提交生成任务...';$("jobProgress").style.width='3%';try{const current=filters(),includeTimeline=$("includeTimeline").checked,payload={account:LOGIN,platform:current.platform,server:current.server,symbol:$("chartSymbol").value,start,end,includeTimeline,refreshTimelineCache:includeTimeline&&$("refreshTimelineCache").checked};const data=await json('/api/kline/generate-from-db',{method:'POST',body:JSON.stringify(payload)});$("jobText").textContent=`已提交 · ${payload.symbol||'全部品种'} · ${start||'全量'} 至 ${end||'全量'}${includeTimeline?' · 含资金回放':''}`;poll(data.job.id);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     async function poll(id,options={}){clearTimeout(state.jobTimer);try{const data=await json(`/api/kline/jobs/${encodeURIComponent(id)}`),job=data.job||{};$("jobProgress").style.width=`${Math.max(0,Math.min(100,Number(job.percent||0)))}%`;$("jobText").textContent=[job.message,job.elapsedSeconds?`${job.elapsedSeconds}s`:''].filter(Boolean).join(' · ');if(job.status==='done'){if(job.chart){state.detail.charts=[job.chart,...(state.detail.charts||[]).filter(c=>c.name!==job.chart.name)];renderCharts(state.detail.charts);if(!options.auto)preview(job.chart.url);}$("generateBtn").disabled=false;return;}if(job.status==='failed'||job.status==='missing'){$("generateBtn").disabled=false;return;}state.jobTimer=setTimeout(()=>poll(id,options),1000);}catch(err){$("jobText").textContent=err.message;$("generateBtn").disabled=false;}}
     function toxicMode(){return document.querySelector('input[name="toxicMode"]:checked')?.value||'selected';}

@@ -2070,6 +2070,78 @@
         }
       }
     },
+    "/api/accounts/by-login/{login}/inline-kline": {
+      "get": {
+        "summary": "Account Inline Kline",
+        "description": "Render the bounded detail-page chart directly from the account service.\n\nThis intentionally bypasses the durable K-line job queue and the :8766\ntask UI.  The separate manual generation endpoint above remains the\nonly artifact-producing flow.",
+        "operationId": "account_inline_kline_api_accounts_by_login__login__inline_kline_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Platform"
+            }
+          },
+          {
+            "name": "server",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Server"
+            }
+          },
+          {
+            "name": "recentOrders",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "default": 300,
+              "title": "Recentorders"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/push-discovery/start": {
       "post": {
         "summary": "Start Push Discovery",

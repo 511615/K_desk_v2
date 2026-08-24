@@ -3,12 +3,12 @@ feature_id: KLN-RENDER-001
 title: Lightweight Charts trade renderer
 module: kline
 status: active
-apis: ["POST /api/kline/generate-from-db", "GET /output/{name}"]
-code: ["legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
+apis: ["GET /api/accounts/by-login/{login}/inline-kline", "POST /api/kline/generate-from-db", "GET /output/{name}"]
+code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
 tests: ["tests/test_lightweight_trade_kline.py"]
 depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
 last_verified_version: 2.1.1
-last_verified_date: 2026-08-21
+last_verified_date: 2026-08-24
 ---
 
 # Lightweight Charts trade renderer
@@ -16,7 +16,9 @@ last_verified_date: 2026-08-21
 ## Purpose and user entry
 
 Replace the legacy canvas renderer while retaining the established trade evidence payload. The
-generated artifact is opened from the existing K-line task result or `/output/{name}`.
+generated artifact is opened from the existing K-line task result or `/output/{name}`. The legacy
+account detail can also render the same document directly above its order table through 8777,
+without creating a task artifact.
 
 ## UI and behavior
 
@@ -27,14 +29,17 @@ pan, zoom and responsive resize behavior.
 
 ## API contract
 
-No endpoint or artifact name changes. The generator accepts `--offline-cache` and
-`--quote-cache-dir` as additive CLI options.
+No existing endpoint or artifact name changes. `GET /api/accounts/by-login/{login}/inline-kline`
+is an additive 8777 route with `platform`, `server` and `recentOrders=1..300`; it returns the
+direct HTML with private 60-second caching and no job/artifact identifier. The generator accepts
+`--offline-cache` and `--quote-cache-dir` as additive CLI options.
 
 ## Data, routing and read-only constraints
 
 The renderer consumes normalized trades, cached/external M1 bars and mapping metadata. It never
 imports MetaTrader5, opens a Terminal connection, or writes a remote database. Quote ingestion stays
-in the upstream read-only adapter.
+in the upstream read-only adapter. The inline account adapter may refresh its bounded local M1 quote
+cache before calling the renderer; it does not create an HTML artifact or a durable K-line job.
 
 ## Business rules and units
 

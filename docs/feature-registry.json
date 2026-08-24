@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "b13487fe8d2b",
+  "registryVersion": "0515c98368a7",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -10,6 +10,7 @@
       "apis": [
         "GET /account/{login}",
         "GET /api/accounts/by-login/{login}/detail",
+        "GET /api/accounts/by-login/{login}/inline-kline",
         "GET /api/accounts/by-login/{login}/risk-panels",
         "GET /api/accounts/by-login/{login}/historical-funds",
         "GET /api/accounts/by-login/{login}/relationship-network",
@@ -37,8 +38,8 @@
         "TOX-POSITION-001",
         "TOX-HEDGE-001"
       ],
-      "last_verified_version": "2.1.0",
-      "last_verified_date": "2026-08-19",
+      "last_verified_version": "2.1.1",
+      "last_verified_date": "2026-08-24",
       "document": "docs/features/account/account-detail-legacy.md"
     },
     {
@@ -632,10 +633,13 @@
       "module": "kline",
       "status": "active",
       "apis": [
+        "GET /api/accounts/by-login/{login}/inline-kline",
         "POST /api/kline/generate-from-db",
         "GET /output/{name}"
       ],
       "code": [
+        "src/kdesk/api/account_app.py",
+        "legacy/apps/problem_account_registry/app.py",
         "legacy/tools/trade_kline_tool/lightweight_trade_kline.py",
         "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py",
         "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py",
@@ -650,7 +654,7 @@
         "KLN-TIMELINE-001"
       ],
       "last_verified_version": "2.1.1",
-      "last_verified_date": "2026-08-21",
+      "last_verified_date": "2026-08-24",
       "document": "docs/features/kline/lightweight-renderer.md"
     },
     {

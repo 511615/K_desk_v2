@@ -767,6 +767,37 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
         job = database.create_job("kline_from_database", clean_payload, idempotency_key=key)
         return {"ok": True, "job": job}
 
+    @app.get("/api/accounts/by-login/{login}/inline-kline", response_class=HTMLResponse)
+    async def account_inline_kline(
+        login: str,
+        platform: str = "",
+        server: str = "",
+        recentOrders: int = Query(default=300, ge=1, le=300),
+    ) -> HTMLResponse:
+        """Render the bounded detail-page chart directly from the account service.
+
+        This intentionally bypasses the durable K-line job queue and the :8766
+        task UI.  The separate manual generation endpoint above remains the
+        only artifact-producing flow.
+        """
+        payload = {
+            "platform": platform,
+            "server": server,
+            "recentOrders": recentOrders,
+        }
+        try:
+            chart_html = await run_in_threadpool(
+                legacy.call,
+                "account_inline_kline_html",
+                _safe_login(login),
+                payload,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return HTMLResponse(chart_html, headers={"Cache-Control": "private, max-age=60"})
+
     @app.post("/api/push-discovery/start")
     def start_push_discovery(payload: dict = Body(default_factory=dict)) -> dict:
         try:

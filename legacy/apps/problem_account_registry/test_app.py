@@ -2428,14 +2428,14 @@ class OrderListTests(unittest.TestCase):
         self.assertIn('id="accountSourceDialog"', html)
         self.assertIn("matches.length>1", html)
 
-    def test_account_detail_auto_loads_a_bounded_cached_kline_job(self):
+    def test_account_detail_embeds_a_bounded_direct_kline_without_a_job_submission(self):
         html = app.ACCOUNT_DETAIL_HTML
-        self.assertIn("autoKlineKey:null", html)
-        self.assertIn("async function autoLoadKline()", html)
-        self.assertIn("recentOrders:300", html)
-        self.assertIn("state.autoKlineKey===key", html)
-        self.assertIn("autoLoadKline();", html)
-        self.assertIn("poll(data.job.id,{auto:true})", html)
+        self.assertIn('id="inlineKlineFrame"', html)
+        self.assertIn("async function loadInlineKline()", html)
+        self.assertIn("recentOrders:'300'", html)
+        self.assertIn("/inline-kline?${query}", html)
+        self.assertIn("loadInlineKline();", html)
+        self.assertNotIn("async function autoLoadKline()", html)
 
     def test_recent_chartable_kline_trades_use_latest_completed_orders(self):
         rows = [

@@ -147,6 +147,24 @@ def test_account_detail_always_uses_legacy_page(tmp_path: Path, monkeypatch) -> 
         assert "legacy-account:302360" in response.text
 
 
+def test_account_inline_kline_is_served_by_account_service_not_the_job_api(tmp_path: Path, monkeypatch) -> None:
+    def fake_call(_self, name, *args):
+        assert name == "account_inline_kline_html"
+        assert args == ("302360", {"platform": "MT5", "server": "DBG MT5", "recentOrders": 300})
+        return "<html><body>direct-lightweight-kline</body></html>"
+
+    monkeypatch.setattr(LegacyBridge, "call", fake_call)
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/accounts/by-login/302360/inline-kline?platform=MT5&server=DBG%20MT5&recentOrders=300"
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, max-age=60"
+    assert "direct-lightweight-kline" in response.text
+
+
 def test_historical_funds_api_replays_read_only_source_facts(tmp_path: Path, monkeypatch) -> None:
     def fake_call(_self, name, *args):
         assert name == "account_historical_funds_source_payload"
