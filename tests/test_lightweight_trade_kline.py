@@ -73,9 +73,9 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "profitZero" in html
     assert "base:0" in html
     assert "minValue:-profitMaxAbs" in html
-    assert "const halo=document.createElementNS" in html
-    assert "rgba(2,12,28,${alpha})" in html
-    assert "#d8b4fe" in html
+    assert "stroke-dasharray','5 4'" in html
+    assert "rgba(192,145,255,${alpha})" in html
+    assert "const halo=document.createElementNS" not in html
     assert ".holdingOverlay{z-index:20" in html
     assert ".tradeMarkers{z-index:21}" in html
     assert "return Math.max(0,Math.min(bars.length-1,hi))" in html

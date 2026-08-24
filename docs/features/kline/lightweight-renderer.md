@@ -88,11 +88,11 @@ negative values, and a shared high-contrast dashed zero baseline. Profit bars ar
 anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
 green and extend downward with equal visual magnitude for equal absolute profit.
 
-Holding lines use a two-stroke treatment: a density-aware dark halo followed by a solid bright
-lavender foreground (`#d8b4fe`). The fixed-width, rounded foreground keeps open-to-close evidence
-readable on the dark TradingView-style background without changing the order price or time used by
-the line. The SVG overlay has an explicit z-index above the Lightweight Charts canvas and below
-trade markers, so the chart background cannot cover any in-plot portion of a holding line.
+Holding lines use the legacy-style thin, rounded, semi-transparent purple dash
+(`rgba(192,145,255,alpha)`, `5 4` dash). Density reduces opacity and width rather than adding a
+halo, so holding evidence remains visible without obscuring candlesticks. The SVG overlay has an
+explicit z-index above the Lightweight Charts canvas and below trade markers, so the chart
+background cannot cover any in-plot portion of a holding line.
 
 M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
 (the most recent bar at or before the trade time), while the buy/sell node, close node and holding
