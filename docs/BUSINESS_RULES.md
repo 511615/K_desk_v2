@@ -384,6 +384,22 @@ physical source completed; partial coverage or no closed target order is data-in
 
 # Score-propagated Kuzu relationship investigation
 
+## Account profile and relation evidence v1
+
+`account-profile-v1` derives investigation labels from the selected account's actual bounded data.
+All behavior thresholds live in `relationship_inspection.py`; the UI must not carry an independent
+copy. Short-close, holding-loss, adverse adding, batch-entry and directional-concentration labels
+require their configured minimum sample and otherwise report insufficient data. EA requires Comment,
+ExpertID, Magic or route evidence. Copy requires a source, signal, route or order mapping. Similar
+opening/closing times alone are `开平仓同步`, never `跟单关系`.
+
+Same-CRM evidence is presented as `同名账户`. Current LastIP and CID evidence describes only the
+available snapshot, not a complete historical login/device record. Suspected opposite-lock evidence
+describes opposite direction, timing and lot similarity and is never by itself a misconduct finding.
+Recommendations use 70% auditable path strength and 30% normalized behavior similarity, are capped at
+eight, and require a complete snapshot path to the investigation subject. Database status is display
+context rather than similarity input; only a blank database status falls back to `B`.
+
 `ACC-REL-003` uses a local direct-account evidence projection. The seed starts at 100 and each
 residual score forwards through one relation as `residual × fixed relation strength × 0.96`. A node
 is visible once it has a contribution; it only forwards when its combined noisy-OR score meets the

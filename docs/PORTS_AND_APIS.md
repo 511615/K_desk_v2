@@ -57,6 +57,12 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   existing filters, `threshold=1..100` and optional `include_toxic=true`. It returns `inProgress`
   plus `progress` while its single-flight local expansion continues, then the final coverage and
   evidence ledger without an automated risk conclusion
+- `GET /api/accounts/by-login/{login}/relationship-network/node-profile` - lazy, snapshot-bound
+  account profile, versioned behavior/automation tags, coverage and at most eight explainable
+  recommendations; defaults to the latest 90 days when `start/end` are blank
+- `GET /api/accounts/by-login/{login}/relationship-network/relation-detail` - paged, presentation-safe
+  evidence for one stable edge or multi-relation bundle; accepts `edge_id`, optional `job_id`,
+  `snapshot_version`, `detail_page` and `detail_limit`
 - `GET /api/accounts/by-login/{login}/copy-origins` - accepts optional `platform`, `server`,
   `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
 - `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the

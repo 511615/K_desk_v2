@@ -452,6 +452,14 @@ minutes while retaining the compatible fast-activation requested/effective field
 
 ## Release acceptance
 
+Relationship inspection regressions cover `account-profile-v1`, blank-only status fallback,
+presentation-safe tags and relation evidence, exact relation deduplication, multi-relation bundles,
+recommendation path completeness and eight-result bounding. API/page tests pin snapshot-conflict 409,
+90-day/default or explicit coverage, lazy profile and relation-detail routes, request cancellation and
+sequence guards, clickable transparent edge hit layers, collapsed aggregate-edge resolution and the
+copy/open-close-sync/opposite-lock wording split. JavaScript syntax is checked from rendered Galaxy
+HTML in addition to Python compile, Ruff and governance validation.
+
 Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,
 DBG MT5 Live2 account 5200101 routing/finance/orders, rebate, copy/EA, Toxic job recovery, K-line
 generation and rollback rehearsal must pass. Remote

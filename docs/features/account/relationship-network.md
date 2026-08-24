@@ -3,15 +3,39 @@ feature_id: ACC-REL-001
 title: Account relationship network
 module: account
 status: active
-apis: ["GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
-tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
+apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
+tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
 last_verified_date: 2026-08-24
 ---
 
 # Account relationship network
+
+## Node profile and auditable relation evidence
+
+The Galaxy investigation view lazily reads an account profile only after an operator selects an
+account. The profile preserves an existing `B/M/P/T/A/TA` database status and falls back to `B` only
+when the status is blank. It reports the selected account route, propagation depth and score, query
+coverage, versioned behavior and automation tags, and at most eight explainable related accounts.
+Every recommendation is drawn from the current investigation snapshot and must have a complete path
+back to the investigation subject. Selecting a node never recomputes the graph layout. Profile reads
+are cached for ten minutes and superseded browser requests are cancelled and sequence-guarded.
+
+Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
+rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
+accounts are returned as one relation bundle whose sections remain separately auditable. A collapsed
+community retains one aggregate edge; expanded communities expose member evidence edges. The business
+presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal CRM keys and
+unnecessary personal identifiers from both the profile and relation-detail contracts.
+
+`跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
+source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
+explicitly not proof of copy trading. Suspected hedge evidence requires opposite direction and retains
+its limitations; it is not a violation conclusion. Profile rules are versioned as `account-profile-v1`,
+use one centralized threshold table and return `数据不足` instead of forcing a behavior label when the
+minimum sample is absent.
 
 ## Purpose and user entry
 

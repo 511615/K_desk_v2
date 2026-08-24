@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "d29a1e5376f2",
+  "registryVersion": "ea8e5b5383b4",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -14,16 +14,20 @@
         "GET /api/accounts/by-login/{login}/risk-panels",
         "GET /api/accounts/by-login/{login}/historical-funds",
         "GET /api/accounts/by-login/{login}/relationship-network",
+        "GET /api/accounts/by-login/{login}/relationship-network/node-profile",
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail",
         "GET /api/accounts/by-login/{login}/orders"
       ],
       "code": [
         "src/kdesk/api/account_app.py",
+        "src/kdesk/application/relationship_inspection.py",
         "src/kdesk/application/relationship_network.py",
         "legacy/apps/problem_account_registry/app.py",
         "frontend/src/main.ts"
       ],
       "tests": [
         "tests/test_api.py",
+        "tests/test_relationship_inspection.py",
         "legacy/apps/problem_account_registry/test_app.py",
         "frontend/e2e/legacy-account.spec.ts"
       ],
@@ -48,11 +52,14 @@
       "module": "account",
       "status": "active",
       "apis": [
-        "GET /api/accounts/by-login/{login}/relationship-network"
+        "GET /api/accounts/by-login/{login}/relationship-network",
+        "GET /api/accounts/by-login/{login}/relationship-network/node-profile",
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"
       ],
       "code": [
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_expansion.py",
+        "src/kdesk/application/relationship_inspection.py",
         "src/kdesk/application/relationship_risk.py",
         "src/kdesk/application/trade_relationship_detection.py",
         "src/kdesk/domain/ib_rebate_anomaly.py",
@@ -70,6 +77,7 @@
         "tests/test_ib_rebate_anomaly.py",
         "tests/test_kuzu_risk_graph.py",
         "tests/test_relationship_graph.py",
+        "tests/test_relationship_inspection.py",
         "tests/test_relationship_risk.py",
         "tests/test_trade_relationship_detection.py",
         "legacy/apps/problem_account_registry/test_app.py"
@@ -124,7 +132,9 @@
       "apis": [
         "GET /kuzu-risk",
         "GET /api/kuzu-risk/graph",
-        "GET /api/accounts/by-login/{login}/relationship-network"
+        "GET /api/accounts/by-login/{login}/relationship-network",
+        "GET /api/accounts/by-login/{login}/relationship-network/node-profile",
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"
       ],
       "code": [
         "legacy/apps/problem_account_registry/app.py",
@@ -134,6 +144,7 @@
         "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/application/relationship_expansion.py",
+        "src/kdesk/application/relationship_inspection.py",
         "src/kdesk/application/relationship_network.py",
         "src/kdesk/application/relationship_process.py",
         "src/kdesk/application/relationship_risk.py",
@@ -149,6 +160,7 @@
         "tests/test_ib_rebate_anomaly.py",
         "tests/test_kuzu_risk_graph.py",
         "tests/test_relationship_graph.py",
+        "tests/test_relationship_inspection.py",
         "tests/test_relationship_propagation.py",
         "tests/test_relationship_risk.py",
         "tests/test_trade_relationship_detection.py"

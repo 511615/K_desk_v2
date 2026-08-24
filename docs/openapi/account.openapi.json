@@ -895,6 +895,237 @@
         }
       }
     },
+    "/api/accounts/by-login/{login}/relationship-network/node-profile": {
+      "get": {
+        "summary": "Relationship Node Profile",
+        "operationId": "relationship_node_profile_api_accounts_by_login__login__relationship_network_node_profile_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 180,
+              "title": "Node Id"
+            }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 12,
+              "title": "Threshold"
+            }
+          },
+          {
+            "name": "include_toxic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Toxic"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "snapshot_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Snapshot Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/by-login/{login}/relationship-network/relation-detail": {
+      "get": {
+        "summary": "Relationship Relation Detail",
+        "operationId": "relationship_relation_detail_api_accounts_by_login__login__relationship_network_relation_detail_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          },
+          {
+            "name": "edge_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 220,
+              "title": "Edge Id"
+            }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 12,
+              "title": "Threshold"
+            }
+          },
+          {
+            "name": "include_toxic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Toxic"
+            }
+          },
+          {
+            "name": "detail_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Detail Page"
+            }
+          },
+          {
+            "name": "detail_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Detail Limit"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "snapshot_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Snapshot Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/kuzu-demo": {
       "get": {
         "summary": "Kuzu Demo Page",

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import mimetypes
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -29,6 +30,7 @@ from kdesk.application.historical_funds import HistoricalFundsService
 from kdesk.application.ledger_service import LedgerService
 from kdesk.application.position_risk_scan import normalize_position_scan_options
 from kdesk.application.relationship_expansion import AccountRelationshipExpansionCoordinator
+from kdesk.application.relationship_inspection import RelationshipInspectionService
 from kdesk.application.relationship_network import AccountRelationshipNetworkService
 from kdesk.application.relationship_process import IsolatedRelationshipRiskBuilder
 from kdesk.application.relationship_risk import AccountRelationshipRiskService
@@ -221,6 +223,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             discovery_timeout_seconds=RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
         )
     relationship_expansion = AccountRelationshipExpansionCoordinator(relationship_risk)
+    relationship_inspection = RelationshipInspectionService()
 
     copy_pool = CopyPoolMonitorService(
         CopyPoolFileSnapshotRepository(
@@ -251,6 +254,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.relationship_network = relationship_network
     app.state.relationship_risk = relationship_risk
     app.state.relationship_expansion = relationship_expansion
+    app.state.relationship_inspection = relationship_inspection
     app.state.historical_funds = historical_funds
     app.state.kuzu_demo = kuzu_demo
     app.state.kuzu_risk = kuzu_risk
@@ -482,6 +486,116 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             include_toxic,
         )
         return payload
+
+    @app.get("/api/accounts/by-login/{login}/relationship-network/node-profile")
+    async def relationship_node_profile(
+        login: str,
+        request: Request,
+        node_id: str = Query(..., min_length=1, max_length=180),
+        threshold: float = Query(12, ge=1, le=100),
+        include_toxic: bool = Query(False),
+        job_id: str | None = Query(None, max_length=120),
+        snapshot_version: int | None = Query(None, ge=0),
+    ):
+        root = _safe_login(login)
+        filters = legacy_filters(request.query_params)
+        snapshot = relationship_expansion.get_or_start(root, filters, threshold, include_toxic)
+        if snapshot_version is not None and int(snapshot.get("revision") or 0) != snapshot_version:
+            raise HTTPException(status_code=409, detail="调查快照已更新，请刷新关系图后重试")
+        entities = [item for item in snapshot.get("entities", []) if isinstance(item, dict)]
+        node = next(
+            (
+                item
+                for item in entities
+                if str(item.get("id") or "") == node_id or str(item.get("label") or "") == node_id
+            ),
+            None,
+        )
+        if node is None or str(node.get("type") or "") != "account":
+            raise HTTPException(status_code=404, detail="当前调查快照中不存在该账户节点")
+
+        now = datetime.now()
+        start = filters.get("start") or (now - timedelta(days=90)).strftime("%Y-%m-%d %H:%M:%S")
+        end = filters.get("end") or now.strftime("%Y-%m-%d %H:%M:%S")
+        node_filters = {
+            **filters,
+            "platform": str(node.get("platform") or filters.get("platform") or ""),
+            "server": str(node.get("server") or filters.get("server") or ""),
+            "start": start,
+            "end": end,
+        }
+        node_login = _safe_login(str(node.get("label") or ""))
+        results = await asyncio.gather(
+            run_in_threadpool(legacy.call, "account_risk_panels_payload", node_login, node_filters),
+            run_in_threadpool(legacy.call, "account_automation_payload", node_login, node_filters),
+            return_exceptions=True,
+        )
+        source_names = ("账户行为画像", "自动化识别")
+        limitations = list(snapshot.get("limitations") or [])
+        payloads: list[dict[str, Any] | None] = []
+        for source_name, result in zip(source_names, results, strict=True):
+            if isinstance(result, Exception):
+                logger.warning("Relationship node profile source failed source=%s login=%s: %s", source_name, node_login, result)
+                limitations.append(f"{source_name}暂时不可用，已返回其余画像结果。")
+                payloads.append(None)
+            else:
+                payloads.append(result if isinstance(result, dict) else None)
+        safe_snapshot = {**snapshot, "limitations": list(dict.fromkeys(limitations))}
+        try:
+            payload = relationship_inspection.build_node_profile(
+                root,
+                str(node.get("id") or node_id),
+                safe_snapshot,
+                payloads[0],
+                payloads[1],
+                start=start,
+                end=end,
+            )
+            payload["job_id"] = job_id
+            return payload
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/accounts/by-login/{login}/relationship-network/relation-detail")
+    async def relationship_relation_detail(
+        login: str,
+        request: Request,
+        edge_id: str = Query(..., min_length=1, max_length=220),
+        threshold: float = Query(12, ge=1, le=100),
+        include_toxic: bool = Query(False),
+        detail_page: int = Query(1, ge=1),
+        detail_limit: int = Query(50, ge=1, le=200),
+        job_id: str | None = Query(None, max_length=120),
+        snapshot_version: int | None = Query(None, ge=0),
+    ):
+        filters = legacy_filters(request.query_params)
+        snapshot = relationship_expansion.get_or_start(
+            _safe_login(login),
+            filters,
+            threshold,
+            include_toxic,
+        )
+        if snapshot_version is not None and int(snapshot.get("revision") or 0) != snapshot_version:
+            raise HTTPException(status_code=409, detail="调查快照已更新，请刷新关系图后重试")
+        try:
+            payload = relationship_inspection.build_relation_detail(
+                edge_id,
+                {
+                    **snapshot,
+                    "filters": {
+                        **(snapshot.get("filters") if isinstance(snapshot.get("filters"), dict) else {}),
+                        **filters,
+                    },
+                },
+                detail_page=detail_page,
+                detail_limit=detail_limit,
+            )
+            payload["job_id"] = job_id
+            return payload
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/kuzu-demo", response_class=HTMLResponse)
     async def kuzu_demo_page() -> HTMLResponse:

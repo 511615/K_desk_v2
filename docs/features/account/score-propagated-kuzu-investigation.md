@@ -3,15 +3,23 @@ feature_id: ACC-REL-003
 title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
-apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
-tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
+apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.0
 last_verified_date: 2026-08-24
 ---
 
 # Score-propagated Kuzu relationship investigation
+
+The investigation snapshot is also the bounded source for lazy node profiles and relation evidence.
+Profile/relation requests may carry the snapshot revision; a stale revision receives HTTP 409 instead
+of mixing evidence from different snapshots. The default profile range is the latest 90 days, while
+explicit start/end values follow the relationship investigation. Slow cross-server open/close and
+suspected-hedge matching remains an incremental background source and cannot block static relationship
+or cached profile interaction. Partial source failure is disclosed in coverage and never clears facts
+already present in the graph.
 
 ## Purpose and user entry
 

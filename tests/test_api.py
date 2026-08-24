@@ -466,6 +466,73 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
 
 
+def test_kuzu_risk_galaxy_has_lazy_profile_and_relation_evidence_ui(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+    assert page.status_code == 200
+    for marker in (
+        "relationship-network/node-profile", "relationship-network/relation-detail",
+        "AbortController", "inspectionRequestSequence", "查看账户详情",
+        "高度关联账户", "关系证据", "时间同步线索，不等同于跟单",
+    ):
+        assert marker in page.text
+
+
+def test_relationship_inspection_endpoints_read_the_current_snapshot(tmp_path: Path, monkeypatch) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    snapshot = {
+        "revision": 7,
+        "subjectId": "account:100",
+        "entities": [
+            {"id": "account:100", "type": "account", "label": "100", "isSubject": True, "databaseStatus": "M"},
+            {"id": "account:101", "type": "account", "label": "101", "databaseStatus": "P", "hops": 1},
+        ],
+        "relationships": [
+            {"id": "same-crm:100:101", "source": "account:100", "target": "account:101", "type": "same_crm_user"},
+        ],
+        "coverage": [],
+        "limitations": [],
+        "inProgress": False,
+    }
+    monkeypatch.setattr(app.state.relationship_expansion, "get_or_start", lambda *_args: snapshot)
+    monkeypatch.setattr(app.state.legacy, "call", lambda *_args: {})
+
+    with TestClient(app) as client:
+        profile = client.get(
+            "/api/accounts/by-login/100/relationship-network/node-profile",
+            params={"node_id": "account:101", "platform": "MT5", "server": "AC CN MT5"},
+        )
+        relation = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-detail",
+            params={
+                "edge_id": "same-crm:100:101",
+                "platform": "MT5",
+                "server": "AC CN MT5",
+                "start": "2026-05-24 00:00:00",
+                "end": "2026-08-24 23:59:59",
+                "job_id": "investigation-7",
+            },
+        )
+        stale = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-detail",
+            params={"edge_id": "same-crm:100:101", "snapshot_version": 6},
+        )
+
+    assert profile.status_code == 200
+    assert profile.json()["account"]["database_status"] == "P"
+    assert profile.json()["coverage"]["start"]
+    assert relation.status_code == 200
+    assert relation.json()["relations"][0]["business_name"] == "同名账户"
+    assert relation.json()["relations"][0]["time_range"] == {
+        "start": "2026-05-24 00:00:00",
+        "end": "2026-08-24 23:59:59",
+    }
+    assert relation.json()["job_id"] == "investigation-7"
+    assert "user_id" not in relation.text
+    assert stale.status_code == 409
+
+
 def test_kuzu_risk_galaxy_locator_is_independent_risk_colored_and_clickable(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 

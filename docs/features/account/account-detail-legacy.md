@@ -3,9 +3,9 @@ feature_id: ACC-DETAIL-001
 title: Legacy account detail page
 module: account
 status: active
-apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/inline-kline", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/historical-funds", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
-code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
-tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
+apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/inline-kline", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/historical-funds", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/orders"]
+code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
+tests: ["tests/test_api.py", "tests/test_relationship_inspection.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "FIN-HISTORY-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.1
 last_verified_date: 2026-08-24
@@ -27,6 +27,10 @@ profit report using the current platform/server filters. Copy and EA expose opti
 start/end controls and an explicit query action; each dialog's visible result and Excel export always
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
+
+Relationship profile and recommendation links keep the same compatible route contract:
+`/account/{login}?platform={platform}&server={server}`. The relationship workspace never invents a
+new account-detail route and does not include internal evidence keys in the link.
 All analysis controls remain visible and enabled for every confirmed account route, including an
 account with no completed order. Empty analyses report their own factual empty state (for example,
 `账户暂未做单` or no matching Comment) instead of changing the page layout or hiding the control.
