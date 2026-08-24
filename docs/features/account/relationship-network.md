@@ -202,20 +202,23 @@ both converted to the same display-currency scale before the dominance rule is e
 The Kuzu scorer uses the ACC-REL-003 strength table and evidence-family de-duplication. Returned
 money labels retain source currency and existing USD/USC normalization. A single local background
 expansion continues through score-eligible accounts rather than ending at a request-wide timer;
-equivalent requests reuse its current snapshot. Each parallel source has a six-second budget and the
+equivalent requests reuse its current snapshot. Each parallel source has a 120-second hard ceiling and the
 follow-up MT5 same-server `LastIP` read has its own three-second budget. Accounts already identified
 in the same current-LastIP cohort skip that redundant lookup. Each legacy evidence family has one
 shared local execution lane, so a late source is returned as explicit partial coverage rather than
 creating an unbounded number of timed-out worker threads. The 2,000-node/10,000-score-expansion safety
 caps remain in force. There is no request-wide discovery timer: eligible accounts keep expanding
-until the score threshold or a safety cap stops the path. Before request-scoped Kuzu materialization, the visible projection is
+until the score threshold or a safety cap stops the path. Production runs each investigation in a
+disposable child process without an investigation-wide lifetime deadline; the child isolates slow work
+from 8777 and is reclaimed when the investigation completes or fails. Before request-scoped Kuzu
+materialization, the visible projection is
 bounded to 400 entities and 1,200 relationships, prioritizing the subject and highest propagated
 scores; exceeding either cap sets `truncated=true`. Native Kuzu materialization runs in a one-at-a-time
 child process with a four-second hard deadline, so a native allocation or stall cannot retain memory in
 the 8777 account-service process. If that child is busy, fails or times out, the response preserves the
 capped pure propagation result and records `kuzuProjection` coverage failure.
 `discoveryTruncated` and `queryBudgetExhausted` report incomplete discovery. Every account evidence
-source has its own six-second wait budget; a late source returns explicit partial coverage without
+source has its own 120-second hard ceiling; a late source returns explicit partial coverage without
 preventing later eligible accounts from expanding. Toxic checks are
 restricted to nodes scored at least 30 and two cross-platform checks per request. A current `LastIP`
 is a shared-login clue, not proof of shared device ownership or historical IP use.

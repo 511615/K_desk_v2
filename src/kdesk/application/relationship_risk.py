@@ -252,6 +252,7 @@ class AccountRelationshipRiskService:
         discovery_truncated = bool(pending)
         scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated or projection_truncated
         scored["summary"]["discoveryAccountCount"] = len(visited)
+        scored["summary"]["pendingAccountCount"] = len(pending)
         labels = {item["id"]: item["label"] for item in relation_types}
         for relationship in scored["relationships"]:
             relationship["typeLabel"] = labels.get(relationship["type"], relationship["type"])
@@ -274,7 +275,7 @@ class AccountRelationshipRiskService:
                 + (f" 已达到安全账户扩散上限 {self._max_account_expansions}，保留当前图谱而不再启动更多远程读取。" if pending and len(visited) >= self._max_account_expansions else "")
                 + " 当前已接入同名账户、同服务器 LastIP、同服务器 CID、EA、跟单、返佣和 Toxic 同步订单边。",
                 f"Toxic 全平台同步订单检查已执行 {toxic_checks} 次；仅检查调查分数不低于 30 的账户，单次请求最多 {MAX_TOXIC_CHECKS} 次，避免对低分外围节点进行无界全库扫描。",
-                f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱，不会无限等待。" if query_budget_exhausted else "关系扩散已完成：所有达到阈值的节点均已处理，或已达到安全节点上限。",
+                f"本次关系发现查询预算为 {self._discovery_timeout_seconds:g} 秒；超过预算时返回已完成的部分图谱。" if query_budget_exhausted else "关系扩散不设总时限：所有达到阈值的节点均已处理，或已达到明确的安全节点上限。",
                 *[
                     f"{item['source']} 查询失败：{item['reason']}"
                     for item in failed

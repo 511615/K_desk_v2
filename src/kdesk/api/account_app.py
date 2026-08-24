@@ -52,10 +52,13 @@ from kdesk.settings import settings as default_settings
 
 logger = logging.getLogger("kdesk.account")
 
-# Relationship discovery can start multiple read-only CRM/MT source calls. Keep this
-# request-scoped budget short so one broad account cluster cannot monopolise 8777.
-RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS = 30.0
-RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 6.0
+# Relationship discovery runs behind a single-flight background coordinator. Do
+# not impose a request-wide deadline: slow, valid database reads may take minutes
+# and must be allowed to finish while the HTTP/UI thread remains responsive. A
+# generous per-source hard ceiling still prevents one permanently stuck adapter
+# from blocking the sole relationship worker forever.
+RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS: float | None = None
+RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 120.0
 
 
 class CopyPoolControlsRequest(BaseModel):

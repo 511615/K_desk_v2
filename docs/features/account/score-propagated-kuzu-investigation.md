@@ -156,13 +156,13 @@ family retains its maximum, while independent families combine with noisy-OR. Sa
 current LastIP `0.90`, EA and Copy order `0.80`, Copy group `0.75`, rebate `0.70`, Toxic same/open
 close sync `0.78`, Toxic opposite sync `0.82`, same name `0.35`, unknown `0.30`. The live path
 recursively reads relations while a node remains at or above the selected threshold. The live account
-path has a 30-second request-wide discovery budget, a 48-account remote-expansion cap and a
+path has no request-wide discovery deadline, but retains a 48-account remote-expansion cap and a
 150-account direct-IB-branch cap; these return an explicitly truncated partial graph rather than
-allowing one broad cluster to block 8777. Each account evidence source has a six-second wait budget.
+allowing one broad cluster to grow without bounds. Each account evidence source has a 120-second hard ceiling.
 The optional cross-account trade detector runs only for nodes at least 30 and has a two-check budget.
 It scans the configured AC/DBG MT4+MT5 sources in one bounded batch per account, reports partial source
 coverage, and emits at most one edge per peer and detection type. Each evidence read has its own
-six-second source timeout; a source failure is retained in coverage but does not stop later eligible
+120-second source timeout; a source failure is retained in coverage but does not stop later eligible
 accounts. A started same-server `LastIP` or current MT5 `ClientID` follow-up has a separate three-second maximum wait. The
 result is produced by one local background expansion and equivalent page polls join it instead of
 launching duplicate scans. Accounts in the same current-LastIP/CID cohort skip repeat cohort reads.
@@ -271,17 +271,18 @@ running, queued and completed counts so resource pressure is observable without 
 In production, each admitted investigation runs inside one disposable spawned process. Remote-source
 threads, legacy payloads, parsing caches and native allocations therefore belong to that child and are
 released by Windows when the investigation completes. The 8777 process receives only normalized progress
-and final graph snapshots. A 45-second hard process deadline terminates stale source work; if progress was
-already returned, the current partial graph remains available with explicit truncated coverage. Test and
-development profiles retain the injectable in-process builder for deterministic source tests.
+and final graph snapshots. There is no investigation-wide child-process deadline: slow but valid reads may
+finish without blocking 8777. Each individual evidence source retains its finite hard ceiling, and account,
+node and relationship budgets still bound the investigation. Test and development profiles retain the
+injectable in-process builder for deterministic source tests.
 
 ## Tests and acceptance
 
 Unit tests cover recursive source expansion through its score threshold, one final Kuzu materialization,
 single-flight pollable progress, redundant same-IP cohort lookup avoidance, bounded same-IP timeout,
 resident-job admission control, non-deep-copy polling, throttled progress materialization,
-production process isolation, progress forwarding and forced termination of a stuck child,
-Kuzu projection caps and process timeout termination, threshold stopping, noisy-OR, de-duplication,
+production process isolation, progress forwarding and optional finite-timeout termination tests,
+Kuzu projection caps, threshold stopping, noisy-OR, de-duplication,
 cycles, same-IP and Toxic evidence ledger construction, and risk colour. Repository tests cover
 request-scoped Kuzu materialization/readback.
 API tests cover account-route replacement, page request targeting and invalid thresholds. Source tests use

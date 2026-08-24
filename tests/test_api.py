@@ -45,13 +45,13 @@ def make_test_settings(tmp_path: Path) -> Settings:
     )
 
 
-def test_account_relationship_runtime_keeps_ea_read_budget_inside_the_global_deadline(tmp_path: Path) -> None:
+def test_account_relationship_runtime_allows_long_background_reads_without_a_global_deadline(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
-    assert RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS == 30.0
-    assert RELATIONSHIP_SOURCE_TIMEOUT_SECONDS == 6.0
-    assert app.state.relationship_risk._discovery_timeout_seconds == 30.0
-    assert app.state.relationship_network._source_timeout_seconds == 6.0
+    assert RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS is None
+    assert RELATIONSHIP_SOURCE_TIMEOUT_SECONDS == 120.0
+    assert app.state.relationship_risk._discovery_timeout_seconds is None
+    assert app.state.relationship_network._source_timeout_seconds == 120.0
 
 
 def test_production_relationship_runtime_uses_a_disposable_process(tmp_path: Path) -> None:
@@ -61,6 +61,7 @@ def test_production_relationship_runtime_uses_a_disposable_process(tmp_path: Pat
 
     assert isinstance(app.state.relationship_risk, IsolatedRelationshipRiskBuilder)
     assert app.state.relationship_expansion._risk_builder is app.state.relationship_risk
+    assert app.state.relationship_risk._process_timeout_seconds is None
 
 
 def test_health_and_ledger_api_are_isolated(tmp_path: Path) -> None:
@@ -523,6 +524,9 @@ def test_kuzu_risk_defaults_to_the_current_focus_workspace(tmp_path: Path) -> No
     assert "function waitForNextPoll" in page.text
     assert "state==='busy'?3000:2000" in page.text
     assert "document.hidden" in page.text
+    assert "for(;;)" in page.text
+    assert "poll<120" not in page.text
+    assert "elapsedSeconds" in page.text
     assert "graph_type','galaxy'" in page.text
     assert "expandedGroups:new Set()" in page.text
     assert "可以直接点击图中虚线圈的边缘" in page.text

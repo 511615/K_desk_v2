@@ -21,7 +21,7 @@ def _relationship_worker(
     filters: dict[str, str],
     threshold: float,
     include_toxic: bool,
-    discovery_timeout_seconds: float,
+    discovery_timeout_seconds: float | None,
     source_timeout_seconds: float,
 ) -> None:
     """Build one graph in a disposable process so native/query allocations leave with it."""
@@ -71,12 +71,16 @@ class IsolatedRelationshipRiskBuilder:
         self,
         settings: Settings,
         *,
-        discovery_timeout_seconds: float,
+        discovery_timeout_seconds: float | None,
         source_timeout_seconds: float,
-        process_timeout_seconds: float = 45.0,
+        process_timeout_seconds: float | None = None,
         worker_target: Any = _relationship_worker,
     ) -> None:
-        if discovery_timeout_seconds <= 0 or source_timeout_seconds <= 0 or process_timeout_seconds <= 0:
+        if discovery_timeout_seconds is not None and discovery_timeout_seconds <= 0:
+            raise ValueError("relationship discovery timeout must be positive when configured")
+        if source_timeout_seconds <= 0:
+            raise ValueError("relationship source timeout must be positive")
+        if process_timeout_seconds is not None and process_timeout_seconds <= 0:
             raise ValueError("relationship process limits must be positive")
         self._settings = settings
         self._discovery_timeout_seconds = discovery_timeout_seconds
@@ -110,12 +114,17 @@ class IsolatedRelationshipRiskBuilder:
             daemon=False,
         )
         latest_progress: dict[str, Any] | None = None
-        deadline = time.monotonic() + self._process_timeout_seconds
+        deadline = (
+            None
+            if self._process_timeout_seconds is None
+            else time.monotonic() + self._process_timeout_seconds
+        )
         try:
             process.start()
-            while time.monotonic() < deadline:
+            while deadline is None or time.monotonic() < deadline:
                 try:
-                    kind, value = result_queue.get(timeout=min(0.5, max(deadline - time.monotonic(), 0.01)))
+                    timeout = 0.5 if deadline is None else min(0.5, max(deadline - time.monotonic(), 0.01))
+                    kind, value = result_queue.get(timeout=timeout)
                 except Empty:
                     if not process.is_alive():
                         break
@@ -129,7 +138,7 @@ class IsolatedRelationshipRiskBuilder:
                     return value
                 raise RuntimeError(str(value) or "关系隔离进程执行失败")
 
-            if latest_progress is not None:
+            if deadline is not None and latest_progress is not None:
                 limitations = list(latest_progress.get("limitations") or [])
                 limitations.append(
                     f"关系隔离进程达到 {self._process_timeout_seconds:g} 秒硬上限；已保留当前部分结果并回收进程内存。"
@@ -141,9 +150,11 @@ class IsolatedRelationshipRiskBuilder:
                     "discoveryTruncated": True,
                     "queryBudgetExhausted": True,
                 }
-            raise RuntimeError(
-                f"关系隔离进程在 {self._process_timeout_seconds:g} 秒内没有返回可用证据"
-            )
+            if deadline is not None:
+                raise RuntimeError(
+                    f"关系隔离进程在 {self._process_timeout_seconds:g} 秒内没有返回可用证据"
+                )
+            raise RuntimeError("关系隔离进程意外结束，且没有返回可用证据")
         finally:
             if process.is_alive():
                 process.terminate()

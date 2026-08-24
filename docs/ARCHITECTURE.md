@@ -48,8 +48,8 @@ account's source facts only while its propagated score meets the threshold; pure
 remains in domain code. `AccountRelationshipExpansionCoordinator` owns one bounded background
 expansion at a time and returns an in-progress snapshot for polling, so remote evidence discovery
 does not occupy an account HTTP request. Discovery continues until the propagated threshold is met
-or the existing 2,000-node/10,000-score-expansion safety limits apply; every parallel source has a
-six-second wait budget and the MT5 shared-LastIP follow-up has a separately clamped three-second
+or the existing 2,000-node/10,000-score-expansion safety limits apply. There is no request-wide
+deadline. Every parallel source has a 120-second hard ceiling and the MT5 shared-LastIP follow-up has a separately clamped three-second
 budget. Accounts already proven to belong to the same current-LastIP cohort do not repeat that
 lookup. `AccountRelationshipNetworkService` gives each legacy evidence source one shared execution
 lane, so a timed-out EA, Copy or CRM call cannot accumulate a new orphan thread for every expanded

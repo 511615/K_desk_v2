@@ -151,6 +151,8 @@ def test_relationship_expansion_runs_once_in_the_background_and_returns_progress
         assert started.wait(0.5)
         duplicate = coordinator.get_or_start("100", {"platform": "MT5", "server": "AC CN MT5"}, 12, False)
         assert duplicate["inProgress"] is True
+        assert duplicate["progress"]["elapsedSeconds"] >= 0
+        assert "慢数据源" in duplicate["progress"]["message"]
         release.set()
         deadline = time.monotonic() + 1
         completed = duplicate

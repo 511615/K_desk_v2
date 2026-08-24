@@ -62,12 +62,15 @@ class AccountRelationshipExpansionCoordinator:
             job["accessedAt"] = time.monotonic()
             snapshot = dict(job["snapshot"])
             snapshot["revision"] = int(job["revision"])
-            progress = snapshot.get("progress")
-            if isinstance(progress, dict):
+            if snapshot.get("inProgress"):
+                progress = snapshot.get("progress")
+                if not isinstance(progress, dict):
+                    progress = {}
                 snapshot["progress"] = {
                     **progress,
                     "elapsedSeconds": round(max(time.monotonic() - float(job["startedAt"]), 0.0), 1),
                     "secondsSinceUpdate": round(max(time.monotonic() - float(job["updatedAt"]), 0.0), 1),
+                    "message": "后台查询仍在运行；慢数据源会继续等待，页面和其他功能不受阻塞。",
                 }
             return snapshot
 
@@ -107,7 +110,18 @@ class AccountRelationshipExpansionCoordinator:
 
         try:
             final = self._risk_builder.build(login, filters, threshold, include_toxic=include_toxic, on_progress=update)
-            snapshot = {**final, "inProgress": False, "progress": {"state": "complete", "expandedAccounts": int((final.get("summary") or {}).get("discoveryAccountCount") or 0), "pendingAccounts": 0}}
+            summary = final.get("summary") or {}
+            pending_accounts = int(summary.get("pendingAccountCount") or 0)
+            truncated = bool(final.get("discoveryTruncated"))
+            snapshot = {
+                **final,
+                "inProgress": False,
+                "progress": {
+                    "state": "truncated" if truncated else "complete",
+                    "expandedAccounts": int(summary.get("discoveryAccountCount") or 0),
+                    "pendingAccounts": pending_accounts,
+                },
+            }
         except Exception:
             snapshot = {
                 "ok": False, "account": login, "filters": dict(filters), "entities": [], "relationships": [],
