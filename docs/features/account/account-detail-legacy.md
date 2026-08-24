@@ -3,12 +3,12 @@ feature_id: ACC-DETAIL-001
 title: Legacy account detail page
 module: account
 status: active
-apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/historical-funds", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
+apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET /api/accounts/by-login/{login}/inline-kline", "GET /api/accounts/by-login/{login}/risk-panels", "GET /api/accounts/by-login/{login}/historical-funds", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/orders"]
 code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
 tests: ["tests/test_api.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "FIN-HISTORY-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.0
-last_verified_date: 2026-08-19
+last_verified_version: 2.1.1
+last_verified_date: 2026-08-24
 ---
 
 # Legacy account detail page
@@ -27,6 +27,17 @@ profit report using the current platform/server filters. Copy and EA expose opti
 start/end controls and an explicit query action; each dialog's visible result and Excel export always
 use the same range. It is intentionally not replaced by the
 Vue AccountPage.
+After a unique platform/server source with completed orders loads, a `交易 K 线` section appears
+immediately above `所有订单`. It directly requests the latest 300 completed buy/sell orders together
+with current positions and their read-only M1 quotes from the account service, then embeds the
+Lightweight Chart in place. Current positions retain their real opening node and extend their holding
+line to the latest cached M1 quote; their floating result is not included in closed-order Profit bars.
+The
+page key includes the selected route and latest-order version; the response is locally cached for a
+short interval so a panel refresh does not repeat the quote read. This direct display never submits
+a durable job, never waits on port `8766`, and never creates a chart HTML artifact. The existing
+manual chart controls remain available, unchanged, for full-history, symbol-scoped and
+funds-timeline charts.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
 ledger. It reuses the read-only account lookup route. When the Login exists on multiple platforms or
 servers, a source-selection dialog lists every candidate and the user must choose one before
@@ -83,6 +94,11 @@ the rest of the account page.
 ## API contract
 
 The HTML URL and supporting detail/risk API response structures remain backward compatible.
+`GET /api/accounts/by-login/{login}/inline-kline` accepts the selected `platform`, `server` and a
+bounded `recentOrders=1..300`, returning a direct chart document with private 60-second HTTP cache
+semantics. It adds no job ID or artifact URL. `POST /api/kline/generate-from-db` remains compatible
+with its additive `recentOrders` and `cacheVersion` fields for manual callers, but the detail page
+does not automatically call it.
 The additive relationship-network response is governed by `ACC-REL-001`.
 The additive historical-funds response is governed by `FIN-HISTORY-001` and accepts the existing
 platform/server selection; it deliberately ignores the page symbol filter because funding history is
@@ -109,6 +125,10 @@ MT5 reversal/out-by deals (`Entry` 2/3) that have no standard open/close pair re
 zero-duration factual trade row; they are not discarded as an empty account.
 The account-source lookup includes those entries before conversion, so the detail page cannot report
 an empty account solely because its available execution uses an `Entry` 2/3 form.
+The inline chart uses the selected source's configured read-only quote provider and the same
+alignment/mapping rules as `KLN-RENDER-001`. It visibly identifies a fallback quote provider rather
+than presenting it as a same-server source. It may refresh only the bounded local M1 quote cache;
+it does not write an order, remote database, MT4/MT5 Manager state, job row or generated HTML file.
 
 ## Business rules and units
 
@@ -125,6 +145,8 @@ Panels load independently where supported. A failed panel shows its own reason a
 the complete page or leave a false 100% progress state. A cold read of the normal account detail
 and risk-panel APIs must return complete results within 10 seconds; a warm read must not be used to
 hide a cold-path regression.
+An unavailable inline quote source degrades only the inline frame with its explicit reason; orders,
+metrics and the manual K-line controls remain usable.
 The legacy source-notes text is optional once the compatibility workbook exists. If it is absent,
 the detail API treats it as empty source input and continues to serve the stored ledger; it never
 creates the file during a read request.
@@ -156,6 +178,10 @@ DBG CN MT5 account 2014201 is the no-comment EA-route sample: the dialog must li
 keeping the EA headline at zero groups.
 New AC GB MT5 account 954059 must render with `MT5 / AC GB MT5` and zero orders, rather than an
 unidentified platform, before its first deal is recorded.
+For a completed source, the detail HTML includes `inlineKlineFrame` directly above `所有订单` and
+loads it through the 8777 inline endpoint without submitting `/api/kline/generate-from-db`. A
+read-only `647773 / MT5 / AC GB MT5` verification must return a Lightweight Charts document from
+the direct endpoint.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
 The detail HTML includes the top-right Login search form, its status region and source-aware lookup

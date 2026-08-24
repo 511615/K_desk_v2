@@ -2428,6 +2428,36 @@ class OrderListTests(unittest.TestCase):
         self.assertIn('id="accountSourceDialog"', html)
         self.assertIn("matches.length>1", html)
 
+    def test_account_detail_embeds_a_bounded_direct_kline_without_a_job_submission(self):
+        html = app.ACCOUNT_DETAIL_HTML
+        self.assertIn('id="inlineKlineFrame"', html)
+        self.assertIn("async function loadInlineKline()", html)
+        self.assertIn("recentOrders:'300'", html)
+        self.assertIn("/inline-kline?${query}", html)
+        self.assertIn("loadInlineKline();", html)
+        self.assertNotIn("async function autoLoadKline()", html)
+
+    def test_recent_chartable_kline_trades_use_latest_completed_orders(self):
+        rows = [
+            {"ticket": "old", "type": "buy", "open_time": "2026-08-01 10:00:00", "close_time": "2026-08-01 10:01:00"},
+            {"ticket": "open", "type": "buy", "open_time": "2026-08-04 10:00:00", "close_time": ""},
+            {"ticket": "new", "type": "sell", "open_time": "2026-08-03 10:00:00", "close_time": "2026-08-03 10:01:00"},
+        ]
+        selected = app.recent_chartable_kline_trades(rows, 1)
+        self.assertEqual([row["ticket"] for row in selected], ["new"])
+
+    def test_inline_kline_keeps_current_positions_beside_the_bounded_closed_window(self):
+        closed = [
+            {"ticket": "old", "type": "buy", "open_time": "2026-08-01 10:00:00", "close_time": "2026-08-01 10:01:00"},
+            {"ticket": "new", "type": "sell", "open_time": "2026-08-03 10:00:00", "close_time": "2026-08-03 10:01:00"},
+        ]
+        current = [{"ticket": "open", "type": "buy", "open_time": "2026-08-04 10:00:00", "is_open_position": True}]
+
+        selected = app.inline_kline_trade_rows(closed, current, 1)
+
+        self.assertEqual([row["ticket"] for row in selected], ["new", "open"])
+        self.assertTrue(selected[-1]["is_open_position"])
+
     def test_account_detail_embedded_script_has_valid_javascript(self):
         script = re.search(r"<script>(.*?)</script>", app.ACCOUNT_DETAIL_HTML, re.DOTALL)
         self.assertIsNotNone(script)

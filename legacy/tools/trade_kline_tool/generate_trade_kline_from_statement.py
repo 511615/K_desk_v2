@@ -19,17 +19,21 @@ PYDEPS = Path(os.environ.get("TRADE_KLINE_PYDEPS", DEFAULT_PYDEPS))
 if PYDEPS.exists():
     sys.path.insert(0, str(PYDEPS))
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:  # offline cache rendering must work without the terminal package
+    mt5 = None
 import numpy as np
 import pandas as pd
 
-from build_enhanced_trade_kline_from_cache import build_html, safe_name
-from fused_trade_kline_features import enhance_trade_kline_html
+from build_enhanced_trade_kline_from_cache import safe_name
+from lightweight_trade_kline import build_lightweight_html
+from position_fused_trade_kline import fallback_position_meta, load_position_meta
 from kdesk.application.kline_generation import generation_result, missing_same_source_failure, symbol_failure
 from kdesk.domain.kline import (
     canonical_symbol,
     confidence_for,
-    endpoint_check,
+    execution_endpoint_check,
     symbol_candidates,
     validation_metrics,
     validation_passes,
@@ -41,7 +45,7 @@ DEFAULT_OUT_DIR = LEGACY_RISK_ROOT / "output_data" if LEGACY_RISK_ROOT.exists() 
 OUT_DIR = Path(os.environ.get("TRADE_KLINE_OUT_DIR", DEFAULT_OUT_DIR))
 TERMINAL = os.environ.get("TRADE_KLINE_TERMINAL", r"C:\Program Files\AC Capital Market MT5 Terminal\terminal64.exe")
 TIMEFRAME_LABEL = "M1"
-MT5_TIMEFRAME = mt5.TIMEFRAME_M1
+MT5_TIMEFRAME = getattr(mt5, "TIMEFRAME_M1", 1)
 
 
 class SymbolValidationError(RuntimeError):
@@ -389,18 +393,21 @@ def _evaluate_alignment(mt5_symbol: str, sample: pd.DataFrame, hour_delta: int) 
             bar = min(rates, key=lambda row: abs(int(row["time"]) - target))
             if abs(int(bar["time"]) - target) > 60:
                 continue
-            check = endpoint_check(
+            endpoint = "open" if time_column == "Open Time" else "close"
+            check = execution_endpoint_check(
                 float(trade[price_column]),
                 float(bar["low"]),
                 float(bar["high"]),
                 point=point,
                 spread_points=float(bar["spread"]),
+                trade_type=str(trade.get("Type", "")),
+                endpoint=endpoint,
             )
             checks.append(check)
             evidence.append(
                 {
                     "ticket": str(trade.get("Ticket", "")),
-                    "endpoint": "open" if time_column == "Open Time" else "close",
+                    "endpoint": endpoint,
                     "inside": check.inside,
                     "distance": check.distance,
                     "normalizedDistance": check.normalized_distance,
@@ -467,6 +474,7 @@ def choose_by_m1_envelope(
         "max_distance_to_m1_range": float(best["maxNormalizedDistance"]),
         "validation_status": "accepted",
         "confidence": confidence_for(best, fallback=fallback_source),
+        "endpoint_price_basis": "direction-aware bid/ask M1 envelope",
         "fallback_source": fallback_source,
     }
     align = pd.DataFrame(
@@ -548,7 +556,8 @@ def make_price_check_from_bars(report_symbol: str, sample: pd.DataFrame, bars: p
                     "M1 High": float(row["high"]),
                     "M1 Low": float(row["low"]),
                     "M1 Close": float(row["close"]),
-                    "Open Price Distance To M1 Range": distance_to_bar(float(tr["Open Price"]), row),
+                    "M1 Spread Points": float(row.get("spread", 0) or 0),
+                    "Open Price Distance To Bid M1 Range": distance_to_bar(float(tr["Open Price"]), row),
                 }
             )
         rows.append(out)
@@ -581,6 +590,8 @@ def main() -> None:
     parser.add_argument("--platform", default="", help="Order platform used to select a same-source provider.")
     parser.add_argument("--server", default="", help="Order server used to select a same-source provider.")
     parser.add_argument("--timeline-json", default="", help="Optional factual Balance/Credit replay payload for standalone chart display.")
+    parser.add_argument("--offline-cache", action="store_true", help="Render only from an existing M1 quote cache/mapping; never initialize MT5.")
+    parser.add_argument("--quote-cache-dir", default="", help="Directory containing the existing *_quote_cache_*.csv files (defaults to --out-dir).")
     parser.add_argument("--mt5-timeout", type=int, default=10000, help="MT5 initialize timeout in milliseconds.")
     parser.add_argument("--symbols", default="", help="Comma/space separated report symbols to generate, for example XAUUSD.PRO,EURUSD.PRO.")
     parser.add_argument("--start", default="", help="Only include trades overlapping this report-time start, e.g. 2026-06-01 00:00.")
@@ -632,6 +643,36 @@ def main() -> None:
     successful_symbols: list[dict] = []
     quote_sources: dict[str, dict] = {}
     symbol_groups = sorted(trades.groupby("Item", sort=True), key=lambda item: len(item[1]), reverse=True)
+    if args.offline_cache:
+        from build_enhanced_trade_kline_from_cache import apply_display_price_alignment, load_bars_for_symbol
+
+        cache_dir = Path(args.quote_cache_dir or args.out_dir)
+        mapping_path = cache_dir / f"{stem}_mapping.json"
+        if not mapping_path.exists():
+            raise SystemExit(f"QUOTE_CACHE_REQUIRED: missing mapping file {mapping_path}")
+        mapping_by_symbol.update(json.loads(mapping_path.read_text(encoding="utf-8")))
+        for report_symbol, group in symbol_groups:
+            mapping = mapping_by_symbol.get(report_symbol) or {}
+            if mapping.get("validation_status") == "rejected" or not mapping.get("mt5_symbol"):
+                failures.append(symbol_failure(report_symbol, stage="cache", code="QUOTE_CACHE_REJECTED", quote_sources=[], metrics={}, reason="缓存映射被拒绝"))
+                continue
+            try:
+                bars = load_bars_for_symbol(cache_dir, stem, report_symbol, mapping)
+                bars = apply_display_price_alignment(report_symbol, bars, group, mapping)
+                mapping.setdefault("provider", "external-cache")
+                mapping.setdefault("provider_server", "external quote cache")
+                mapping["render_mode"] = "offline-cache"
+                mapping_by_symbol[report_symbol] = mapping
+                bars_by_symbol[report_symbol] = bars
+                successful_symbols.append({"symbol": report_symbol, "mappedSymbol": mapping["mt5_symbol"], "provider": mapping.get("provider"), "server": mapping.get("provider_server"), "confidence": mapping.get("confidence"), "validationStatus": "accepted"})
+            except Exception as exc:
+                failures.append(symbol_failure(report_symbol, stage="cache", code="QUOTE_CACHE_MISSING", quote_sources=[], metrics={}, reason=str(exc)))
+        if mt5 is None:
+            print("offline cache mode: MetaTrader5 package not required")
+    elif mt5 is None:
+        raise SystemExit("MT5_PACKAGE_REQUIRED: install MetaTrader5 or use --offline-cache")
+    if args.offline_cache:
+        symbol_groups = []
     for report_symbol, group in symbol_groups:
         group = group.sort_values("Open Time").reset_index(drop=True)
         platforms = sorted({str(value).strip() for value in group.get("Platform", pd.Series(dtype=str)).dropna() if str(value).strip()})
@@ -769,11 +810,19 @@ def main() -> None:
     html_path = OUT_DIR / f"{stem}_trade_kline.html"
     if bars_by_symbol:
         chart_trades = trades[trades["Item"].isin(bars_by_symbol)].copy()
-        html = enhance_trade_kline_html(
-            build_html(account, stem, chart_trades, bars_by_symbol, mapping_by_symbol),
-            statement,
+        try:
+            position_meta = load_position_meta(statement, chart_trades)
+        except Exception as exc:
+            position_meta = fallback_position_meta(chart_trades, statement)
+            position_meta["positionMetaWarning"] = str(exc)
+        html = build_lightweight_html(
+            account,
+            stem,
             chart_trades,
-            timeline,
+            bars_by_symbol,
+            mapping_by_symbol,
+            position_meta=position_meta,
+            timeline=timeline,
         )
         html_path.write_text(html, encoding="utf-8")
 

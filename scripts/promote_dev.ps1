@@ -24,8 +24,8 @@ foreach ($root in @($ProductionRoot, $DevelopmentRoot)) {
     }
 }
 
-$mainBranch = (Invoke-Git -Root $ProductionRoot -Arguments @('branch', '--show-current'))[0].Trim()
-$devBranch = (Invoke-Git -Root $DevelopmentRoot -Arguments @('branch', '--show-current'))[0].Trim()
+$mainBranch = (Invoke-Git -Root $ProductionRoot -Arguments @('branch', '--show-current') | Select-Object -First 1).Trim()
+$devBranch = (Invoke-Git -Root $DevelopmentRoot -Arguments @('branch', '--show-current') | Select-Object -First 1).Trim()
 if ($mainBranch -ne 'main') { throw "Production worktree must be on main, found '$mainBranch'." }
 if ($devBranch -ne 'dev') { throw "Development worktree must be on dev, found '$devBranch'." }
 
@@ -46,8 +46,8 @@ if ($LASTEXITCODE -ne 0) {
     throw 'dev is not based on the current main. Fast-forward dev from main and verify again.'
 }
 
-$mainSha = (Invoke-Git -Root $ProductionRoot -Arguments @('rev-parse', 'main'))[0].Trim()
-$devSha = (Invoke-Git -Root $DevelopmentRoot -Arguments @('rev-parse', 'dev'))[0].Trim()
+$mainSha = (Invoke-Git -Root $ProductionRoot -Arguments @('rev-parse', 'main') | Select-Object -First 1).Trim()
+$devSha = (Invoke-Git -Root $DevelopmentRoot -Arguments @('rev-parse', 'dev') | Select-Object -First 1).Trim()
 if ($mainSha -eq $devSha) {
     Write-Output "No promotion required: main and dev already point to $mainSha."
     exit 0
@@ -55,7 +55,7 @@ if ($mainSha -eq $devSha) {
 
 Invoke-Git -Root $ProductionRoot -Arguments @('branch', '-f', 'back', $mainSha) | Out-Null
 Invoke-Git -Root $ProductionRoot -Arguments @('merge', '--ff-only', 'dev') | Out-Null
-$promotedSha = (Invoke-Git -Root $ProductionRoot -Arguments @('rev-parse', 'main'))[0].Trim()
+$promotedSha = (Invoke-Git -Root $ProductionRoot -Arguments @('rev-parse', 'main') | Select-Object -First 1).Trim()
 if ($promotedSha -ne $devSha) { throw 'Promotion completed with an unexpected main revision.' }
 
 Write-Output "Promotion ready: back=$mainSha main=$promotedSha dev=$devSha"

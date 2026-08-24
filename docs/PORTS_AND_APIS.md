@@ -41,6 +41,10 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 ### Account analytics
 
 - `GET /api/accounts/by-login/{login}/detail`
+- `GET /api/accounts/by-login/{login}/inline-kline` - selected `platform`/`server` plus bounded
+  `recentOrders=1..300`; returns the direct, read-only Lightweight Chart document from 8777 with
+  private 60-second caching. It creates neither a durable job nor an output artifact and never
+  calls 8766.
 - `GET /api/accounts/by-login/{login}/risk-panels`
 - `GET /api/accounts/by-login/{login}/historical-funds` - full account-wide read-only replay of
   trade, balance, Credit and daily-anchor facts for the selected platform/server; external cashflow,

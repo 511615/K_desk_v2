@@ -1185,7 +1185,8 @@ POSITION_SYMBOL_MULTIPLIERS = (DATA.positionMeta && DATA.positionMeta.symbolMult
 
 
 def main() -> None:
-    from build_enhanced_trade_kline_from_cache import build_html, infer_stem, load_bars_for_symbol
+    from build_enhanced_trade_kline_from_cache import infer_stem, load_bars_for_symbol
+    from lightweight_trade_kline import build_lightweight_html
 
     trades_path = TRADES
     stem = infer_stem(trades_path)
@@ -1196,7 +1197,6 @@ def main() -> None:
         report_symbol: load_bars_for_symbol(trades_path.parent, stem, report_symbol, item)
         for report_symbol, item in mapping.items()
     }
-    html = build_html(account, stem, trades, bars_by_symbol, mapping)
     report_html = OUT_DIR / f"ReportHistory-{account}.html"
     meta = load_position_meta(report_html, trades) if report_html.exists() else {
         "initialBalance": 10000.0,
@@ -1205,8 +1205,9 @@ def main() -> None:
         "symbolMultipliers": {},
         "reportHtml": "",
     }
-    html = inject_fused_features(html)
-    html = inject_position_meta(html, meta)
+    # The Lightweight renderer receives position metadata as part of its
+    # payload; no canvas-string injection is needed.
+    html = build_lightweight_html(account, stem, trades, bars_by_symbol, mapping, position_meta=meta)
     OUT_HTML.write_text(html, encoding="utf-8")
     print(OUT_HTML)
 

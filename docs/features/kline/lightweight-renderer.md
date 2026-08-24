@@ -1,0 +1,103 @@
+---
+feature_id: KLN-RENDER-001
+title: Lightweight Charts trade renderer
+module: kline
+status: active
+apis: ["GET /api/accounts/by-login/{login}/inline-kline", "POST /api/kline/generate-from-db", "GET /output/{name}"]
+code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
+tests: ["tests/test_lightweight_trade_kline.py"]
+depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
+last_verified_version: 2.1.1
+last_verified_date: 2026-08-24
+---
+
+# Lightweight Charts trade renderer
+
+## Purpose and user entry
+
+Replace the legacy canvas renderer while retaining the established trade evidence payload. The
+generated artifact is opened from the existing K-line task result or `/output/{name}`. The legacy
+account detail can also render the same document directly above its order table through 8777,
+without creating a task artifact.
+
+## UI and behavior
+
+The artifact keeps symbol selection, compressed/real time axis, order count limit, buy/sell and close
+markers, holding lines, Profit/volume/position panes, filters, time-window positioning, summary
+metrics, order table and optional funds-event replay. Lightweight Charts supplies native crosshair,
+pan, zoom and responsive resize behavior.
+
+## API contract
+
+No existing endpoint or artifact name changes. `GET /api/accounts/by-login/{login}/inline-kline`
+is an additive 8777 route with `platform`, `server` and `recentOrders=1..300`; it returns the
+direct HTML with private 60-second caching and no job/artifact identifier. The generator accepts
+`--offline-cache` and `--quote-cache-dir` as additive CLI options.
+
+## Data, routing and read-only constraints
+
+The renderer consumes normalized trades, cached/external M1 bars and mapping metadata. It never
+imports MetaTrader5, opens a Terminal connection, or writes a remote database. Quote ingestion stays
+in the upstream read-only adapter. The inline account adapter may refresh its bounded local M1 quote
+cache before calling the renderer; it does not create an HTML artifact or a durable K-line job.
+
+## Business rules and units
+
+The account, symbol, cent-account scaling, price correction, time mode, missing-minute handling and
+timeline fields use the existing contracts. Profit, volume and holding filters use the existing
+normalized order columns.
+
+## Loading, empty and failure behavior
+
+`--offline-cache` fails with `QUOTE_CACHE_REQUIRED` when the mapping is missing and records
+`QUOTE_CACHE_MISSING` for an individual missing symbol cache. The browser remains usable for symbols
+whose cache was accepted.
+
+## Code and dependencies
+
+The renderer is `lightweight_trade_kline.py` and loads pinned Lightweight Charts 5.0.8 in the
+artifact. It shares cache normalization helpers with the legacy generator.
+
+## Tests and acceptance
+
+`tests/test_lightweight_trade_kline.py` verifies series, markers, filters, timeline payload and the
+absence of an MT5 dependency in rendered HTML. Python compilation and the existing K-line tests must
+pass before promotion.
+
+## Compatibility and deprecation
+
+Existing API paths, artifact names and payload fields remain unchanged. Production ports are not
+changed by this feature; promotion requires separate parity verification and cutover.
+
+The current renderer follows the supplied production artifact's interaction contract: paired
+`隐藏停盘 / 显示停盘` controls, display limit in the toolbar, filters on their own row, overlay pane
+switcher, range status, original order-table columns and position snapshot cards. Nodes keep the
+legacy semantics without ticket text: directional triangles, close squares and dashed holding lines.
+The presentation uses the dark TradingView-style palette; marker colors are light/blue/purple only
+to preserve contrast on that dark surface. Trade nodes are rendered in a transparent overlay using
+the order's normalized open/close plot price and the chart time coordinate. Buy/sell triangles are
+small (4px side, 7px height) and sit on the exact execution quote rather than using the native
+`aboveBar`/`belowBar` placement; close squares use the exact close quote. The overlay is repositioned
+after fit, pan, zoom and resize so nodes remain attached to their quotes.
+The marker overlay is a child of the exact Lightweight Charts host, rather than a sibling of the
+chart shell. Its x/y coordinates therefore share the candle canvas origin and price scale when the
+browser lays out the right axis, preventing a horizontal left shift of evidence nodes.
+
+The Profit indicator uses one symmetric absolute-value scale for positive and negative values and a
+shared dashed zero baseline. Profit bars are therefore anchored to the same baseline; positive bars
+extend upward and negative bars downward with equal visual magnitude.
+
+Holding lines use a higher-contrast purple (`rgba(192,145,255,alpha)`) with density-aware opacity
+from 0.58 to 0.92 and a minimum width of 1.25px, so the legacy dashed evidence remains readable on
+the dark TradingView-style background.
+
+M1 timestamps identify the start of a one-minute interval. Orders map to their containing M1 bar
+(the most recent bar at or before the trade time), while the buy/sell node, close node and holding
+line retain their second-level fraction within that interval. Earlier events appear to the left and
+later events to the right without adding synthetic K bars or changing the M1 candle. Profit and
+Volume indicators intentionally remain grouped to their containing M1 interval.
+
+M1 OHLC bars are Bid values. Endpoint validation is direction-aware: buy opens and sell closes are
+checked against the Bid high plus the recorded spread (Ask upper envelope); sell opens and buy closes
+are checked against Bid. Markers retain the original execution quote instead of being clamped into a
+wick, so a confirmed Ask execution may remain above a Bid-only candle.

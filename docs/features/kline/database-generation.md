@@ -15,8 +15,9 @@ last_verified_date: 2026-08-12
 
 ## Purpose and user entry
 
-Generate buy/sell K-line evidence from account databases or uploaded statements and expose the
-result through account detail and the K-line task center.
+Generate durable buy/sell K-line evidence from account databases or uploaded statements and expose
+the result through the K-line task center. The account detail's bounded inline display is a separate
+direct 8777 read path governed by `ACC-DETAIL-001` and `KLN-RENDER-001`.
 
 ## UI and behavior
 
@@ -49,6 +50,10 @@ Database chart requests additively accept `includeTimeline=false|true` and
 `refreshTimelineCache=false|true`. The replay is omitted unless explicitly selected; when selected,
 the complete account-route replay is cache-backed as specified by `KLN-TIMELINE-001`. No endpoint or
 chart URL changes.
+Additive `recentOrders=0..1000` keeps only the latest completed buy/sell orders after read-only route
+selection, then restores chronological input for rendering. `cacheVersion` is an opaque idempotency
+component retained for compatible manual callers and is not a data filter. The account detail does
+not automatically submit this endpoint.
 
 ## Data, routing and read-only constraints
 
@@ -79,9 +84,24 @@ within tolerance. A narrowly bounded fallback near-match is also accepted only w
 hits, 90% endpoint tolerance hits, median normalized distance at most 0.25 and maximum normalized
 distance at most 1.25. Price correction is applied only when declared by the selected provider.
 
+Cached M1 OHLC values are Bid candles. Execution-price calibration therefore uses a direction-aware
+envelope: buy openings and sell closings may fall above the Bid high by the recorded M1 spread, while
+sell openings and buy closings are validated against the Bid range. This preserves the source trade
+price rather than clamping a marker into a candle. A fallback provider remains a visibly labelled
+reference source; exact same-server confirmation still requires a configured same-source provider or
+matching historical Bid/Ask data.
+
 Gaps over five minutes form segment boundaries and gaps over sixty minutes are labelled closed/no
 quote. Long-history aggregation occurs within each segment. Missing-minute trades retain their real
 time and use hollow warning markers rather than moving to the next quote.
+
+The development renderer is now Lightweight Charts 5.0.8. It consumes the same normalized payload
+and keeps symbol selection, filters, order markers, holding lines, Profit/volume/position panes,
+time-window positioning, summary metrics, order table and optional funds replay. Quote acquisition
+is separated from rendering: `generate_trade_kline_from_statement.py --offline-cache` reads an
+existing mapping and M1 cache only, so it does not initialize MT5. The cache is produced by the
+upstream read-only quote adapter and can later be replaced by a live Terminal feed without changing
+the browser contract.
 
 ## Loading, empty and failure behavior
 
@@ -103,7 +123,9 @@ the web and worker processes start.
 
 ## Code and dependencies
 
-FastAPI validates/submits; the worker owns quote sessions and generator execution.
+FastAPI validates/submits; the worker owns durable quote sessions and generator execution. The
+legacy detail page does not submit a persistent worker job automatically; its bounded chart uses the
+direct, serialized read-only quote adapter documented by `ACC-DETAIL-001`.
 
 ## Tests and acceptance
 

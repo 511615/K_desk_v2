@@ -75,6 +75,26 @@ def test_kline_upload_page_chains_inspection_to_generation(tmp_path: Path) -> No
     assert "打开生成图表" in response.text
 
 
+def test_account_kline_job_accepts_bounded_recent_order_window(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/kline/generate-from-db",
+            json={
+                "account": "302360",
+                "platform": "MT5",
+                "server": "DBG MT5",
+                "recentOrders": 300,
+                "cacheVersion": "2026-08-24 10:00:00",
+            },
+        )
+        job = client.get(f"/api/kline/jobs/{response.json()['job']['id']}").json()["job"]
+
+    assert response.status_code == 200
+    assert job["payload"]["recentOrders"] == 300
+    assert job["payload"]["cacheVersion"] == "2026-08-24 10:00:00"
+
+
 def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
@@ -88,7 +108,7 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     assert payload["compatibilityLevel"] == "legacy-account-v1"
     assert payload["sourceRoot"]
     assert payload["pythonExecutable"]
-    assert payload["branch"] in {"main", "detached"}
+    assert payload["branch"] in {"main", "dev", "detached"}
     assert payload["defaultRoutes"] == {
         "kuzuRisk": "focus-force",
         "kuzuGalaxy": "graph_type=galaxy",
@@ -125,6 +145,24 @@ def test_account_detail_always_uses_legacy_page(tmp_path: Path, monkeypatch) -> 
         response = client.get("/account/302360?platform=MT5&server=DBG%20MT5")
         assert response.status_code == 200
         assert "legacy-account:302360" in response.text
+
+
+def test_account_inline_kline_is_served_by_account_service_not_the_job_api(tmp_path: Path, monkeypatch) -> None:
+    def fake_call(_self, name, *args):
+        assert name == "account_inline_kline_html"
+        assert args == ("302360", {"platform": "MT5", "server": "DBG MT5", "recentOrders": 300})
+        return "<html><body>direct-lightweight-kline</body></html>"
+
+    monkeypatch.setattr(LegacyBridge, "call", fake_call)
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/accounts/by-login/302360/inline-kline?platform=MT5&server=DBG%20MT5&recentOrders=300"
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, max-age=60"
+    assert "direct-lightweight-kline" in response.text
 
 
 def test_historical_funds_api_replays_read_only_source_facts(tmp_path: Path, monkeypatch) -> None:
