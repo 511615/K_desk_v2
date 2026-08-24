@@ -76,6 +76,8 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
     assert "const halo=document.createElementNS" in html
     assert "rgba(2,12,28,${alpha})" in html
     assert "#d8b4fe" in html
+    assert ".holdingOverlay{z-index:20" in html
+    assert ".tradeMarkers{z-index:21}" in html
     assert "return Math.max(0,Math.min(bars.length-1,hi))" in html
     assert "MetaTrader5" not in html
 
