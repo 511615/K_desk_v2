@@ -102,9 +102,10 @@ detections. The same-direction detector uses principal orders, two-second open/c
 recurrence floor. The opposite detector uses five-second open/close windows and at least 80% lot
 similarity. Repeated order pairs are evidence details of one peer relationship, not parallel graph edges.
 The compatibility canvas has one authoritative capture-phase click dispatcher backed by a frozen
-post-render hit frame. It does not recompute or mutate ring layout during hit testing. Expanded-group
-collapse markers take precedence over overlapping member nodes; visible nodes take precedence over
-collapsed boundaries; boundaries take precedence over edges. Every click is consumed by this
+post-render hit frame. It does not recompute or mutate ring layout during hit testing. A visible
+account or IB node always takes precedence over either collapsed or expanded boundaries; boundaries
+take precedence over edges. The node target uses its complete painted radius and a small pointer
+allowance. Every click is consumed by this
 dispatcher, including blank clicks, so older compatibility listeners cannot cause double toggles,
 stale-coordinate misses or a node selection and group toggle from the same gesture.
 Clicking a visible copy-order edge opens an on-demand, read-only modal. Its first tab is scoped to
@@ -245,20 +246,17 @@ labels/member counts, and never draws a component-centroid circle. The detail co
 band still expands only its canonical group.
 For same-CRM specifically, components are calculated only from the same-CRM account evidence and
 reverse pair evidence is canonicalized before presentation. A cross-layer same-CRM component is
-assigned to the closest non-subject discovery ring, where its complete member set is drawn as one
-compact existing star-track band with every account still visible and individually clickable. LastIP,
-IB, EA, Copy and other intersections remain overlays; they do not pull members into, or scatter
-members out of, that same-CRM band.
+assigned to the closest non-subject discovery ring, where its complete member set starts as one
+collapsed existing star-track band. The track label carries the relation and member count, but no
+account node or member edge is drawn until an operator clicks its boundary. A second boundary click
+collapses the same track. LastIP, IB, EA, Copy and other intersections remain overlapping segments;
+they do not pull members into, or scatter members out of, that same-CRM band.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
-opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
-Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
-account node: members share the community anchor, the common edge terminates on that anchor, and the
-anchor displays the member count. Clicking the anchor expands the members; clicking the expanded
-community band or its detail control collapses them again.
-If a multi-member community has no drawable member route after aggregation, the renderer adds one
-presentation-only bridge from its actual parent community (or the subject) to that anchor, so every
-non-scattered community remains visibly connected to the investigation chain without inventing
-evidence or expanding singleton clues.
+opens copy-order evidence when applicable), while clicking a visible node keeps node selection
+behavior. A collapsed Galaxy community is not rendered as a canvas anchor: the relation star-track
+itself is the aggregate. Its widened band boundary toggles the member projection in both directions,
+and hidden members are absent from node and edge hit targets. No presentation-only bridge or centroid
+circle is introduced for a collapsed track.
 Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
 the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
 make the lines unclickable.
@@ -333,8 +331,8 @@ cannot hide an otherwise valid path. This is a presentation/performance change o
 alter the read-only API or source database contract.
 
 Galaxy group rings use a two-state interaction. Clicking a collapsed ring/anchor expands that one
-community. Once expanded, a small minus marker is drawn beside the ring; clicking that marker merges
-the community again. Account and evidence-edge clicks retain their selection behavior, while blank-
+community. Once expanded, clicking an empty part of that same ring merges the community again; no
+separate minus marker is drawn or clickable. Account and evidence-edge clicks retain their selection behavior, while blank-
 canvas clicks leave the current selection unchanged. The temporary DOM group-operation list is not
 shown in the workspace. A small “恢复初始” control is the only action that clears the selection,
 collapsed/expanded state, and route highlight.
