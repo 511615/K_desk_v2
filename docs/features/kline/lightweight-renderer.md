@@ -113,6 +113,9 @@ cannot introduce a second coloured horizontal line that appears to shift one col
 The custom red/green bars take their base coordinate directly from the zero-line series rather than
 from the histogram's coordinate conversion, guaranteeing that both colours meet the visible dashed
 Profit zero axis even if Lightweight Charts applies different histogram geometry.
+The native Profit/Volume histogram data remains present only to retain its established scale and
+coordinate behavior, but its columns are transparent. The visible bars are exclusively the custom
+8px-to-18px overlay, so a thin native bar cannot appear beside or through the readable column.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

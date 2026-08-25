@@ -182,6 +182,8 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false" in html
     assert "panelSeries.profitZero?.priceToCoordinate(0)??active.priceToCoordinate(0)" in html
     assert "panelSeries={profit,profitZero,volume}" in html
+    assert "const NATIVE_PANEL_BAR_COLOR='rgba(0,0,0,0)'" in html
+    assert html.count("color:NATIVE_PANEL_BAR_COLOR") == 2
 
 
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
