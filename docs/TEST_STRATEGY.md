@@ -465,7 +465,10 @@ without group totals, explicit group paging, member de-duplication by route, IB 
 known/included/statistic coverage, rebate-share aggregation, multi-currency split and partial source
 coverage. Both focus-force and Galaxy pages must expose the shared table on an edge click, keep node
 clicks as profiles, preserve raw-evidence access and ensure a member-row click only selects/highlights
-the existing node without changing graph layout or community state.
+the existing node without changing graph layout or community state. The first stale table request must
+refresh the graph and retry its exact raw edge once, while a repeated conflict stays visible. An
+expanded same-CRM band must use individual member endpoints only for recovered internal
+`same_crm_user` evidence; every other incident relation keeps one normal star-track projection.
 
 Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,
 DBG MT5 Live2 account 5200101 routing/finance/orders, rebate, copy/EA, Toxic job recovery, K-line

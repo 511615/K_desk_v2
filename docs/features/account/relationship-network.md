@@ -50,7 +50,9 @@ toggles a relation star-track or recomputes expansion.
 
 Clicking a visible raw relationship edge opens the shared `关系展示表`; selecting a node continues to
 open only its account profile. The table is bound to the current snapshot revision and returns 409 on
-a stale revision. It never starts relationship expansion, changes score, changes a same-CRM orbit, or
+a stale revision. On the first stale response, the workspace refreshes its current graph snapshot and
+retries that exact edge once; a second conflict remains visible so the operator is never shown mixed
+revision evidence. It never starts relationship expansion, changes score, changes a same-CRM orbit, or
 repositions a node. Both the default focus workspace and explicit Galaxy workspace consume the same
 read-only table contract.
 
@@ -88,7 +90,8 @@ shows its numeric login above the point. The renderer restores the original `sam
 lines only when both endpoints are visible members of that same expanded band. Each such line keeps
 its source relation ID, so clicking it opens its auditable relation detail. It never draws every raw
 account/IB edge incident to a member: cross-community relations retain their normal star-track
-projection, preventing long cross-graph arrows and overlapping labels. Clicking the boundary again
+projection even while the band is expanded, preventing long cross-graph arrows and overlapping labels.
+Clicking the boundary again
 collapses the band. This is a layout-only projection and does not change evidence, propagation, score
 or expansion eligibility.
 

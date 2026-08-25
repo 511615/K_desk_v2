@@ -277,9 +277,10 @@ function galaxyVisualEndpointKey(node){
   return point?.groupKey?'group:'+point.groupKey:id;
 }
 const galaxyBaseVisualEndpointKey=galaxyVisualEndpointKey;
-galaxyVisualEndpointKey=function(node){const id=String(node?.id||node||''),point=layout.get(id);return point?.groupKey&&!expandedRelationGroups.has(point.groupKey)?'group:'+point.groupKey:id};
+galaxyVisualEndpointKey=function(node){return galaxyBaseVisualEndpointKey(node)};
+function galaxyExpandedEvidenceEndpointKey(node){return String(node?.id||node||'')}
 function galaxyRenderEdgeKey(edge){
-  const from=galaxyVisualEndpointKey(edge?.from)||String(edge?.source||''),to=galaxyVisualEndpointKey(edge?.to)||String(edge?.target||''),type=relationKey(edge?.type||'unknown');
+  const from=(edge?.expandedCommunityEvidence?galaxyExpandedEvidenceEndpointKey(edge?.from):galaxyVisualEndpointKey(edge?.from))||String(edge?.source||''),to=(edge?.expandedCommunityEvidence?galaxyExpandedEvidenceEndpointKey(edge?.to):galaxyVisualEndpointKey(edge?.to))||String(edge?.source||''),type=relationKey(edge?.type||'unknown');
   return isDirectedRelation(edge?.type)?from+'>'+to+'|'+type:[from,to].sort().join('|')+'|'+type;
 }
 function galaxyFocusEdgeVisible(edge){
@@ -569,6 +570,7 @@ const galaxyRenderDetailWithIbRebate=renderDetail;renderDetail=function(){galaxy
 // as compatibility code.  Edge clicks now open the shared relation-display table,
 // so a node selection cannot create a second, unsolicited aggregate panel.
 const galaxyRenderDetailWithRelationDisplay=renderDetail;renderDetail=function(){galaxyRenderDetailWithRelationDisplay();galaxyIbRebatePanel.hidden=true};
-const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:params.toString(),snapshotVersion:data?.revision,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
+async function refreshRelationDisplaySnapshot(){const value=Math.max(1,Math.min(100,Number(threshold.value)||20)),response=await fetch(apiUrl(value),{cache:'no-store'});if(!response.ok)throw new Error('关系图刷新失败');const next=await response.json();if(!next.ok)throw new Error((next.limitations||[])[0]||'关系图刷新失败');const nextNodes=(next.entities||[]).filter(item=>item.type==='account'||item.type==='ib_user');if(nextNodes.length||!data)data=galaxyMergeSnapshots(data,next);if(!data)return null;const hasSelected=(data.entities||[]).some(item=>item.id===selectedId);if(!hasSelected){selectedId=data.subjectId||(data.entities||[]).find(item=>item.isSubject)?.id||'';activeType='';view={scale:1,x:0,y:0}}fit();renderDetail();if(data.inProgress)queuePoll();return data?.revision}
+const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:params.toString(),snapshotVersion:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
 </script></body></html>""" + relation_display_assets()

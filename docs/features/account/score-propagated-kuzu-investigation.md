@@ -59,7 +59,9 @@ the table with the selected raw edge and snapshot revision; a node click remains
 profile. The IB rebate presentation is an adapter of that table rather than a separate inferred card:
 it displays the returned total cohort denominator, current graph inclusion count and actual statistic
 count before any amount summary. Member row selection highlights the existing account only and never
-changes a track's expanded/collapsed state. The table keeps the raw `relation-detail` action available
+changes a track's expanded/collapsed state. A first stale table response refreshes the current graph
+snapshot and retries the same edge once; a repeated 409 remains visible rather than mixing revisions.
+The table keeps the raw `relation-detail` action available
 and no relation-table response can add graph nodes, alter propagation or rebuild the layout.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
@@ -69,7 +71,8 @@ expanded state shows individual accounts with their numeric logins above the poi
 original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
 rendered line retains its source relation ID and opens the ordinary auditable relation detail on
 click. It never adds every incident raw account/IB edge to the canvas: cross-community facts retain
-their normal star-track projection so expansion cannot create cross-graph arrows or stacked labels.
+their normal star-track projection even while the band is expanded, so expansion cannot create
+cross-graph arrows or stacked labels.
 LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct lines and never become orbit
 communities. The right evidence panel exposes the same action for keyboard-accessible use.
 The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an

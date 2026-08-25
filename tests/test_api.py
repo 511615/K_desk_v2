@@ -543,11 +543,18 @@ def test_kuzu_risk_galaxy_expanded_community_draws_selectable_internal_evidence_
     assert page.status_code == 200
     assert "const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey)" in page.text
     assert "function galaxyExpandedCommunityEvidenceEdges" in page.text
+    assert "function galaxyExpandedEvidenceEndpointKey" in page.text
     assert "fromGroup!==toGroup" in page.text
     assert "expandedRelationGroups.has(fromGroup)" in page.text
     assert "relationKey(raw.type)!==community.type" in page.text
     assert "expandedCommunityEvidence:true" in page.text
     assert "expanded-community-evidence|" in page.text
+    assert "edge?.expandedCommunityEvidence?galaxyExpandedEvidenceEndpointKey" in page.text
+    assert "return galaxyBaseVisualEndpointKey(node)" in page.text
+    visual_endpoint = page.text.split("galaxyVisualEndpointKey=function(node)", 1)[1].split(
+        "function galaxyExpandedEvidenceEndpointKey", 1
+    )[0]
+    assert "expandedRelationGroups" not in visual_endpoint
     assert "edge?.expandedCommunityEvidence||galaxyBaseFocusEdgeVisible(edge)" in page.text
     node = shutil.which("node")
     if node:
@@ -585,8 +592,11 @@ def test_relationship_renderers_share_click_only_relation_display_table(tmp_path
         assert "KdeskRelationDisplay" in page.text
         assert "关系展示表" in page.text
         assert "relationship-network/relation-display" in page.text
+        assert "attempt===0&&current?.onSnapshotStale" in page.text
     assert "onSelectMember:nodeId=>{if(S.by.has(nodeId))" in focus.text
+    assert "onSnapshotStale:refreshRelationDisplaySnapshot" in focus.text
     assert "inspectionLoadRelationEvidence=inspectionLoadRelation" in galaxy.text
+    assert "onSnapshotStale:refreshRelationDisplaySnapshot" in galaxy.text
 
 
 def test_relationship_display_renderer_scripts_parse_in_node(tmp_path: Path) -> None:
