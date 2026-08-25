@@ -129,26 +129,32 @@ function galaxyRelationshipCommunities(){
 }
 function galaxyCommunityMemberships(){const memberships=new Map();for(const community of galaxyRelationshipCommunities())for(const id of community.members){const current=memberships.get(id)||[];current.push(community);memberships.set(id,current)}return memberships}
 function galaxyCommunityMembershipCount(id){return(galaxyCommunityMemberships().get(id)||[]).length}
+// Intersections live on the existing star-track rings.  They are never drawn
+// as a second set of circles around arbitrary component centroids.
+function galaxyOrbitOverlapBands(){
+  const subject=graphNodes().find(node=>node.isSubject),center=subject&&layout.get(subject.id);if(!center)return[];
+  const bands=[],byRing=new Map(),normalize=angle=>(angle+Math.PI*2)%(Math.PI*2);
+  for(const community of galaxyRelationshipCommunities()){
+    const membersByDepth=new Map();
+    for(const id of community.members){const point=layout.get(id);if(!point||!point.depth)continue;const members=membersByDepth.get(point.depth)||[];members.push({id,point});membersByDepth.set(point.depth,members)}
+    for(const [depth,members] of membersByDepth){
+      if(members.length<2)continue;
+      const angles=members.map(member=>normalize(Math.atan2(member.point.y-center.y,member.point.x-center.x))).sort((a,b)=>a-b);let gapIndex=0,largestGap=-1;
+      for(let index=0;index<angles.length;index++){const next=index===angles.length-1?angles[0]+Math.PI*2:angles[index+1],gap=next-angles[index];if(gap>largestGap){largestGap=gap;gapIndex=index}}
+      const startBase=angles[(gapIndex+1)%angles.length],endBase=angles[gapIndex],start=startBase-.09,end=(endBase<startBase?endBase+Math.PI*2:endBase)+.09,radius=Math.hypot(members[0].point.x-center.x,members[0].point.y-center.y),band={key:'orbit|'+community.key+'|'+depth,type:community.type,nodes:members,start,end,radius,depth,lane:0};bands.push(band);const ring=byRing.get(depth)||[];ring.push(band);byRing.set(depth,ring);
+    }
+  }
+  for(const ring of byRing.values()){ring.sort((a,b)=>String(a.type).localeCompare(String(b.type))||a.key.localeCompare(b.key));for(const [index,band] of ring.entries())band.lane=(index-(ring.length-1)/2)*9}
+  return bands;
+}
 const communityRingLayoutBase=ringLayout;
 ringLayout=function(all,w,h){const result=communityRingLayoutBase(all,w,h);collapsedVisualGroups=[];for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){if(group.nodes.length<2||expandedRelationGroups.has(group.key)||group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1))continue;const anchor=groupAnchorPoint(group,result.center),groupMembers=[...group.nodes];for(const member of groupMembers){const point=layout.get(member.id);if(point)layout.set(member.id,{...point,x:anchor.x,y:anchor.y,groupKey:group.key})}collapsedVisualGroups.push({...group,anchor,groupMembers})}return result};
 function groupedEdges(result,node){const allEdges=result.edges||[],buckets=new Map(),out=[];for(const edge of allEdges){if(edgeIsPath(edge))continue;const key=edgeCommunityKey(edge);if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(edge)}for(const edge of allEdges){if(edgeIsPath(edge)||edgeGroupIsExpanded(edge,node?.id)){out.push(edge);continue}const key=edgeCommunityKey(edge),groupMembers=buckets.get(key)||[];if(groupMembers[0]!==edge)continue;out.push({...edge,id:'selected-group|'+key,grouped:true,groupCount:groupMembers.length,groupMembers:groupMembers.map(item=>item.to)})}return{...result,edges:out}}
 selectedBranch=function(node){return groupedEdges(finalBaseSelectedBranch(node),node)};
 function drawCollapsedCommunities(){if(!data||!collapsedVisualGroups.length)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const group of collapsedVisualGroups){const theme=relationTheme(group.type),active=group.key===activeGroupKey,size=18;ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size,0,Math.PI*2);ctx.fillStyle='rgba(8,20,36,.96)';ctx.fill();ctx.strokeStyle=active?'#f8fafc':theme.stroke;ctx.lineWidth=active?4:3;ctx.stroke();ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size-5,0,Math.PI*2);ctx.fillStyle=theme.fill;ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(String(group.groupMembers.length),group.anchor.x,group.anchor.y+4);ctx.font='bold 10px Microsoft YaHei';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(group.type)+' 群落',group.anchor.x,group.anchor.y-25)}ctx.textAlign='start';ctx.restore()}
-function drawIntersectingCommunities(){
-  if(!data)return;
-  const memberships=galaxyCommunityMemberships(),communities=galaxyRelationshipCommunities().filter(community=>community.members.some(id=>(memberships.get(id)||[]).length>1));
-  if(!communities.length)return;
-  ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);ctx.setLineDash([7,6]);
-  for(const community of communities){
-    const points=community.members.map(id=>layout.get(id)).filter(Boolean);if(points.length<2)continue;
-    const center=points.reduce((total,point)=>({x:total.x+point.x,y:total.y+point.y}),{x:0,y:0});center.x/=points.length;center.y/=points.length;
-    const radius=Math.max(36,...points.map(point=>Math.hypot(point.x-center.x,point.y-center.y)))+18,theme=relationTheme(community.type);
-    ctx.beginPath();ctx.arc(center.x,center.y,radius,0,Math.PI*2);ctx.fillStyle=theme.fill;ctx.globalAlpha=.18;ctx.fill();ctx.globalAlpha=.78;ctx.strokeStyle=theme.stroke;ctx.lineWidth=2;ctx.stroke();ctx.globalAlpha=1;ctx.setLineDash([]);ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(community.type)+' · '+points.length+'个节点',center.x,center.y-radius-8);ctx.setLineDash([7,6]);
-  }
-  ctx.setLineDash([]);ctx.textAlign='start';ctx.restore();
-}
+function drawOrbitOverlapBands(){if(!data)return;const subject=graphNodes().find(node=>node.isSubject),center=subject&&layout.get(subject.id);if(!center)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const band of galaxyOrbitOverlapBands()){const theme=relationTheme(band.type),radius=band.radius+band.lane;ctx.beginPath();ctx.arc(center.x,center.y,radius,band.start,band.end);ctx.strokeStyle=theme.stroke;ctx.globalAlpha=.92;ctx.lineWidth=5;ctx.stroke();if(band.end-band.start<.34)continue;const angle=(band.start+band.end)/2;ctx.globalAlpha=1;ctx.font='bold 10px Microsoft YaHei';ctx.textAlign='center';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(band.type)+' · '+band.nodes.length+'个节点',center.x+Math.cos(angle)*(radius+13),center.y+Math.sin(angle)*(radius+13)+3)}ctx.globalAlpha=1;ctx.textAlign='start';ctx.restore()}
 const communityRenderOverviewBase=renderOverview;
-renderOverview=function(){communityRenderOverviewBase();drawIntersectingCommunities();drawCollapsedCommunities()};
+renderOverview=function(){communityRenderOverviewBase();drawOrbitOverlapBands();drawCollapsedCommunities()};
 canvas.addEventListener('click',event=>{if(!data)return;const point=world(event),radius=24/Math.max(view.scale,.1);for(const group of collapsedVisualGroups){if(Math.hypot(point.x-group.anchor.x,point.y-group.anchor.y)>radius)continue;event.preventDefault();event.stopImmediatePropagation();expandedRelationGroups.add(group.key);activeGroupKey=group.key;renderOverview();renderDetail();return}},true);
 // Expanded member nodes take precedence over a community-band hit target.
 canvas.addEventListener('click',event=>{if(!data)return;const rect=canvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},scale=Math.max(view.scale,.01);for(const node of graphNodes()){const p=layout.get(node.id);if(!p)continue;const sx=view.x+p.x*scale,sy=view.y+p.y*scale;if(Math.hypot(mouse.x-sx,mouse.y-sy)>nodeHitPixels(node,scale))continue;selectedId=node.id;activeGroupKey=p.groupKey||'';activeType='';event.preventDefault();event.stopImmediatePropagation();renderOverview();renderDetail();return}},true);

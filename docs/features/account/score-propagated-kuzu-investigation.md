@@ -236,8 +236,10 @@ remain available in the evidence panel instead of being drawn beside every ring.
 Canvas relation communities retain their canonical collapsed controls, but Galaxy additionally builds
 relation-family components from every returned evidence edge. Therefore same-CRM, same-IP, EA, rebate,
 copy-order and IB components can intersect at one account; that account keeps its individual position
-instead of being hidden in one canonical anchor. Intersecting boundaries render their own family label
-and member count, while the detail control or community band still expands only its canonical group.
+instead of being hidden in one canonical anchor. Intersection membership is rendered as compact,
+parallel coloured arc segments on the existing star-track orbit, never as a new circle around a
+component centroid; each segment retains its family label and member count. The detail control or
+community band still expands only its canonical group.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
 Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative

@@ -34,7 +34,9 @@ community retains one aggregate edge; expanded communities expose member evidenc
 derives relation-family components from the complete returned evidence set, so a trading account can
 belong to overlapping LastIP, same-name, IB, EA or Copy communities at the same time. An account with
 more than one such membership remains individually visible rather than being swallowed by one
-canonical aggregate anchor; the intersecting boundaries carry their own family label and member count.
+canonical aggregate anchor. Intersections use compact coloured arc segments on the account's existing
+star-track ring; relation families may run in parallel on that same orbit, with their own label and
+member count. The renderer never draws a second centroid circle around a component.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

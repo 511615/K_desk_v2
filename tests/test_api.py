@@ -422,8 +422,10 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "群落" in page.text
     assert "function galaxyRelationshipCommunities" in page.text
     assert "function galaxyCommunityMemberships" in page.text
-    assert "function drawIntersectingCommunities" in page.text
+    assert "function galaxyOrbitOverlapBands" in page.text
+    assert "function drawOrbitOverlapBands" in page.text
     assert "group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1)" in page.text
+    assert "function drawIntersectingCommunities" not in page.text
     assert "function relationRoute" in page.text
     assert "quadraticCurveTo" in page.text
     assert "routeLaneCursor" in page.text
