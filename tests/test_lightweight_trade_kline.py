@@ -194,6 +194,19 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert html.count("color:NATIVE_PANEL_BAR_COLOR") == 2
 
 
+def test_lightweight_renderer_keeps_profit_axis_and_crosshair_value_in_the_price_scale_gutter():
+    """Profit values share the right price-axis position and crosshair exposes the exact value."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_profit_crosshair_axis", trades, bars, mapping)
+
+    assert "const PROFIT_AXIS_X_OFFSET=5" in html
+    assert "String(rect.width-PROFIT_AXIS_X_OFFSET)" in html
+    assert "function updateProfitCrosshair(param)" in html
+    assert "active.coordinateToPrice(param.point.y-geometry.top)" in html
+    assert "chart.subscribeCrosshairMove(updateProfitCrosshair)" in html
+    assert "profitCrosshairValue" in html
+
+
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
     """An inline chart expands in the account page instead of adding an iframe scrollbar."""
     trades, bars, mapping = _fixture()
