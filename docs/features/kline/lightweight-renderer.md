@@ -102,7 +102,8 @@ maximum, zero and negative maximum inside the clipped Profit pane rather than ov
 Those fallback labels use the same right-hand price-axis edge as the candlestick scale. While the
 native crosshair is inside the Profit pane, the overlay converts its pane-local coordinate back to
 the exact Profit value and displays that signed two-decimal value at the same axis position; leaving
-the pane clears the transient value.
+the pane clears the transient value. The same conversion runs on a chart click, so the displayed
+value remains available when a user pins the crosshair at a specific Profit coordinate.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with

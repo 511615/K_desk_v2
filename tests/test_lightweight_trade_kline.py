@@ -204,6 +204,7 @@ def test_lightweight_renderer_keeps_profit_axis_and_crosshair_value_in_the_price
     assert "function updateProfitCrosshair(param)" in html
     assert "active.coordinateToPrice(param.point.y-geometry.top)" in html
     assert "chart.subscribeCrosshairMove(updateProfitCrosshair)" in html
+    assert "chart.subscribeClick(updateProfitCrosshair)" in html
     assert "profitCrosshairValue" in html
 
 
