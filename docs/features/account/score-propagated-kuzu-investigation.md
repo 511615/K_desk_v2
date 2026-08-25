@@ -246,20 +246,17 @@ labels/member counts, and never draws a component-centroid circle. The detail co
 band still expands only its canonical group.
 For same-CRM specifically, components are calculated only from the same-CRM account evidence and
 reverse pair evidence is canonicalized before presentation. A cross-layer same-CRM component is
-assigned to the closest non-subject discovery ring, where its complete member set is drawn as one
-compact existing star-track band with every account still visible and individually clickable. LastIP,
-IB, EA, Copy and other intersections remain overlays; they do not pull members into, or scatter
-members out of, that same-CRM band.
+assigned to the closest non-subject discovery ring, where its complete member set starts as one
+collapsed existing star-track band. The track label carries the relation and member count, but no
+account node or member edge is drawn until an operator clicks its boundary. A second boundary click
+collapses the same track. LastIP, IB, EA, Copy and other intersections remain overlapping segments;
+they do not pull members into, or scatter members out of, that same-CRM band.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
-opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
-Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
-account node: members share the community anchor, the common edge terminates on that anchor, and the
-anchor displays the member count. Clicking the anchor expands the members; clicking the expanded
-community band or its detail control collapses them again.
-If a multi-member community has no drawable member route after aggregation, the renderer adds one
-presentation-only bridge from its actual parent community (or the subject) to that anchor, so every
-non-scattered community remains visibly connected to the investigation chain without inventing
-evidence or expanding singleton clues.
+opens copy-order evidence when applicable), while clicking a visible node keeps node selection
+behavior. A collapsed Galaxy community is not rendered as a canvas anchor: the relation star-track
+itself is the aggregate. Its widened band boundary toggles the member projection in both directions,
+and hidden members are absent from node and edge hit targets. No presentation-only bridge or centroid
+circle is introduced for a collapsed track.
 Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
 the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
 make the lines unclickable.
