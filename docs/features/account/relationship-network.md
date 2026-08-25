@@ -113,9 +113,11 @@ relation colour and carries a compact relation label; a directional segment name
 `来源账号 → 目标账号（关系）` form and carries an arrowhead. In particular, a line named
 `直属上级 IB 本人账户` means the target is the source account's direct-superior IB's own trading
 account; it does not mean the target is a downline client.
-The galaxy workspace's left global locator is intentionally independent from the detailed graph's
-community presentation state. It always lays out every returned trading account from the account
-snapshot, even when a relationship community is collapsed in the detailed graph. Locator fill uses
+The galaxy workspace's left global locator is an equal-scale projection of the detailed graph's
+completed star-track layout. It keeps every returned trading account visible even when a relationship
+community is collapsed in the detailed graph, but never performs a separate circular layout: each
+account's locator position is derived from the same detailed-layout coordinate relative to the
+subject, so corresponding nodes retain the same direction, orbit and relative spacing. Locator fill uses
 the routed database status in increasing severity order `B < M < P < T < A < TA`, with progressively
 darker colours. Clicking a locator account performs the same selection as clicking that account in
 the detailed graph: the selected account, its local evidence and its complete account path back to

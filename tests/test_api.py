@@ -574,6 +574,7 @@ def test_kuzu_risk_galaxy_locator_is_independent_risk_colored_and_clickable(tmp_
 
     assert page.status_code == 200
     assert "function galaxyLocatorNodes" in page.text
+    assert "function galaxyLocatorProjectDetailLayout" in page.text
     assert "function galaxyLocatorLayout" in page.text
     assert "function galaxyLocatorStatusColor" in page.text
     assert "function galaxyDispatchLocatorClick" in page.text
@@ -585,6 +586,11 @@ def test_kuzu_risk_galaxy_locator_is_independent_risk_colored_and_clickable(tmp_
     assert "accounts()" in nodes_helper
     assert "expandedRelationGroups" not in nodes_helper
     assert "graphNodes()" not in nodes_helper
+
+    locator_projection = page.text.split("function galaxyLocatorProjectDetailLayout", 1)[1].split(
+        "function galaxyLocatorLayout", 1
+    )[0]
+    assert "layout.get(node.id)" in locator_projection
 
     palette = page.text.split("function galaxyLocatorStatusColor", 1)[1].split(
         "function galaxyLocatorLayout", 1

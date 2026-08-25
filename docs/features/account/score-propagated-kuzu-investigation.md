@@ -44,6 +44,9 @@ presentation state without restarting the investigation: collapsed state shows t
 the highest member status in `TA > A > T > P > M > B` order and one aggregate edge; expanded state
 shows the individual accounts and evidence edges inside that community. Each community toggles
 independently, and the right evidence panel exposes the same action for keyboard-accessible use.
+The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an
+independent depth-circle placement: every account preserves its detailed-view direction, orbit and
+relative position around the subject while collapsed-track members remain available in the overview.
 
 The selector also exposes the isolated `focus-3d` preview. It is a Canvas projection of the same
 read-only snapshot: the subject remains at the sphere origin, each hop is distributed on a deterministic
