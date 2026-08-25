@@ -491,6 +491,7 @@ def test_kuzu_risk_galaxy_has_lazy_profile_and_relation_evidence_ui(tmp_path: Pa
         "高度关联账户", "关系证据", "时间同步线索，不等同于跟单",
         "inspectionPanel.hidden=true;document.querySelector('.detail')?.prepend(inspectionPanel)",
         "inspection-hero", "传播分", "已完成扩散 · 无新增账户",
+        "function inspectionSnapshotState()", "|snapshot:'+inspectionSnapshotState()",
     ):
         assert marker in page.text
 

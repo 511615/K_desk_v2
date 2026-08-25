@@ -21,7 +21,10 @@ when the status is blank. It reports the selected account route, propagation dep
 coverage, versioned behavior and automation tags, and at most eight explainable related accounts.
 Every recommendation is drawn from the current investigation snapshot and must have a complete path
 back to the investigation subject. Selecting a node never recomputes the graph layout. Profile reads
-are cached for ten minutes and superseded browser requests are cancelled and sequence-guarded.
+are cached for ten minutes and superseded browser requests are cancelled and sequence-guarded. The
+profile cache separates an in-progress snapshot from a completed or truncated snapshot, so the
+selected profile is re-read when background expansion reaches its terminal state and cannot retain a
+stale `pending` status after the graph header reports completion.
 The profile is the first card in the Galaxy detail panel: account identity, propagated score, layer,
 database status and expansion progress are visually separated before the coverage and tag detail.
 An eligible score no longer reads as 继续扩散 after its evidence has already been queried. Completed
