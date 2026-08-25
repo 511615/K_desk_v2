@@ -532,7 +532,7 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
 
 
-def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_without_cross_graph_raw_edges(tmp_path: Path) -> None:
+def test_kuzu_risk_galaxy_expanded_community_draws_selectable_internal_evidence_only(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
     with TestClient(app) as client:
@@ -540,8 +540,13 @@ def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_without_cross_
 
     assert page.status_code == 200
     assert "const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey)" in page.text
-    assert "function galaxyExpandedMemberDetailEdges" not in page.text
-    assert "expandedMemberDetail|" not in page.text
+    assert "function galaxyExpandedCommunityEvidenceEdges" in page.text
+    assert "fromGroup!==toGroup" in page.text
+    assert "expandedRelationGroups.has(fromGroup)" in page.text
+    assert "relationKey(raw.type)!==community.type" in page.text
+    assert "expandedCommunityEvidence:true" in page.text
+    assert "expanded-community-evidence|" in page.text
+    assert "edge?.expandedCommunityEvidence||galaxyBaseFocusEdgeVisible(edge)" in page.text
     node = shutil.which("node")
     if node:
         scripts = re.findall(r"<script>([\s\S]*?)</script>", page.text)

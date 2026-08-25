@@ -275,7 +275,7 @@ function galaxyVisualEndpointKey(node){
   return point?.groupKey?'group:'+point.groupKey:id;
 }
 const galaxyBaseVisualEndpointKey=galaxyVisualEndpointKey;
-galaxyVisualEndpointKey=function(node){const id=String(node?.id||node||''),point=layout.get(id);return point?.groupKey&&!expandedRelationGroups.has(point.groupKey)?'group:'+point.groupKey:galaxyBaseVisualEndpointKey(node)};
+galaxyVisualEndpointKey=function(node){const id=String(node?.id||node||''),point=layout.get(id);return point?.groupKey&&!expandedRelationGroups.has(point.groupKey)?'group:'+point.groupKey:id};
 function galaxyRenderEdgeKey(edge){
   const from=galaxyVisualEndpointKey(edge?.from)||String(edge?.source||''),to=galaxyVisualEndpointKey(edge?.to)||String(edge?.target||''),type=relationKey(edge?.type||'unknown');
   return isDirectedRelation(edge?.type)?from+'>'+to+'|'+type:[from,to].sort().join('|')+'|'+type;
@@ -415,6 +415,37 @@ rootChainEdges=function(nodes){return galaxyTrackRootChainEdges(nodes).filter(ed
 function galaxyDrawExpandedAccountLabels(){if(!data)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const node of graphNodes()){const p=layout.get(node.id);if(!p)continue;const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey);if(!showExpandedAccountLabel)continue;const depth=Math.min(4,accountDepth(node)),size=depth===1?10.5:depth===2?8.5:7;ctx.fillStyle='#f8fafc';ctx.font='600 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(String(node.login||node.label||''),p.x,p.y-size-11);ctx.textAlign='start'}ctx.restore()}
 function drawGalaxyExpandedMarkers(){galaxyDrawExpandedAccountLabels()}
 const galaxyRenderOverviewWithControls=renderOverview;renderOverview=function(){galaxyRenderOverviewWithControls();drawGalaxyExpandedMarkers();renderGalaxyGroupActions();document.querySelector('.galaxy-group-actions')?.remove();const note=document.getElementById('overviewNote'),total=galaxyTrackAllGraphNodes().length,visible=graphNodes().length;if(note)note.textContent='星轨按关系集合聚合：当前显示 '+visible+' / '+total+' 个节点；折叠轨道只显示关系、账户数和重叠信息，点击轨道边框展开成员，再次点击边框收回。';galaxyRebuildHitFrame()};
+// Expanded same-CRM tracks expose their own source evidence, but never every
+// relation incident to a member. Both endpoints must belong to the same
+// expanded track, so the extra lines remain inside that star-track community.
+function galaxyExpandedCommunityEvidenceEdges(){
+  const entities=byId(),communities=new Map(galaxyRelationshipCommunities().map(community=>[community.key,community])),visible=new Set(graphNodes().map(node=>node.id)),out=[],seen=new Set();
+  for(const raw of data?.relationships||[]){
+    const from=entities.get(raw.source),to=entities.get(raw.target);
+    if(!from||!to||!visible.has(from.id)||!visible.has(to.id)||!['account','ib_user'].includes(from.type)||!['account','ib_user'].includes(to.type))continue;
+    const fromGroup=layout.get(from.id)?.groupKey,toGroup=layout.get(to.id)?.groupKey;
+    if(!fromGroup||fromGroup!==toGroup||!expandedRelationGroups.has(fromGroup))continue;
+    const community=communities.get(fromGroup);if(!community||relationKey(raw.type)!==community.type)continue;
+    const type=relationKey(raw.type),pair=galaxyEdgePairKey({from,to,type});if(seen.has(pair))continue;seen.add(pair);
+    out.push({id:String(raw.id||'expanded-community-evidence|'+from.id+'|'+to.id+'|'+type),from,to,type,directed:isDirectedRelation(type),expandedCommunityEvidence:true});
+  }
+  return out;
+}
+const galaxyBaseFocusEdgeVisible=galaxyFocusEdgeVisible;
+galaxyFocusEdgeVisible=function(edge){return edge?.expandedCommunityEvidence||galaxyBaseFocusEdgeVisible(edge)};
+const galaxyBaseExpandedCommunityRelationLabel=relationEdgeLabel;
+relationEdgeLabel=function(edge){if(edge?.expandedCommunityEvidence&&edge.id!==selectedEdgeKey)return'';return galaxyBaseExpandedCommunityRelationLabel(edge)};
+const galaxyRenderOverviewWithExpandedCommunityEvidence=renderOverview;
+renderOverview=function(){
+  galaxyRenderOverviewWithExpandedCommunityEvidence();
+  if(!data)return;
+  for(const edge of galaxyExpandedCommunityEvidenceEdges()){
+    const existing=relationHitEdges.find(candidate=>galaxyRenderEdgeKey(candidate)===galaxyRenderEdgeKey(edge));
+    if(existing){existing.id=edge.id;existing.expandedCommunityEvidence=true;continue}
+    drawRelationEdge(edge);
+  }
+  galaxyRebuildHitFrame();
+};
 queuePoll=function(delay=2000){clearTimeout(pollTimer);if(document.hidden){const resume=()=>{if(document.hidden)return;document.removeEventListener('visibilitychange',resume);queuePoll(250)};document.addEventListener('visibilitychange',resume);return}pollTimer=setTimeout(()=>load(true),delay)};
 window.addEventListener('pagehide',()=>{clearTimeout(pollTimer);controller?.abort()});
 // A leaf is a completed, evidenced expansion outcome. Score eligibility alone is never a leaf.

@@ -57,12 +57,13 @@ star-track community.
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
-expanded state shows individual accounts with their numeric logins above the points. It never adds
-every incident raw account/IB edge to the canvas: cross-community facts retain their normal
-star-track projection so expansion cannot create cross-graph arrows or stacked labels. Existing local
-evidence lines remain inspectable. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct
-lines and never become orbit communities. The right evidence panel exposes the same action for
-keyboard-accessible use.
+expanded state shows individual accounts with their numeric logins above the points. It restores
+original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
+rendered line retains its source relation ID and opens the ordinary auditable relation detail on
+click. It never adds every incident raw account/IB edge to the canvas: cross-community facts retain
+their normal star-track projection so expansion cannot create cross-graph arrows or stacked labels.
+LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct lines and never become orbit
+communities. The right evidence panel exposes the same action for keyboard-accessible use.
 The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an
 independent depth-circle placement: every account preserves its detailed-view direction, orbit and
 relative position around the subject while collapsed-track members remain available in the overview.
