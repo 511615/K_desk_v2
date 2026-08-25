@@ -185,6 +185,7 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "return `${pad(date.getHours())}:${pad(date.getMinutes())}`" in html
     assert "priceScaleId:'profit',base:0,lastValueVisible:false,priceLineVisible:false" in html
     assert "priceScale:{visible:true,scaleMargins:{top:.15,bottom:.15}}" in html
+    assert "chart.priceScale('profit').applyOptions({visible:true})" in html
     assert "priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false" in html
     assert "panelSeries.profitZero?.priceToCoordinate(0)??active.priceToCoordinate(0)" in html
     assert "panelSeries={profit,profitZero,volume}" in html

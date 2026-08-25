@@ -94,8 +94,9 @@ The Profit indicator explicitly uses `base=0`, one symmetric absolute-value scal
 negative values, and a shared high-contrast dashed zero baseline. Profit bars are therefore
 anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
 green and extend downward with equal visual magnitude for equal absolute profit. Its visible right
-price scale reports the actual Profit values for the current filtered bar set, making the bar height
-auditable without relying on visual proportion alone.
+price scale is explicitly enabled for the `profit` scale and reports the actual Profit values for
+the current filtered bar set, making the bar height auditable without relying on visual proportion
+alone.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
