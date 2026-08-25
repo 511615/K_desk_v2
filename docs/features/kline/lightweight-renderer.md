@@ -55,7 +55,9 @@ normalized order columns.
 The direct embedded chart loads the pinned Lightweight Charts 5.0.8 runtime through the account
 service's same-origin `/vendor/lightweight-charts-5.0.8.js` route. The account service fetches the
 pinned HTTPS artifact once, verifies its SHA-256 digest and retains the verified bytes in process.
-The browser therefore does not need direct public-CDN access to create the K-line canvas.
+The browser therefore does not need direct public-CDN access to create the K-line canvas. When that
+document is assigned to the sandboxed account-page `srcdoc` iframe, its parent adds a local base URL
+so the vendor script resolves from the account service rather than `about:srcdoc`.
 
 ## Loading, empty and failure behavior
 

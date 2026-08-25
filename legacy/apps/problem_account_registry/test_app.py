@@ -2457,6 +2457,8 @@ class OrderListTests(unittest.TestCase):
         self.assertIn("cache:'no-store'", html)
         self.assertIn("query.set('inlineVersion',Date.now().toString())", html)
         self.assertNotIn("headers:{'Cache-Control':'no-cache'}", html)
+        self.assertIn("function inlineKlineDocument(html)", html)
+        self.assertIn("frame.srcdoc=inlineKlineDocument(await response.text())", html)
         self.assertIn("loadInlineKline();", html)
         self.assertNotIn("async function autoLoadKline()", html)
 
