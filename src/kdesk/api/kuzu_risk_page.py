@@ -26,7 +26,7 @@ function galaxyPickHit(mouse,frame=galaxyHitFrame){
 function galaxyDispatchClick(event){
   event.preventDefault();event.stopImmediatePropagation();
   if(!data||copyInspector?.classList.contains('open'))return;
-  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},hit=galaxyPickHit(mouse);
+  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},frozenHit=galaxyPickHit(mouse),liveNode=galaxyLiveNodeHit(mouse),hit=frozenHit.kind==='marker'?frozenHit:(liveNode||frozenHit);
   if(hit.kind==='marker'){expandedRelationGroups.delete(hit.target.key);activeGroupKey=hit.target.key;selectedEdgeKey='';renderOverview();renderDetail();return}
   if(hit.kind==='node'){selectedId=hit.target.id;activeGroupKey=hit.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
   if(hit.kind==='group'){expandedRelationGroups.add(hit.target.key);activeGroupKey=hit.target.key;selectedEdgeKey='';renderOverview();renderDetail();return}
@@ -41,6 +41,17 @@ function galaxyRebuildHitFrame(){
   if(centerPoint){const center=toScreen(centerPoint);for(const group of collapsed){const anchor=group.anchor?toScreen(group.anchor):null;groups.push({group,center,radius:Number(group.radius||0)*scale,start:group.start,end:group.end,tolerance:Math.max(18,22*scale),anchor:anchor?{...anchor,radius:Math.max(22,18*scale+8)}:null})}}
   for(const edge of typeof relationHitEdges!=='undefined'?(relationHitEdges||[]):[]){const route=relationRoute(edge);if(!route)continue;const path=[];for(let index=0;index<=20;index++)path.push(toScreen(quadraticPoint(route,index/20)));edges.push({edge,path,tolerance:Math.max(10,12*scale)})}
   galaxyHitFrame={markers,nodes,groups,edges};
+}
+function galaxyLiveNodeHit(mouse){
+  if(!data)return null;
+  const scale=Math.max(view.scale||1,.01),collapsed=new Set((typeof collapsedVisualGroups!=='undefined'?collapsedVisualGroups||[]:[]).map(group=>group.key));
+  let candidate=null,best=Infinity;
+  for(const node of graphNodes()){
+    const point=layout.get(node.id);if(!point||collapsed.has(point.groupKey))continue;
+    const x=view.x+point.x*scale,y=view.y+point.y*scale,distance=Math.hypot(mouse.x-x,mouse.y-y),radius=nodeHitPixels(node,scale);
+    if(distance<=radius&&distance<best){candidate={kind:'node',target:node,groupKey:point.groupKey||''};best=distance}
+  }
+  return candidate;
 }
 const galaxyCanvas=document.getElementById('overview');
 galaxyCanvas.addEventListener('click',galaxyDispatchClick,true);
@@ -99,7 +110,16 @@ canvas.addEventListener('click',event=>{if(!data||copyInspector.classList.contai
 const finalRenderDetailBase=renderDetail;
 renderDetail=function(){finalRenderDetailBase();const node=byId().get(selectedId);if(!node||!groups)return;const types=typeGroups(node);for(const [index,card] of [...groups.querySelectorAll('.group')].entries()){card.querySelectorAll('.group-toggle').forEach(item=>item.remove());const type=types[index]||branchType(node),key=String(node.id)+'|'+relationKey(type),toggle=document.createElement('small');toggle.className='group-toggle';toggle.textContent=expandedRelationGroups.has(key)?'合并当前关系群落':'展开当前关系群落';toggle.title='点击后展开或合并该账户发出的同类关系成员';card.append(toggle);toggle.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();if(expandedRelationGroups.has(key))expandedRelationGroups.delete(key);else expandedRelationGroups.add(key);activeGroupKey=key;renderOverview();renderDetail()})}};
 // A collapsed community is a real canvas object: member nodes share an anchor and common edges end there.
-relationshipGroup=function(node){if(node.isSubject)return'subject';const owner=parent(node);return String(owner?owner.id:'root')+'|'+relationKey(branchType(node))};
+function galaxySameCrmCommunity(node){if(!node||node.type!=='account')return null;return galaxyRelationshipCommunities().find(community=>community.type==='same_crm_user'&&community.members.includes(node.id))||null}
+const galaxySemanticAccountDepth=accountDepth;
+function galaxyComponentVisualDepth(node){
+  if(!node||node.isSubject)return galaxySemanticAccountDepth(node);
+  const community=galaxySameCrmCommunity(node);if(!community)return galaxySemanticAccountDepth(node);
+  const depths=community.members.map(id=>byId().get(id)).filter(member=>member&&!member.isSubject).map(member=>galaxySemanticAccountDepth(member));
+  return depths.length?Math.max(1,Math.min(...depths)):galaxySemanticAccountDepth(node);
+}
+accountDepth=function(node){return galaxyComponentVisualDepth(node)};
+relationshipGroup=function(node){if(node.isSubject)return'subject';const community=galaxySameCrmCommunity(node);if(community)return community.key;const owner=parent(node);return String(owner?owner.id:'root')+'|'+relationKey(branchType(node))};
 function groupAnchorPoint(group,center){const points=group.nodes.map(node=>layout.get(node.id)).filter(Boolean);if(!points.length)return{x:center.x,y:center.y};let vx=0,vy=0,radius=0;for(const point of points){const dx=point.x-center.x,dy=point.y-center.y,length=Math.hypot(dx,dy)||1;vx+=dx/length;vy+=dy/length;radius+=length}const angle=Math.atan2(vy,vx),r=radius/points.length;return{x:center.x+Math.cos(angle)*r,y:center.y+Math.sin(angle)*r}}
 let collapsedVisualGroups=[];
 // A relationship graph is not a tree: the same account may simultaneously be
@@ -143,7 +163,14 @@ function galaxyOrbitOverlapBands(){
   return bands;
 }
 const communityRingLayoutBase=ringLayout;
-ringLayout=function(all,w,h){const result=communityRingLayoutBase(all,w,h),orbitBands=galaxyOrbitOverlapBands();for(const band of orbitBands){const groups=result.groupsByDepth.get(band.depth)||[];groups.push(band);result.groupsByDepth.set(band.depth,groups)}collapsedVisualGroups=[];for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){if(group.orbitOnly||group.nodes.length<2||expandedRelationGroups.has(group.key)||group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1))continue;const anchor=groupAnchorPoint(group,result.center),groupMembers=[...group.nodes];for(const member of groupMembers){const point=layout.get(member.id);if(point)layout.set(member.id,{...point,x:anchor.x,y:anchor.y,groupKey:group.key})}collapsedVisualGroups.push({...group,anchor,groupMembers})}return result};
+ringLayout=function(all,w,h){const result=communityRingLayoutBase(all,w,h),communities=new Map(galaxyRelationshipCommunities().map(community=>[community.key,community]));for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){const community=communities.get(group.key);if(community){group.type=community.type;group.componentMemberCount=community.members.length}}const orbitBands=galaxyOrbitOverlapBands();for(const band of orbitBands){const groups=result.groupsByDepth.get(band.depth)||[];groups.push(band);result.groupsByDepth.set(band.depth,groups)}collapsedVisualGroups=[];for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){if(group.componentMemberCount&&group.type==='same_crm_user')continue;if(group.orbitOnly||group.nodes.length<2||expandedRelationGroups.has(group.key)||group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1))continue;const anchor=groupAnchorPoint(group,result.center),groupMembers=[...group.nodes];for(const member of groupMembers){const point=layout.get(member.id);if(point)layout.set(member.id,{...point,x:anchor.x,y:anchor.y,groupKey:group.key})}collapsedVisualGroups.push({...group,anchor,groupMembers})}return result};
+const galaxyDrawGroupLabelBase=drawGroupLabel;
+drawGroupLabel=function(group,center){
+  if(!group?.componentMemberCount)return galaxyDrawGroupLabelBase(group,center);
+  if(group.orbitOnly||group.nodes.length<2||group.end-group.start<.24)return;
+  const angle=(group.start+group.end)/2,radius=group.radius+30,theme=relationTheme(group.type),text=relationShortLabel(group.type)+' · '+group.componentMemberCount+'账户';
+  ctx.save();ctx.fillStyle=theme.stroke;ctx.font='bold 10px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(text,center.x+Math.cos(angle)*radius,center.y+Math.sin(angle)*radius+3);ctx.restore();
+};
 function groupedEdges(result,node){const allEdges=result.edges||[],buckets=new Map(),out=[];for(const edge of allEdges){if(edgeIsPath(edge))continue;const key=edgeCommunityKey(edge);if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(edge)}for(const edge of allEdges){if(edgeIsPath(edge)||edgeGroupIsExpanded(edge,node?.id)){out.push(edge);continue}const key=edgeCommunityKey(edge),groupMembers=buckets.get(key)||[];if(groupMembers[0]!==edge)continue;out.push({...edge,id:'selected-group|'+key,grouped:true,groupCount:groupMembers.length,groupMembers:groupMembers.map(item=>item.to)})}return{...result,edges:out}}
 selectedBranch=function(node){return groupedEdges(finalBaseSelectedBranch(node),node)};
 function drawCollapsedCommunities(){if(!data||!collapsedVisualGroups.length)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const group of collapsedVisualGroups){const theme=relationTheme(group.type),active=group.key===activeGroupKey,size=18;ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size,0,Math.PI*2);ctx.fillStyle='rgba(8,20,36,.96)';ctx.fill();ctx.strokeStyle=active?'#f8fafc':theme.stroke;ctx.lineWidth=active?4:3;ctx.stroke();ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size-5,0,Math.PI*2);ctx.fillStyle=theme.fill;ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(String(group.groupMembers.length),group.anchor.x,group.anchor.y+4);ctx.font='bold 10px Microsoft YaHei';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(group.type)+' 群落',group.anchor.x,group.anchor.y-25)}ctx.textAlign='start';ctx.restore()}

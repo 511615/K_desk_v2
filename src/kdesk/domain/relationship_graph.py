@@ -39,6 +39,12 @@ def build_presentation_graph(
     rendered: dict[str, dict[str, Any]] = {key: dict(value) for key, value in nodes.items()}
     edges: dict[str, dict[str, Any]] = {}
     groups: dict[str, dict[str, Any]] = {}
+    same_crm_component_keys = _account_component_keys(
+        relationships,
+        nodes,
+        accounts,
+        relation_type="same_crm_user",
+    )
 
     for raw in relationships:
         source = str(raw.get("source") or "")
@@ -60,7 +66,17 @@ def build_presentation_graph(
                 if account_id in accounts:
                     _add_entity_link(edges, raw, concrete_entity, account_id, relation_type)
             continue
-        group_key = _group_key(raw, source, target, nodes)
+        group_key = _group_key(
+            raw,
+            source,
+            target,
+            nodes,
+            account_component_key=(
+                (same_crm_component_keys.get(source) or same_crm_component_keys.get(target))
+                if relation_type == "same_crm_user"
+                else ""
+            ),
+        )
         group = groups.setdefault(group_key, _new_group(group_key, raw, relation_type))
         group["members"].update((source, target))
         if len(group["evidence"]) < 20:
@@ -133,17 +149,65 @@ def build_presentation_graph(
     }
 
 
-def _group_key(raw: dict[str, Any], source: str, target: str, nodes: dict[str, dict[str, Any]]) -> str:
+def _group_key(
+    raw: dict[str, Any],
+    source: str,
+    target: str,
+    nodes: dict[str, dict[str, Any]],
+    *,
+    account_component_key: str = "",
+) -> str:
     relation_type = str(raw.get("type") or "unknown")
     label = str(raw.get("label") or raw.get("typeLabel") or relation_type).strip()
     # Prefer a canonical non-account endpoint, otherwise use relation family+label.
     for candidate in (source, target):
         if candidate in nodes and str(nodes[candidate].get("type") or "") != "account":
             return f"{relation_type}|entity|{candidate}"
+    if account_component_key:
+        return account_component_key
     # Relationship families represent one semantic entity even when each pair
     # has a different evidence sentence. Keeping evidence out of the key avoids
     # recreating the O(n²) account-pair fan-out in the presentation layer.
     return f"{relation_type}|label|{label}"
+
+
+def _account_component_keys(
+    relationships: list[dict[str, Any]],
+    nodes: dict[str, dict[str, Any]],
+    accounts: set[str],
+    *,
+    relation_type: str,
+) -> dict[str, str]:
+    """Return stable group keys for disconnected account-only components."""
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for raw in relationships:
+        if str(raw.get("type") or "") != relation_type:
+            continue
+        source = str(raw.get("source") or "")
+        target = str(raw.get("target") or "")
+        if source not in accounts or target not in accounts or source not in nodes or target not in nodes:
+            continue
+        adjacency[source].add(target)
+        adjacency[target].add(source)
+
+    component_keys: dict[str, str] = {}
+    visited: set[str] = set()
+    for start in sorted(adjacency):
+        if start in visited:
+            continue
+        members: list[str] = []
+        pending: deque[str] = deque([start])
+        visited.add(start)
+        while pending:
+            current = pending.popleft()
+            members.append(current)
+            for neighbor in sorted(adjacency[current]):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    pending.append(neighbor)
+        key = f"{relation_type}|component|{'|'.join(sorted(members))}"
+        component_keys.update({member: key for member in members})
+    return component_keys
 
 
 def _new_group(group_key: str, raw: dict[str, Any], relation_type: str) -> dict[str, Any]:

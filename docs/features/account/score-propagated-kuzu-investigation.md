@@ -241,6 +241,12 @@ remains and the additional relation family overlays only a normal-width segment 
 same star-track radius. It creates neither parallel synthetic lanes nor duplicate labels/member counts,
 and never draws a component-centroid circle. The detail control or community band still expands only
 its canonical group.
+For same-CRM specifically, components are calculated only from the same-CRM account evidence and
+reverse pair evidence is canonicalized before presentation. A cross-layer same-CRM component is
+assigned to the closest non-subject discovery ring, where its complete member set is drawn as one
+existing star-track band with every account still visible and individually clickable. LastIP, IB, EA,
+Copy and other intersections remain overlays; they do not pull members into, or scatter members out
+of, that same-CRM band.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
 Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
@@ -280,6 +286,10 @@ and its aggregate query runs only for the seed account in one request.
 For a current-LastIP/CID cohort, only the repeated cohort follow-up is deduplicated. EA/Copy discovery
 still runs for every score-eligible account because sharing an IP/CID does not establish identical
 expert or copy-trading behavior; the response never represents those automation sources as reused.
+The presentation graph derives same-CRM component identifiers independently of the other relation
+families, while risk composition removes only reverse-direction duplicate same-CRM evidence. The
+Galaxy renderer consumes those component identities for its shared star-track placement and retains
+the existing visual-node click path as a no-relayout fallback.
 
 The expansion coordinator retains at most three distinct running, queued or completed investigation
 snapshots. Completed snapshots expire after 90 seconds and the least recently accessed completed

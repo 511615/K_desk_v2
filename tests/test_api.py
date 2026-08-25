@@ -421,12 +421,16 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "groupMembers" in page.text
     assert "群落" in page.text
     assert "function galaxyRelationshipCommunities" in page.text
+    assert "function galaxySameCrmCommunity" in page.text
+    assert "function galaxyComponentVisualDepth" in page.text
     assert "function galaxyCommunityMemberships" in page.text
     assert "function galaxyOrbitOverlapBands" in page.text
     assert "orbitOnly:true" in page.text
     assert "span=.12" in page.text
     assert "nodes:[node]" in page.text
     assert "group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1)" in page.text
+    assert "if(group.componentMemberCount&&group.type==='same_crm_user')continue" in page.text
+    assert "group.componentMemberCount+'账户'" in page.text
     assert "function drawIntersectingCommunities" not in page.text
     assert "function drawOrbitOverlapBands" not in page.text
     assert "band.lane" not in page.text

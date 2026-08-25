@@ -109,6 +109,26 @@ def test_relationship_risk_expands_real_evidence_until_score_falls_below_thresho
     assert "已实际扩展 3 个" in result["limitations"][1]
 
 
+def test_relationship_risk_canonicalizes_reverse_same_crm_evidence() -> None:
+    service = object.__new__(AccountRelationshipRiskService)
+    entities: dict[str, dict[str, Any]] = {}
+    relationships: dict[str, dict[str, Any]] = {}
+    evidence = {
+        "entities": [
+            {"id": "account:234889", "type": "account", "label": "234889", "platform": "MT5", "server": "AC CN MT5"},
+            {"id": "account:216065", "type": "account", "label": "216065", "platform": "MT5", "server": "AC CN MT5"},
+        ],
+        "relationships": [
+            {"id": "forward", "source": "account:234889", "target": "account:216065", "type": "same_crm_user", "label": "同名账户", "evidence": []},
+            {"id": "reverse", "source": "account:216065", "target": "account:234889", "type": "same_crm_user", "label": "同名账户", "evidence": []},
+        ],
+    }
+
+    service._merge_evidence(evidence, entities, relationships)
+
+    assert len(relationships) == 1
+
+
 def test_relationship_risk_marks_only_completed_accounts_as_expanded() -> None:
     evidence = _EvidenceNetwork()
     service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})

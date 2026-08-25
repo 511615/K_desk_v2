@@ -27,6 +27,28 @@ def test_presentation_graph_collapses_repeated_account_edges_into_relation_group
     assert next(item for item in result["entities"] if item["id"] == "a:1")["databaseStatus"] == "P"
 
 
+def test_presentation_graph_scopes_same_name_components_to_their_own_relation_family() -> None:
+    entities = [
+        {"id": "a:234889", "type": "account", "label": "234889", "isSubject": True},
+        {"id": "a:216065", "type": "account", "label": "216065"},
+        {"id": "a:241636", "type": "account", "label": "241636"},
+        {"id": "a:ip-peer", "type": "account", "label": "ip-peer"},
+        {"id": "a:other-root", "type": "account", "label": "other-root"},
+        {"id": "a:other-peer", "type": "account", "label": "other-peer"},
+    ]
+    relationships = [
+        {"id": "same-name-1", "source": "a:234889", "target": "a:216065", "type": "same_crm_user", "label": "同名账户", "evidence": []},
+        {"id": "same-name-2", "source": "a:234889", "target": "a:241636", "type": "same_crm_user", "label": "同名账户", "evidence": []},
+        {"id": "last-ip", "source": "a:234889", "target": "a:ip-peer", "type": "login_ip", "label": "同 LastIP", "evidence": []},
+        {"id": "other-name", "source": "a:other-root", "target": "a:other-peer", "type": "same_crm_user", "label": "同名账户", "evidence": []},
+    ]
+
+    result = build_presentation_graph(entities, relationships, subject_id="a:234889")
+
+    groups = [(item["relationType"], item["memberCount"]) for item in result["entities"] if item["type"] == "relation_group"]
+    assert sorted(groups) == [("login_ip", 2), ("same_crm_user", 2), ("same_crm_user", 3)]
+
+
 def test_presentation_graph_retains_existing_evidence_entity_and_limits_members() -> None:
     entities = [
         {"id": "a:root", "type": "account", "label": "root", "isSubject": True},

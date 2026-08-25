@@ -40,6 +40,15 @@ There are no synthetic lanes, duplicate member-count labels or centroid circles 
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
+Same-CRM aggregation is deliberately relation-family scoped: connected components are formed only
+from `same_crm_user` account-to-account evidence, and reverse copies of the same pair are one
+presentation fact. LastIP, IB, EA, Copy or other evidence may overlap those accounts but cannot
+enlarge or split their same-CRM component. In Galaxy, a component spanning logical discovery layers
+uses the nearest non-subject member's existing star-track ring as its shared visual band. All member
+accounts stay individually visible, adjacent and selectable in that one band; the band label shows
+the complete component count. This is a layout-only projection and does not change evidence,
+propagation, score or expansion eligibility.
+
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
 explicitly not proof of copy trading. Suspected hedge evidence requires opposite direction and retains
@@ -110,6 +119,9 @@ is expanded-community collapse marker, visible account/IB node, collapsed commun
 anchor, relation edge, then blank canvas. The dispatcher consumes every canvas click before legacy
 compatibility listeners can act, so one gesture performs at most one expand, collapse, select or
 edge-inspection action. Members hidden by a collapsed group are excluded from node hit targets.
+When a visible node has been moved by its component's star-track aggregation, the dispatcher also
+checks the current rendered node coordinates after the frozen-frame lookup. This fallback selects
+the visible account without recalculating layout or falling through to a relation-band action.
 The overview intentionally renders only the selected account's local evidence cluster and its
 deduplicated parent chain back to the problem account. Intermediate CRM/evidence entities remain
 hidden, but their relationship type is retained on the visible account-to-account segment. Siblings

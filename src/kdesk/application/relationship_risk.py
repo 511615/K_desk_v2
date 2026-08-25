@@ -463,7 +463,10 @@ class AccountRelationshipRiskService:
             target = id_map.get(str(relationship["target"]))
             if not source or not target:
                 continue
-            edge_id = "|".join((str(relationship["type"]), source, target, str(relationship["label"])))
+            relationship_type = str(relationship["type"])
+            if relationship_type == "same_crm_user":
+                source, target = sorted((source, target))
+            edge_id = "|".join((relationship_type, source, target, str(relationship["label"])))
             relationships.setdefault(edge_id, {**relationship, "id": edge_id, "source": source, "target": target})
 
     @staticmethod
