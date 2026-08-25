@@ -172,9 +172,10 @@ def test_account_inline_kline_is_served_by_account_service_not_the_job_api(tmp_p
     def fake_call(_self, name, *args):
         assert name == "account_inline_kline_html"
         assert args == ("302360", {"platform": "MT5", "server": "DBG MT5", "recentOrders": 300})
-        return "<html><body>direct-lightweight-kline</body></html>"
+        return '<html><head><script src="/vendor/lightweight-charts-5.0.8.js"></script></head><body>direct-lightweight-kline</body></html>'
 
     monkeypatch.setattr(LegacyBridge, "call", fake_call)
+    monkeypatch.setattr(account_app, "_load_lightweight_charts_asset", lambda: b"window.LightweightCharts={version:'5.0.8'};")
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         response = client.get(
@@ -184,6 +185,8 @@ def test_account_inline_kline_is_served_by_account_service_not_the_job_api(tmp_p
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, max-age=60"
     assert "direct-lightweight-kline" in response.text
+    assert "<script>window.LightweightCharts={version:'5.0.8'};</script>" in response.text
+    assert '<script src="/vendor/lightweight-charts-5.0.8.js"></script>' not in response.text
 
 
 def test_account_serves_lightweight_charts_from_a_same_origin_vendor_route(tmp_path: Path, monkeypatch) -> None:

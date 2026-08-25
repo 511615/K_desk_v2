@@ -60,6 +60,7 @@ logger = logging.getLogger("kdesk.account")
 
 LIGHTWEIGHT_CHARTS_VENDOR_URL = "https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"
 LIGHTWEIGHT_CHARTS_VENDOR_SHA256 = "bcdca2a528db7c9b386918c99c544bde3eda3f0204ec2d23a64411d4cb4686c9"
+LIGHTWEIGHT_CHARTS_VENDOR_TAG = '<script src="/vendor/lightweight-charts-5.0.8.js"></script>'
 _lightweight_charts_asset: bytes | None = None
 _lightweight_charts_asset_lock = Lock()
 
@@ -79,6 +80,14 @@ def _load_lightweight_charts_asset() -> bytes:
             raise RuntimeError("Lightweight Charts 静态资源校验失败")
         _lightweight_charts_asset = asset
         return asset
+
+
+def _inline_lightweight_charts_runtime(chart_html: str) -> str:
+    """Make the trusted chart runtime executable in a sandboxed ``srcdoc`` frame."""
+    if LIGHTWEIGHT_CHARTS_VENDOR_TAG not in chart_html:
+        return chart_html
+    runtime = _load_lightweight_charts_asset().decode("utf-8")
+    return chart_html.replace(LIGHTWEIGHT_CHARTS_VENDOR_TAG, f"<script>{runtime}</script>", 1)
 
 # Relationship discovery runs behind a single-flight background coordinator. Do
 # not impose a request-wide deadline: slow, valid database reads may take minutes
@@ -962,6 +971,11 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            chart_html = await run_in_threadpool(_inline_lightweight_charts_runtime, chart_html)
+        except (OSError, RuntimeError, UnicodeDecodeError) as exc:
+            logger.warning("Unable to inline the pinned Lightweight Charts runtime: %s", exc)
+            raise HTTPException(status_code=503, detail="K 线图表库暂时不可用") from exc
         return HTMLResponse(chart_html, headers={"Cache-Control": "private, max-age=60"})
 
     @app.post("/api/push-discovery/start")

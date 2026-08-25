@@ -57,7 +57,9 @@ service's same-origin `/vendor/lightweight-charts-5.0.8.js` route. The account s
 pinned HTTPS artifact once, verifies its SHA-256 digest and retains the verified bytes in process.
 The browser therefore does not need direct public-CDN access to create the K-line canvas. When that
 document is assigned to the sandboxed account-page `srcdoc` iframe, its parent adds a local base URL
-so the vendor script resolves from the account service rather than `about:srcdoc`.
+so the vendor script resolves from the account service rather than `about:srcdoc`. The account
+service then replaces that verified runtime reference with the verified runtime bytes before serving
+the direct document, avoiding the sandbox's external-script execution restriction.
 
 ## Loading, empty and failure behavior
 

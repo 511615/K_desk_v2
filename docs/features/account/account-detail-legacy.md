@@ -203,7 +203,8 @@ same-origin `/vendor/lightweight-charts-5.0.8.js` account-service route, so the 
 does not require direct public-CDN access to create its canvas. Before placing the returned document
 in `inlineKlineFrame.srcdoc`, the detail page adds a base URL for its own origin; the sandboxed
 `about:srcdoc` document can therefore resolve the same-origin runtime rather than leaving a blank
-chart shell.
+chart shell. The inline endpoint embeds the same verified runtime bytes into the returned document,
+so the sandbox does not need to execute a separate external script at all.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
 The detail HTML includes the top-right Login search form, its status region and source-aware lookup
