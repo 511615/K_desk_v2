@@ -173,8 +173,9 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "function panelPaneGeometry" in html
     assert "PANEL_PANE_SEPARATOR_HEIGHT=4" in html
     assert "top=panes.slice(0,paneIndex).reduce((sum,item)=>sum+n(item.getHeight?.()),0)+paneIndex*PANEL_PANE_SEPARATOR_HEIGHT" in html
-    assert "host.addEventListener('pointermove',schedulePanelBars)" in html
-    assert "host.addEventListener('pointerup',schedulePanelBars)" in html
+    assert "function refreshInteractiveOverlays(){refreshTradeMarkers();schedulePanelBars()}" in html
+    assert "host.addEventListener('pointermove',refreshInteractiveOverlays)" in html
+    assert "host.addEventListener('pointerup',refreshInteractiveOverlays)" in html
     assert "base+geometry.top" in html
     assert "y+geometry.top" in html
     assert "panelBarClip" in html

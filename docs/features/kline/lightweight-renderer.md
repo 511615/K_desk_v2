@@ -85,7 +85,7 @@ to preserve contrast on that dark surface. Trade nodes are rendered in a transpa
 the order's normalized open/close plot price and the chart time coordinate. Buy/sell triangles are
 small (4px side, 7px height) and sit on the exact execution quote rather than using the native
 `aboveBar`/`belowBar` placement; close squares use the exact close quote. The overlay is repositioned
-after fit, pan, zoom and resize so nodes remain attached to their quotes.
+after fit, pan, zoom, resize and vertical pane/price-scale dragging so nodes remain attached to their quotes.
 The marker overlay is a child of the exact Lightweight Charts host, rather than a sibling of the
 chart shell. Its x/y coordinates therefore share the candle canvas origin and price scale when the
 browser lays out the right axis, preventing a horizontal left shift of evidence nodes.
@@ -115,9 +115,9 @@ cannot introduce a second coloured horizontal line that appears to shift one col
 The custom red/green bars take their base coordinate directly from the zero-line series rather than
 from the histogram's coordinate conversion, guaranteeing that both colours meet the visible dashed
 Profit zero axis even if Lightweight Charts applies different histogram geometry.
-Pointer movement and release within the chart host schedule the same overlay redraw, so dragging a
-pane separator or vertical price scale immediately re-reads that zero-line coordinate instead of
-leaving readable bars at their pre-drag position.
+Pointer movement and release within the chart host schedule both overlay redraws, so dragging a
+pane separator or vertical price scale immediately re-reads the zero-line coordinate and every
+buy/sell/holding price coordinate instead of leaving bars or markers at their pre-drag position.
 The native Profit/Volume histogram data remains present only to retain its established scale and
 coordinate behavior, but its columns are transparent in both individual-order and grouped-bar
 display modes. The visible bars are exclusively the custom 8px-to-18px overlay, so a thin native
