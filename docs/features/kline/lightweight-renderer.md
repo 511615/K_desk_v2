@@ -8,7 +8,7 @@ code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app
 tests: ["tests/test_lightweight_trade_kline.py"]
 depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
 last_verified_version: 2.1.1
-last_verified_date: 2026-08-24
+last_verified_date: 2026-08-25
 ---
 
 # Lightweight Charts trade renderer
@@ -87,6 +87,10 @@ The Profit indicator explicitly uses `base=0`, one symmetric absolute-value scal
 negative values, and a shared high-contrast dashed zero baseline. Profit bars are therefore
 anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
 green and extend downward with equal visual magnitude for equal absolute profit.
+
+The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
+`0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of
+the bar and time-label area without shrinking the main candlestick pane or changing chart data.
 
 Holding lines use the legacy-style thin, rounded, semi-transparent purple dash
 (`rgba(192,145,255,alpha)`, `5 4` dash). Density reduces opacity and width rather than adding a

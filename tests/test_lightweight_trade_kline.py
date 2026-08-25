@@ -137,3 +137,15 @@ def test_lightweight_renderer_allows_the_full_generated_kline_range():
     html = build_lightweight_html("10001", "10001_zoom", trades, bars, mapping)
 
     assert "minBarSpacing:.01" in html
+
+
+def test_lightweight_renderer_keeps_bar_pane_and_time_axis_compact():
+    """The lower indicator and time labels should not dominate the vertical layout."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_compact_height", trades, bars, mapping)
+
+    assert ".chartStage{position:relative;height:620px}" in html
+    assert ".chartShell>.chart{height:620px}" in html
+    assert ".chartShell>.tradeMarkers{height:620px" in html
+    assert "minimumHeight:24" in html
+    assert "chart.panes()[1].setStretchFactor(.6)" in html
