@@ -528,6 +528,19 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
 
 
+def test_kuzu_risk_galaxy_uses_compact_controls_and_plain_language_profile(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert page.status_code == 200
+    assert "function galaxyApplyCompactPresentation" in page.text
+    assert "document.getElementById('status')?.remove()" in page.text
+    assert "galaxy-profile-overview" in page.text
+    assert "inspectionPanel.innerHTML='<div class=\"inspection-hero galaxy-profile-overview\"" in page.text
+
+
 def test_kuzu_risk_galaxy_has_lazy_profile_and_relation_evidence_ui(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:

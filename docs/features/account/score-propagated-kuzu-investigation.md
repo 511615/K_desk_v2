@@ -39,6 +39,13 @@ while the page is hidden, updates available partial evidence immediately, and st
 `inProgress=false` or the bounded client poll window expires. A saturated coordinator asks the page to
 retry after three seconds. It reads `databaseStatus` directly and uses `B` only for a blank value.
 
+In the explicit Galaxy compatibility workspace, the control strip and three panels are responsive at
+narrow desktop widths. The header excludes duplicate navigation hints and runtime-rule status. The
+selected account profile is pinned first in the right panel and presents the account, database status,
+score, relationship layer and expansion outcome in plain language. It intentionally omits raw data
+coverage dates and investigation implementation prose; those remain available only when an operator
+opens an auditable relationship-evidence detail.
+
 Relationship communities are collapsed by default. Their boundary is clickable and toggles a local
 presentation state without restarting the investigation: collapsed state shows the member count,
 the highest member status in `TA > A > T > P > M > B` order and one aggregate edge; expanded state
