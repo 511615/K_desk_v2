@@ -514,5 +514,42 @@ function inspectionRenderProfile(profile){
   inspectionPanel.querySelectorAll('[data-profile-node]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.profileNode;if(!byId().has(id))return;selectedId=id;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}));
 }
 galaxyApplyCompactPresentation();
+// ACC-REL-001 / ACC-REL-003: Direct-IB rebate anomalies are evidence returned by
+// the network snapshot, not a generic IB line.  Keep their monetary inputs and
+// selection reasons visible without making a new query or changing expansion.
+const galaxyIbRebateStyle=document.createElement('style');galaxyIbRebateStyle.textContent=`
+  .ib-rebate-panel{order:0;margin:0;padding:12px;border:1px solid #805b1b;border-radius:10px;background:linear-gradient(145deg,#251b0c,#102338);color:#e7eef8}.ib-rebate-panel[hidden]{display:none}.ib-rebate-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:9px;padding-bottom:9px;border-bottom:1px solid #624a1d}.ib-rebate-heading h3{margin:0;color:#fef3c7;font-size:15px}.ib-rebate-heading p{margin:3px 0 0;color:#d7b46a;font-size:11px;line-height:1.4}.ib-rebate-count{flex:0 0 auto;padding:4px 6px;border:1px solid #b88622;border-radius:6px;background:#3b2a10;color:#fde68a;font-size:11px;font-weight:800}.ib-rebate-description{margin:8px 0;color:#bed1e5;font-size:11px;line-height:1.5}.ib-rebate-list{display:grid;gap:6px;max-height:310px;overflow:auto;padding-right:2px}.ib-rebate-account{width:100%;padding:8px;border:1px solid #34506b;border-radius:7px;background:#0a1c2e;color:#e5f2ff;text-align:left;cursor:pointer}.ib-rebate-account:hover,.ib-rebate-account:focus-visible{border-color:#fbbf24;background:#172b3f;outline:0}.ib-rebate-account.is-selected{border-color:#60c7ff;box-shadow:0 0 0 1px #60c7ff}.ib-rebate-row-title{display:flex;align-items:center;gap:6px;min-width:0}.ib-rebate-row-title strong{font-size:13px}.ib-rebate-row-title small{color:#b9cadb;font-size:10px}.ib-rebate-reason{margin-left:auto;max-width:54%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 5px;border-radius:999px;background:#403013;color:#fde68a;font-size:10px;font-weight:800}.ib-rebate-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 8px;margin-top:5px;color:#b6cde1;font-size:10px;line-height:1.35}.ib-rebate-metrics b{color:#f8fafc;font-weight:700}.ib-rebate-empty{color:#93acc6;font-size:11px}@media(max-width:1040px){.ib-rebate-list{max-height:230px}.ib-rebate-metrics{grid-template-columns:1fr}}
+`;document.head.append(galaxyIbRebateStyle);
+const galaxyIbRebatePanel=document.createElement('section');galaxyIbRebatePanel.className='ib-rebate-panel';galaxyIbRebatePanel.hidden=true;
+function galaxyIbRebateEvidence(edge){
+  const text=(Array.isArray(edge?.evidence)?edge.evidence:[edge?.evidence,edge?.detail]).filter(Boolean).join('\\n');
+  const read=label=>{const found=text.match(new RegExp(label+'[：:]\\\\s*([^\\\\n；;]+)'));return found?found[1].trim():'-'};
+  return {reason:read('纳入原因'),status:read('数据库状态'),tradeProfit:read('实际交易盈亏'),rebate:read('返佣'),combined:read('综合盈利'),share:read('返佣占综合盈利'),count:read('返佣关联成交'),latest:read('最近返佣记录')};
+}
+function galaxyIbRebateGroups(){
+  const entities=new Map((data?.entities||[]).map(entity=>[String(entity.id),entity])),groups=new Map();
+  for(const edge of data?.relationships||[]){
+    if(String(edge?.type)!=='ib_direct_rebate')continue;
+    const sourceId=String(edge.source||''),targetId=String(edge.target||''),target=entities.get(targetId);
+    if(!target||target.type!=='account')continue;
+    if(!groups.has(sourceId)){const source=entities.get(sourceId)||{};groups.set(sourceId,{id:sourceId,label:source.label||sourceId,detail:String(source.detail||''),members:[]})}
+    groups.get(sourceId).members.push({id:targetId,label:target.label||targetId.replace(/^account:/,''),evidence:galaxyIbRebateEvidence(edge)});
+  }
+  return [...groups.values()];
+}
+function galaxyIbRebateTotals(detail,materialized){
+  const matched=String(detail||'').match(/异常\\s*(\\d+)\\s*\\/\\s*直属返佣账户(?:共|总数)\\s*(\\d+)\\s*个/);
+  return matched?{abnormal:matched[1],total:matched[2]}:{abnormal:String(materialized),total:'-'};
+}
+function galaxyRenderIbRebatePanel(){
+  const side=document.querySelector('.galaxy-side'),anchor=side?.querySelector('.caption');
+  if(side&&galaxyIbRebatePanel.parentElement!==side)side.insertBefore(galaxyIbRebatePanel,anchor||null);
+  const groups=galaxyIbRebateGroups();if(!groups.length){galaxyIbRebatePanel.hidden=true;return}
+  galaxyIbRebatePanel.hidden=false;
+  const groupHtml=groups.map(group=>{const totals=galaxyIbRebateTotals(group.detail,group.members.length);return '<div class="ib-rebate-heading"><div><h3>IB 直属返佣核查 · '+inspectionEscape(group.label)+'</h3><p>筛选范围内的已纳入账户；点击账户仅高亮账户，不会展开或收回星轨。</p></div><span class="ib-rebate-count">异常 '+inspectionEscape(totals.abnormal)+' / 共 '+inspectionEscape(totals.total)+'</span></div><p class="ib-rebate-description">直属返佣账户共 '+inspectionEscape(totals.total)+' 个；当前关系图已纳入 '+inspectionEscape(group.members.length)+' 个可核查账户。纳入原因、金额和笔数均来自该关系的原始证据。</p><div class="ib-rebate-list">'+group.members.map(member=>{const item=member.evidence,selected=String(selectedId)===member.id?' is-selected':'',reason=item.reason==='-'?'已纳入核查':item.reason,rebateDominant=reason.includes('返佣主导盈利')?' is-rebate-dominant':'';return '<button type="button" class="ib-rebate-account'+selected+rebateDominant+'" data-ib-rebate-account="'+inspectionEscape(member.id)+'"><span class="ib-rebate-row-title"><strong>'+inspectionEscape(member.label)+'</strong><small>状态 '+inspectionEscape(item.status)+'</small><span class="ib-rebate-reason" title="'+inspectionEscape(reason)+'">'+inspectionEscape(reason)+'</span></span><span class="ib-rebate-metrics"><span>实际交易：<b>'+inspectionEscape(item.tradeProfit)+'</b></span><span>返佣：<b>'+inspectionEscape(item.rebate)+'</b></span><span>综合盈利：<b>'+inspectionEscape(item.combined)+'</b></span><span>返佣占比：<b>'+inspectionEscape(item.share)+'</b></span><span>返佣关联成交：<b>'+inspectionEscape(item.count)+'</b></span><span>最近返佣：<b>'+inspectionEscape(item.latest)+'</b></span></span></button>'}).join('')+'</div>'}).join('');
+  galaxyIbRebatePanel.innerHTML=groupHtml;
+  galaxyIbRebatePanel.querySelectorAll('[data-ib-rebate-account]').forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const id=String(button.dataset.ibRebateAccount||'');if(!byId().has(id))return;selectedId=id;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}));
+}
+const galaxyRenderDetailWithIbRebate=renderDetail;renderDetail=function(){galaxyRenderDetailWithIbRebate();galaxyRenderIbRebatePanel()};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
 </script></body></html>"""

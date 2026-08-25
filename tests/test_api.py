@@ -581,6 +581,24 @@ def test_kuzu_risk_galaxy_uses_compact_controls_and_plain_language_profile(tmp_p
     assert "inspectionPanel.innerHTML='<div class=\"inspection-hero galaxy-profile-overview\"" in page.text
 
 
+def test_kuzu_risk_galaxy_has_dedicated_ib_rebate_audit_panel(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert page.status_code == 200
+    for marker in (
+        "function galaxyRenderIbRebatePanel",
+        "IB 直属返佣核查",
+        "返佣主导盈利",
+        "直属返佣账户共",
+        "data-ib-rebate-account",
+        "galaxyIbRebateEvidence",
+    ):
+        assert marker in page.text
+
+
 def test_kuzu_risk_galaxy_has_lazy_profile_and_relation_evidence_ui(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
