@@ -149,6 +149,11 @@ coordinate behavior, but its columns are transparent in both individual-order an
 display modes. The visible bars are exclusively the custom 8px-to-18px overlay, so a thin native
 bar cannot appear beside or through the readable column.
 
+Before a direct or standalone K-line document is served, the generated renderer script is checked
+by the K-line regression suite for its active Profit/Volume panel expression. This protects the
+inline chart shell from a JavaScript parse failure that would otherwise leave the account page's
+toolbars visible while no candlestick canvas can initialize.
+
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of
 the bar and time-label area without shrinking the main candlestick pane or changing chart data.

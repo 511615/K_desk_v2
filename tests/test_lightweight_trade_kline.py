@@ -220,7 +220,7 @@ def test_lightweight_renderer_uses_profit_stack_mode_for_overlay_axis_and_crossh
 
     assert "function profitPanelBars(rows)" in html
     assert "barStack?groupProfitBars(rows):rows.map" in html
-    assert "const rows=panel==='profit'?profitPanelBars(" in html
+    assert "const rows=panel==='profit'?profitPanelBars(filtered().filter(t=>!isOpen(t)).slice(0,Math.max(1,n($('displayLimit').value)||300))):groupVolumeBars" in html
     assert "const profitValues=profitPanelBars(closedRows)" in html
 
 
