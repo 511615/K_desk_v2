@@ -50,8 +50,11 @@ active execution with its recorded contract size and conversion rates, a same-so
 the selected account's actual exported leverage; it then shows per-order and total floating P/L,
 estimated used margin, margin usage and margin level where every active row has the required
 inputs. Missing product marks or unsupported margin modes are called out per row and prevent a
-misleading total. The page never inserts a default leverage, guessed contract multiplier or a
-synthetic stop-out price.
+misleading total. It also solves the nearest product price at which the replayed all-product equity
+would reach zero while every other product remains at the selected snapshot mark. This is presented
+as an `权益归零压力价` risk boundary, not as a factual broker stop-out, until the account group's
+actual stop-out percentage is present in a read-only source. The page never inserts a default
+leverage, guessed contract multiplier or synthetic broker stop-out price.
 The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits

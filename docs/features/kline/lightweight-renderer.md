@@ -75,8 +75,13 @@ derives estimated margin only where the exported calculation mode is supported (
 leverage`) and all inputs are present. Usage and margin level use factual Balance/Credit plus the
 derived floating P/L. A row that lacks a mark, contract, conversion or supported margin rule
 remains individually labelled as unavailable and blocks a false account-wide total. The renderer
-never falls back to a default balance, leverage or symbol multiplier, and it does not label an
-estimated liquidation price as factual when the group stop-out threshold is absent.
+never falls back to a default balance, leverage or symbol multiplier. It also calculates the
+nearest all-product price stress boundary at every clicked timestamp: for each product it holds all
+other products at their same-source M1 marks, aggregates that product's signed P/L slope across
+open executions, and solves the price at which replayed account equity reaches zero. This is shown
+as `权益归零压力价` when the group stop-out threshold is absent; it is not labelled as a broker
+liquidation price. If a sourced group threshold is later added, the same solver can evaluate the
+margin-level boundary using that threshold.
 
 ## Loading, empty and failure behavior
 

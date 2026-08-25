@@ -127,6 +127,37 @@ def test_lightweight_renderer_values_all_product_positions_from_execution_contra
     assert "initialBalance)||10000" not in html
 
 
+def test_lightweight_renderer_calculates_a_portfolio_risk_boundary_without_guessing_stop_out():
+    """A multi-product replay must expose its computed price stress boundary.
+
+    The group stop-out percentage is not exported by this read-only source, so
+    the renderer must label the zero-equity boundary instead of inventing a
+    broker threshold.  The client calculation remains timestamp-specific and
+    uses the same per-row valuation inputs as floating P/L and margin.
+    """
+    trades, bars, mapping = _fixture()
+    replay = {
+        "fields": ["openTime", "closeTime", "ticket", "symbol", "type", "volume", "openPrice", "isOpen", "contractSize", "profitRate", "marginRate"],
+        "rows": [["2026-08-20 10:00:00", "", "XAU-1", "XAUUSD", "buy", 1, 4500, True, 100, 1, 1]],
+        "valuation": {
+            "accountCurrency": "USD",
+            "leverage": 500,
+            "riskBoundaryMode": "equity_zero",
+            "riskBoundaryNote": "账户组强平阈值未导出；按权益归零压力价计算。",
+            "quoteBarsBySymbol": {"XAUUSD": [["2026-08-20 10:00:00", 4600]]},
+            "symbolSpecs": {"XAUUSD": {"contractSize": 100, "profitCurrency": "USD", "calcMode": 4}},
+        },
+    }
+
+    html = build_lightweight_html("10001", "10001_risk_boundary", trades, bars, mapping, account_replay=replay)
+
+    assert 'id="posRiskBoundary"' in html
+    assert "function accountRiskBoundaries(valuation,equity)" in html
+    assert "mode==='equity_zero'" in html
+    assert "权益归零压力价" in html
+    assert "账户组强平阈值未导出" in html
+
+
 def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():
     trades, bars, mapping = _fixture()
     trades.loc[0, "Is Open"] = True

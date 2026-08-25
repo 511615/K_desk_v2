@@ -1576,6 +1576,13 @@ def query_mysql_mt5_valuation_inputs(source: dict, account: str, symbols: set[st
                     "accountCurrency": currency,
                     "leverage": mysql_int(user.get("Leverage")),
                     "symbolSpecs": specs,
+                    # The read-only account export does not include the group
+                    # stop-out percentage.  Keep the stress calculation useful
+                    # without silently substituting a broker policy: the chart
+                    # labels this as an equity-zero pressure price until a
+                    # sourced threshold is available.
+                    "riskBoundaryMode": "equity_zero",
+                    "riskBoundaryNote": "账户组强平阈值未导出；按权益归零压力价计算，其他产品维持该快照标记价。",
                     "current": {
                         "balance": numeric_value(current.get("Balance")),
                         "credit": numeric_value(current.get("Credit")),
