@@ -4,8 +4,8 @@ title: Lightweight Charts trade renderer
 module: kline
 status: active
 apis: ["GET /api/accounts/by-login/{login}/inline-kline", "POST /api/kline/generate-from-db", "GET /output/{name}"]
-code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
-tests: ["tests/test_lightweight_trade_kline.py"]
+code: ["src/kdesk/api/account_app.py", "src/kdesk/domain/account_position_replay.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
+tests: ["tests/test_account_position_replay.py", "tests/test_lightweight_trade_kline.py"]
 depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
 last_verified_version: 2.1.4
 last_verified_date: 2026-08-25
@@ -60,6 +60,17 @@ document is assigned to the sandboxed account-page `srcdoc` iframe, its parent a
 so the vendor script resolves from the account service rather than `about:srcdoc`. The account
 service then replaces that verified runtime reference with the verified runtime bytes before serving
 the direct document, avoiding the sandbox's external-script execution restriction.
+
+When the user selects the `仓位` lower panel, its K-line and evidence overlay remain scoped to the
+selected symbol, but its position count and lot series cover every product that overlaps the
+visible direct-chart time window. The account service creates that compact event replay once from
+the selected route's complete read-only order history and sends only the window-overlapping rows
+plus the already swept per-chart-time totals. A chart pan or zoom therefore does not rescan account
+history. Balance and Credit use the existing full-account funds replay and only sourced platform
+Stop Out or negative-balance-clear records are labelled as liquidation facts. Intraday floating
+P/L, margin and margin level are deliberately left as unavailable until every active product has a
+same-source M1 mark and historical contract specification; the chart never substitutes a default
+balance, leverage or synthetic liquidation price.
 
 ## Loading, empty and failure behavior
 

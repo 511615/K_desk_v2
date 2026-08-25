@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "d24999933ce3",
+  "registryVersion": "94dfda10b612",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -667,6 +667,7 @@
       ],
       "code": [
         "src/kdesk/api/account_app.py",
+        "src/kdesk/domain/account_position_replay.py",
         "legacy/apps/problem_account_registry/app.py",
         "legacy/tools/trade_kline_tool/lightweight_trade_kline.py",
         "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py",
@@ -675,6 +676,7 @@
         "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"
       ],
       "tests": [
+        "tests/test_account_position_replay.py",
         "tests/test_lightweight_trade_kline.py"
       ],
       "depends_on": [

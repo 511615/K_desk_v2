@@ -2354,6 +2354,7 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
         try:
             import pandas as pd
             import generate_trade_kline_from_statement as quote_generator
+            from kdesk.domain.account_position_replay import build_account_position_replay
             from kdesk.infrastructure.quote_sources import QuoteSourceRegistry
             from lightweight_trade_kline import build_lightweight_html
         except Exception as exc:  # pragma: no cover - deployment dependency guard
@@ -2452,9 +2453,32 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
                     report_symbol,
                     {"report_symbol": report_symbol, "validation_status": "rejected", "failure": {"reason": "报价不可用"}},
                 )
+        window_start = trade_time_text(trades["Open Time"].min())
+        window_end = trade_time_text(trades["Close Time"].max())
+        timeline = build_db_kline_timeline(
+            account,
+            {"platform": platform, "server": server, "start": window_start, "end": window_end},
+        )
+        account_replay = build_account_position_replay(
+            [canonical_trade_row(row) for row in [*closed_rows, *current_rows]],
+            start=window_start,
+            end=window_end,
+            chart_times_by_symbol={
+                str(report_symbol): [trade_time_text(value) for value in frame["time"]]
+                for report_symbol, frame in bars_by_symbol.items()
+            },
+        )
         return account_cache_set(
             cache_key,
-            build_lightweight_html(account, stem, trades, bars_by_symbol, mapping_by_symbol),
+            build_lightweight_html(
+                account,
+                stem,
+                trades,
+                bars_by_symbol,
+                mapping_by_symbol,
+                timeline=timeline,
+                account_replay=account_replay,
+            ),
         )
 
 

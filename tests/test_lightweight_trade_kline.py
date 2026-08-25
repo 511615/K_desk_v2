@@ -84,10 +84,23 @@ def test_lightweight_renderer_contains_native_series_and_compatibility_controls(
 
 def test_lightweight_renderer_embeds_quote_and_trade_payload():
     trades, bars, mapping = _fixture()
-    html = build_lightweight_html("10001", "10001_demo", trades, bars, mapping, timeline={"events": [], "curve": []})
+    replay = {"fields": ["openTime"], "rows": [["2026-08-20 10:00:00"]], "seriesBySymbol": {"EURUSD": [["2026-08-20 10:00:00", 1, 0.1]]}}
+    html = build_lightweight_html("10001", "10001_demo", trades, bars, mapping, timeline={"events": [], "curve": []}, account_replay=replay)
     assert '"EURUSD"' in html
     assert '"Ticket":1' in html
     assert '"events":[]' in html
+    assert '"accountReplay":{"fields":["openTime"]' in html
+
+
+def test_lightweight_renderer_uses_account_replay_for_the_all_product_position_panel():
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_all_products", trades, bars, mapping)
+
+    assert "const accountReplay=DATA.accountReplay||{}" in html
+    assert "function accountOpenRowsAt(at)" in html
+    assert "function accountFundsAt(at)" in html
+    assert "accountReplay.seriesBySymbol?.[symbol]||[]" in html
+    assert "全账户仓位" in html
 
 
 def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():

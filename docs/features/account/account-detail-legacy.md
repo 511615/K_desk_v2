@@ -42,6 +42,12 @@ single scrollbar. Current positions retain their real opening node and extend th
 latest cached M1 quote; their floating result is not included in closed-order Profit bars. The separate
 legacy bottom `所有订单` expandable table is no longer rendered; its compatible read-only JSON endpoint
 remains available to existing callers.
+The inline chart's `仓位` panel is account-wide within the selected K-line time window: it counts
+and lists every overlapping product while the candlestick plot stays on the selected symbol. Its
+Balance and Credit values come from the cached factual account ledger and its red risk count contains
+only detected platform Stop Out or negative-balance-clear evidence. Where all active products do
+not have a same-source historical price and contract specification, it explicitly leaves floating
+P/L, margin and margin level unavailable instead of inventing a cross-product valuation.
 The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits
