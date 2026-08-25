@@ -96,8 +96,8 @@ anchored to the same baseline; profitable orders are red and extend upward, whil
 green and extend downward with equal visual magnitude for equal absolute profit.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
-Each visible time bucket is grouped for this presentation and has a fixed minimum width of 5px, with
-the width adapting to the current zoom level up to 12px. Filtering, symbol changes, pane switches,
+Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
+the width adapting to the current zoom level up to 18px. Filtering, symbol changes, pane switches,
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
 remain unchanged.
 

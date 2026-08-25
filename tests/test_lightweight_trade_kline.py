@@ -166,8 +166,8 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     trades, bars, mapping = _fixture()
     html = build_lightweight_html("10001", "10001_readable_bars", trades, bars, mapping)
 
-    assert "PANEL_BAR_MIN_WIDTH=5" in html
-    assert "PANEL_BAR_MAX_WIDTH=12" in html
+    assert "PANEL_BAR_MIN_WIDTH=8" in html
+    assert "PANEL_BAR_MAX_WIDTH=18" in html
     assert "function panelBarWidth" in html
     assert "function paintPanelBars" in html
 
