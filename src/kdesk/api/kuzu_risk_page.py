@@ -98,6 +98,8 @@ const detailToggleFixBase=renderDetail;renderDetail=function(){detailToggleFixBa
 function edgeCommunityKey(edge){const source=edge?.from?.id??edge?.source??'';return String(source)+'|'+relationKey(edge?.type||'unknown')}
 function edgeIsPath(edge){return String(edge?.id||'').startsWith('path|')}
 function edgeGroupIsExpanded(edge,anchor){return expandedRelationGroups.has(edgeCommunityKey(edge))||expandedRelationGroups.has(String(anchor||'')+'|'+relationKey(edge?.type||'unknown'))}
+const galaxyBaseEdgeGroupIsExpanded=edgeGroupIsExpanded;
+edgeGroupIsExpanded=function(edge,anchor){const fromKey=layout.get(edge?.from?.id||edge?.source||'')?.groupKey,toKey=layout.get(edge?.to?.id||edge?.target||'')?.groupKey;return galaxyBaseEdgeGroupIsExpanded(edge,anchor)||expandedRelationGroups.has(fromKey)||expandedRelationGroups.has(toKey)};
 const finalBaseSelectedBranch=ungroupedSelectedBranch;
 selectedBranch=function(node){const result=finalBaseSelectedBranch(node),allEdges=result.edges||[],counts=new Map(),out=[],seen=new Set();for(const edge of allEdges){if(edgeIsPath(edge))continue;const key=edgeCommunityKey(edge);counts.set(key,(counts.get(key)||0)+1)}for(const edge of allEdges){const key=edgeIsPath(edge)?edge.id:edgeCommunityKey(edge);if(edgeIsPath(edge)||edgeGroupIsExpanded(edge,node?.id)){out.push(edge);continue}if(seen.has(key))continue;seen.add(key);out.push({...edge,id:'selected-group|'+key,grouped:true,groupCount:counts.get(key)||1})}return {...result,edges:out}};
 rootChainEdges=function(nodes){const subject=accounts().find(item=>item.isSubject),out=[],counts=new Map(),seen=new Set();if(!subject)return out;const routes=[];for(const node of nodes){if(node.id===subject.id)continue;const chain=route(node);if(chain[0]?.id!==subject.id)continue;for(let index=1;index<chain.length;index++){const from=chain[index-1],to=chain[index],type=branchType(to),edge={from,to,type,directed:isDirectedRelation(type)},key=edgeCommunityKey(edge);routes.push({...edge,key,itemKey:from.id+'|'+to.id+'|'+type});counts.set(key,(counts.get(key)||0)+1)}}for(const edge of routes){if(edgeGroupIsExpanded(edge,edge.from.id)){if(seen.has(edge.itemKey))continue;seen.add(edge.itemKey);out.push({...edge,id:'root|'+edge.itemKey,groupCount:1});continue}if(seen.has(edge.key))continue;seen.add(edge.key);out.push({id:'root-group|'+edge.key,from:edge.from,to:edge.to,type:edge.type,directed:edge.directed,grouped:true,groupCount:counts.get(edge.key)||1})}return out};
@@ -119,19 +121,17 @@ function galaxyComponentVisualDepth(node){
   return depths.length?Math.max(1,Math.min(...depths)):galaxySemanticAccountDepth(node);
 }
 accountDepth=function(node){return galaxyComponentVisualDepth(node)};
-relationshipGroup=function(node){if(node.isSubject)return'subject';const community=galaxySameCrmCommunity(node);if(community)return community.key;const owner=parent(node);return String(owner?owner.id:'root')+'|'+relationKey(branchType(node))};
+relationshipGroup=function(node){if(node.isSubject)return'subject';const community=galaxySameCrmCommunity(node);if(community)return community.key;return'account|'+node.id};
 function groupAnchorPoint(group,center){const points=group.nodes.map(node=>layout.get(node.id)).filter(Boolean);if(!points.length)return{x:center.x,y:center.y};let vx=0,vy=0,radius=0;for(const point of points){const dx=point.x-center.x,dy=point.y-center.y,length=Math.hypot(dx,dy)||1;vx+=dx/length;vy+=dy/length;radius+=length}const angle=Math.atan2(vy,vx),r=radius/points.length;return{x:center.x+Math.cos(angle)*r,y:center.y+Math.sin(angle)*r}}
 let collapsedVisualGroups=[];
-// A relationship graph is not a tree: the same account may simultaneously be
-// in a LastIP, same-name, IB, EA, or copy-trading component.  Build components
-// from all returned evidence edges rather than the one score-ledger parent used
-// by the radial placement.  This keeps cross-community membership visible.
+// Only a shared CRM identity is an account community. LastIP, CID, EA, Copy,
+// rebate, IB and trade evidence stay as explicit relationship lines.
 function galaxyRelationshipCommunities(){
   const entities=byId(),buckets=new Map();
   for(const edge of data?.relationships||[]){
     const from=entities.get(edge.source),to=entities.get(edge.target);
     if(!from||!to||from.id===to.id||!['account','ib_user'].includes(from.type)||!['account','ib_user'].includes(to.type))continue;
-    const type=relationKey(edge.type),bucket=buckets.get(type)||[];bucket.push({from:from.id,to:to.id});buckets.set(type,bucket);
+    const type=relationKey(edge.type);if(type!=='same_crm_user')continue;const bucket=buckets.get(type)||[];bucket.push({from:from.id,to:to.id});buckets.set(type,bucket);
   }
   const communities=[];
   for(const [type,edges] of buckets){
@@ -274,6 +274,8 @@ function galaxyVisualEndpointKey(node){
   const point=layout.get(id);
   return point?.groupKey?'group:'+point.groupKey:id;
 }
+const galaxyBaseVisualEndpointKey=galaxyVisualEndpointKey;
+galaxyVisualEndpointKey=function(node){const id=String(node?.id||node||''),point=layout.get(id);return point?.groupKey&&!expandedRelationGroups.has(point.groupKey)?'group:'+point.groupKey:galaxyBaseVisualEndpointKey(node)};
 function galaxyRenderEdgeKey(edge){
   const from=galaxyVisualEndpointKey(edge?.from)||String(edge?.source||''),to=galaxyVisualEndpointKey(edge?.to)||String(edge?.target||''),type=relationKey(edge?.type||'unknown');
   return isDirectedRelation(edge?.type)?from+'>'+to+'|'+type:[from,to].sort().join('|')+'|'+type;
@@ -283,6 +285,23 @@ function galaxyFocusEdgeVisible(edge){
   if(!selected||!subject||selected.id===subject.id)return true;
   const chain=route(selected),pairs=new Set(chain.slice(1).map((node,index)=>[chain[index].id,node.id].sort().join('|')));
   return pairs.has([edge?.from?.id,edge?.to?.id].sort().join('|'))||edge?.from?.id===selected.id||edge?.to?.id===selected.id;
+}
+const galaxyBaseFocusEdgeVisible=galaxyFocusEdgeVisible;
+galaxyFocusEdgeVisible=function(edge){return Boolean(edge?.expandedMemberDetail)||galaxyBaseFocusEdgeVisible(edge)};
+function galaxyExpandedMemberDetailEdges(){
+  const entities=byId(),visible=new Set(graphNodes().map(node=>node.id)),members=new Set(),edges=[],seen=new Set();
+  for(const community of galaxyRelationshipCommunities())if(community.type==='same_crm_user'&&expandedRelationGroups.has(community.key))for(const id of community.members)members.add(id);
+  if(!members.size)return edges;
+  for(const raw of data?.relationships||[]){
+    const from=entities.get(raw.source),to=entities.get(raw.target);
+    if(!from||!to||!visible.has(from.id)||!visible.has(to.id)||!members.has(from.id)&&!members.has(to.id))continue;
+    if(!['account','ib_user'].includes(from.type)||!['account','ib_user'].includes(to.type))continue;
+    const type=relationKey(raw.type),pair=galaxyEdgePairKey({from,to,type});
+    if(seen.has(pair))continue;
+    seen.add(pair);
+    edges.push({id:String(raw.id||'expandedMemberDetail|'+from.id+'|'+to.id+'|'+type),from,to,type,directed:isDirectedRelation(type),expandedMemberDetail:true});
+  }
+  return edges;
 }
 const routedRenderOverviewBase=renderOverview;
 let galaxyRenderedEdgeKeys=new Set();
@@ -310,6 +329,8 @@ function galaxyDrawSelectedRoute(){
   }
 }
 renderOverview=function(){if(!data)return;routeLaneCursor.clear();galaxyRenderedEdgeKeys.clear();routedRenderOverviewBase();galaxyDrawSelectedRoute();const selectedNode=byId().get(selectedId),subject=accounts().find(item=>item.isSubject),note=document.getElementById('overviewNote');if(note&&selectedNode&&subject&&selectedNode.id!==subject.id)note.textContent='局部调查视图：仅显示「'+selectedNode.label+'」的临近关系及其返回中心账户的完整路径；点击空白处恢复全部关系。';const selectedEdge=relationHitEdges.find(edge=>edge.id===selectedEdgeKey);if(selectedEdge&&relationKey(selectedEdge.type)==='copy_order'&&!copyInspector.classList.contains('open'))fetchCopyInspection(selectedEdge)};
+const galaxyRenderOverviewWithExpandedDetails=renderOverview;
+renderOverview=function(){galaxyRenderOverviewWithExpandedDetails();if(!data)return;for(const edge of galaxyExpandedMemberDetailEdges())drawRelationEdge(edge)};
 // Blank-canvas clicks intentionally have no reset behavior. The explicit
 // "恢复初始" control at the end of this script is the only reset path.
 distanceToRelationEdge=function(point,edge){const route=relationRoute(edge);if(!route)return Infinity;let best=Infinity,previous=route.from;for(let index=1;index<=24;index++){const current=quadraticPoint(route,index/24),dx=current.x-previous.x,dy=current.y-previous.y,lengthSquared=dx*dx+dy*dy;let ratio=lengthSquared?Math.max(0,Math.min(1,((point.x-previous.x)*dx+(point.y-previous.y)*dy)/lengthSquared)):0;best=Math.min(best,Math.hypot(point.x-(previous.x+ratio*dx),point.y-(previous.y+ratio*dy)));previous=current}return best};
@@ -410,7 +431,8 @@ function galaxyTrackNodeVisible(node){if(!node||node.isSubject)return true;const
 graphNodes=function(){return galaxyTrackAllGraphNodes().filter(galaxyTrackNodeVisible)};
 ringLayout=function(_all,w,h){return galaxyTrackLayoutForAllNodes(galaxyTrackAllGraphNodes(),w,h)};
 rootChainEdges=function(nodes){return galaxyTrackRootChainEdges(nodes).filter(edge=>!edge.communityBridge)};
-function drawGalaxyExpandedMarkers(){}
+function galaxyDrawExpandedAccountLabels(){if(!data)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const node of graphNodes()){const p=layout.get(node.id);if(!p)continue;const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey);if(!showExpandedAccountLabel)continue;const depth=Math.min(4,accountDepth(node)),size=depth===1?10.5:depth===2?8.5:7;ctx.fillStyle='#f8fafc';ctx.font='600 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(String(node.login||node.label||''),p.x,p.y-size-11);ctx.textAlign='start'}ctx.restore()}
+function drawGalaxyExpandedMarkers(){galaxyDrawExpandedAccountLabels()}
 const galaxyRenderOverviewWithControls=renderOverview;renderOverview=function(){galaxyRenderOverviewWithControls();drawGalaxyExpandedMarkers();renderGalaxyGroupActions();document.querySelector('.galaxy-group-actions')?.remove();const note=document.getElementById('overviewNote'),total=galaxyTrackAllGraphNodes().length,visible=graphNodes().length;if(note)note.textContent='星轨按关系集合聚合：当前显示 '+visible+' / '+total+' 个节点；折叠轨道只显示关系、账户数和重叠信息，点击轨道边框展开成员，再次点击边框收回。';galaxyRebuildHitFrame()};
 queuePoll=function(delay=2000){clearTimeout(pollTimer);if(document.hidden){const resume=()=>{if(document.hidden)return;document.removeEventListener('visibilitychange',resume);queuePoll(250)};document.addEventListener('visibilitychange',resume);return}pollTimer=setTimeout(()=>load(true),delay)};
 window.addEventListener('pagehide',()=>{clearTimeout(pollTimer);controller?.abort()});

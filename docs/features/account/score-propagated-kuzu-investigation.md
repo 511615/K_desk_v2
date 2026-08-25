@@ -46,11 +46,14 @@ score, relationship layer and expansion outcome in plain language. It intentiona
 coverage dates and investigation implementation prose; those remain available only when an operator
 opens an auditable relationship-evidence detail.
 
-Relationship communities are collapsed by default. Their boundary is clickable and toggles a local
-presentation state without restarting the investigation: collapsed state shows the member count,
-the highest member status in `TA > A > T > P > M > B` order and one aggregate edge; expanded state
-shows the individual accounts and evidence edges inside that community. Each community toggles
-independently, and the right evidence panel exposes the same action for keyboard-accessible use.
+Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
+toggles a local presentation state without restarting the investigation: collapsed state shows the
+member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
+expanded state shows individual accounts with their numeric logins above the points and every visible
+original account/IB relation incident to a member as a separate raw-ID edge. Clicking that edge opens
+its existing relation evidence detail. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct
+lines and never become orbit communities. The right evidence panel exposes the same action for
+keyboard-accessible use.
 The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an
 independent depth-circle placement: every account preserves its detailed-view direction, orbit and
 relative position around the subject while collapsed-track members remain available in the overview.
@@ -222,15 +225,15 @@ back to the subject. Ring captions are positioned on their actual ring and empty
 Optional start/end datetime filters are forwarded to the read-only relationship endpoint; leaving
 both blank means full history. Clicking a copy relation stores the selected edge and highlights both
 endpoints with a white dashed overlay without changing the relationship colour.
-Grouped representative edges also include a visible member count in their relationship label. The
-detail-panel expand/merge control resolves its group from the actual relationship edge, so IB, CRM,
-copy and other single-relation communities toggle the same group that is drawn on the canvas.
+Grouped representative edges include a visible member count only for same-CRM communities. The
+detail-panel expand/merge control resolves its group from the actual same-CRM relationship edge;
+IB, CRM, Copy and other facts remain their own drawable lines.
 The page script is syntax-checked as part of the UI verification so a malformed interaction wrapper
 cannot leave the canvas at “读取中…” with no nodes rendered.
-Selecting an account uses the same grouped-edge policy as the overview: one relation line represents
-one parent/type community. The detail relation control can explicitly expand that community to show
-member edges, then merge it again without rerunning the database scan.
-The coloured community band is also a direct click target for the same expand/merge action.
+Selecting an account preserves its direct evidence lines. The detail relation control can explicitly
+expand the same-CRM community to show members, their account numbers and raw member edges, then
+merge it again without rerunning the database scan. The coloured same-CRM community band is also a
+direct click target for the same expand/merge action.
 The focus workspace activates that band on primary pointer-down and keeps a wider transparent stroke
 as its hit target. Background snapshot polling skips DOM reconstruction when the entity/relationship
 signature has not changed, while pan and wheel redraws are coalesced through one animation frame.
@@ -245,15 +248,10 @@ the direct collapse target.
 Evidence edges include a direction marker in the detail canvas, while repeated interaction instructions
 remain available in the evidence panel instead of being drawn beside every ring.
 
-Canvas relation communities retain their canonical collapsed controls, but Galaxy additionally builds
-relation-family components from every returned evidence edge. Therefore same-CRM, same-IP, EA, rebate,
-copy-order and IB components can intersect at one account; that account keeps its individual position
-instead of being hidden in one canonical anchor. At an intersection, the canonical normal-width band
-remains and the additional relation family overlays the shared member span on the same star-track
-radius. A multi-account overlap produces one contiguous segment across those compact members; a
-single-account overlap stays short. It creates neither parallel synthetic lanes nor duplicate
-labels/member counts, and never draws a component-centroid circle. The detail control or community
-band still expands only its canonical group.
+Canvas relation communities retain collapsed controls only for same-CRM evidence. Galaxy does not
+build orbit components for same-IP, EA, rebate, copy-order or IB evidence: they remain direct lines
+and preserve an account's individual position. It creates neither parallel synthetic lanes nor
+duplicate labels/member counts, and never draws a component-centroid circle.
 For same-CRM specifically, components are calculated only from the same-CRM account evidence and
 reverse pair evidence is canonicalized before presentation. A cross-layer same-CRM component is
 assigned to the closest non-subject discovery ring, where its complete member set starts as one
@@ -261,8 +259,9 @@ collapsed existing star-track band. The track label carries the relation and mem
 account node or member edge is drawn until an operator clicks its boundary. A second boundary click
 collapses the same track. LastIP, IB, EA, Copy and other intersections remain overlapping segments;
 they do not pull members into, or scatter members out of, that same-CRM band.
-Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
-opens copy-order evidence when applicable), while clicking a visible node keeps node selection
+Every rendered line is registered as a hit target. Expanded same-CRM member lines retain their raw
+relationship IDs, so clicking a line selects and highlights it and opens its exact relation evidence
+(including copy-order evidence when applicable), while clicking a visible node keeps node selection
 behavior. A collapsed Galaxy community is not rendered as a canvas anchor: the relation star-track
 itself is the aggregate. Its widened band boundary toggles the member projection in both directions,
 and hidden members are absent from node and edge hit targets. No presentation-only bridge or centroid

@@ -46,7 +46,28 @@ def test_presentation_graph_scopes_same_name_components_to_their_own_relation_fa
     result = build_presentation_graph(entities, relationships, subject_id="a:234889")
 
     groups = [(item["relationType"], item["memberCount"]) for item in result["entities"] if item["type"] == "relation_group"]
-    assert sorted(groups) == [("login_ip", 2), ("same_crm_user", 2), ("same_crm_user", 3)]
+    assert sorted(groups) == [("same_crm_user", 2), ("same_crm_user", 3)]
+    assert any(edge["id"] == "last-ip" for edge in result["relationships"])
+
+
+def test_presentation_graph_keeps_non_crm_account_relations_as_direct_lines() -> None:
+    entities = [
+        {"id": "a:root", "type": "account", "label": "root", "isSubject": True},
+        {"id": "a:crm", "type": "account", "label": "crm"},
+        {"id": "a:ip", "type": "account", "label": "ip"},
+        {"id": "a:copy", "type": "account", "label": "copy"},
+    ]
+    relationships = [
+        {"id": "crm", "source": "a:root", "target": "a:crm", "type": "same_crm_user", "label": "同 CRM"},
+        {"id": "ip", "source": "a:root", "target": "a:ip", "type": "login_ip", "label": "同 LastIP"},
+        {"id": "copy", "source": "a:root", "target": "a:copy", "type": "copy_order", "label": "跟单"},
+    ]
+
+    result = build_presentation_graph(entities, relationships, subject_id="a:root")
+
+    groups = [item for item in result["entities"] if item["type"] == "relation_group"]
+    assert [group["relationType"] for group in groups] == ["same_crm_user"]
+    assert {edge["id"] for edge in result["relationships"]} >= {"ip", "copy"}
 
 
 def test_presentation_graph_retains_existing_evidence_entity_and_limits_members() -> None:

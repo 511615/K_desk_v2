@@ -66,6 +66,11 @@ def build_presentation_graph(
                 if account_id in accounts:
                     _add_entity_link(edges, raw, concrete_entity, account_id, relation_type)
             continue
+        # Only a shared CRM identity is an account community. Other evidence
+        # remains a direct line so it cannot be mistaken for a same-name cluster.
+        if relation_type != "same_crm_user":
+            _add_edge(edges, raw, source, target, relation_type)
+            continue
         group_key = _group_key(
             raw,
             source,

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import gc
+import re
+import shutil
+import subprocess
 import time
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import kuzu
 from fastapi.testclient import TestClient
@@ -526,6 +530,42 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "kind==='edge'" in dispatcher
     assert "galaxyVisualEndpointKey(edge?.from)" in page.text
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
+
+
+def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_and_raw_relation_edges(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert page.status_code == 200
+    assert "const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey)" in page.text
+    assert "function galaxyExpandedMemberDetailEdges" in page.text
+    assert "expandedMemberDetail|" in page.text
+    assert "id:String(raw.id||'expandedMemberDetail|'" in page.text
+    node = shutil.which("node")
+    if node:
+        scripts = re.findall(r"<script>([\s\S]*?)</script>", page.text)
+        with TemporaryDirectory() as directory:
+            script_path = Path(directory) / "kuzu-risk-galaxy.js"
+            script_path.write_text("\n".join(scripts), encoding="utf-8")
+            check = subprocess.run(
+                [node, "--check", str(script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        assert check.returncode == 0, check.stderr
+
+
+def test_kuzu_focus_workspace_collapses_only_same_crm_relation_groups(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=focus-force")
+
+    assert page.status_code == 200
+    assert "entity.type!=='relation_group'||entity.relationType!=='same_crm_user'" in page.text
 
 
 def test_kuzu_risk_galaxy_uses_compact_controls_and_plain_language_profile(tmp_path: Path) -> None:

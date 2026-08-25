@@ -40,17 +40,9 @@ the auditable relation-evidence view and are not repeated as an account-profile 
 
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
-accounts are returned as one relation bundle whose sections remain separately auditable. A collapsed
-community retains one aggregate edge; expanded communities expose member evidence edges. Galaxy also
-derives relation-family components from the complete returned evidence set, so a trading account can
-belong to overlapping LastIP, same-name, IB, EA or Copy communities at the same time. An account with
-more than one such membership remains individually visible rather than being swallowed by one
-canonical aggregate anchor. At a shared account, the renderer keeps the canonical wide relation band
-and overlays the other relation family's normal-width segment on that same star-track radius. When
-two or more accounts in one compact group share that second relation, the overlay covers their common
-contiguous member span rather than creating one tiny segment per account. A one-account overlap remains
-a short segment. There are no synthetic lanes, duplicate member-count labels or centroid circles around
-a component.
+accounts are returned as one relation bundle whose sections remain separately auditable. Only shared
+CRM identity is a collapsible account community; LastIP, CID, EA, Copy, rebate, IB and trade facts are
+always ordinary account-to-account or account-to-entity lines.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
@@ -60,9 +52,11 @@ presentation fact. LastIP, IB, EA, Copy or other evidence may overlap those acco
 enlarge or split their same-CRM component. In Galaxy, a component spanning logical discovery layers
 uses the nearest non-subject member's existing star-track ring as its shared visual band. It starts
 collapsed: the band label shows the complete component count while no member account or member edge
-is drawn. Clicking the band boundary expands those members in the same band; clicking that boundary
-again collapses them. This is a layout-only projection and does not change evidence, propagation,
-score or expansion eligibility.
+is drawn. Clicking the band boundary expands those members in the same band; every expanded account
+shows its numeric login above the point, and every visible original account/IB relation incident to a
+member is restored as its own raw-ID line. Clicking such a line opens the existing read-only relation
+evidence detail. Clicking the boundary again collapses the band. This is a layout-only projection and
+does not change evidence, propagation, score or expansion eligibility.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
@@ -97,11 +91,11 @@ top-down (X/Z) locator remains stable while the 3D camera rotates; both views sh
 route highlighting. The 2D workspace and legacy galaxy renderer remain available for evidence review
 and compatibility.
 
-The detailed workspace starts each relationship community collapsed. A collapsed community draws
+The detailed workspace collapses only same-CRM relationship communities. A collapsed community draws
 one aggregate node and one aggregate edge; its displayed status is the highest-priority member status
 in `TA > A > T > P > M > B` order. The dashed community boundary is the primary interaction target:
-clicking the boundary expands that community into its member accounts and individual evidence edges,
-and clicking it again collapses only that community. A transparent widened stroke makes the boundary
+clicking the boundary expands that community into its member accounts, visible account numbers and
+individual raw evidence edges, and clicking it again collapses only that community. A transparent widened stroke makes the boundary
 hit target usable without changing the visible ring width. The evidence panel repeats the same
 expand/collapse control and states the member count, highest status and highest propagated score.
 Initial view fitting includes every returned ring, manual wheel zoom can reach 5%, and later polling
