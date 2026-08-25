@@ -115,6 +115,9 @@ cannot introduce a second coloured horizontal line that appears to shift one col
 The custom red/green bars take their base coordinate directly from the zero-line series rather than
 from the histogram's coordinate conversion, guaranteeing that both colours meet the visible dashed
 Profit zero axis even if Lightweight Charts applies different histogram geometry.
+Pointer movement and release within the chart host schedule the same overlay redraw, so dragging a
+pane separator or vertical price scale immediately re-reads that zero-line coordinate instead of
+leaving readable bars at their pre-drag position.
 The native Profit/Volume histogram data remains present only to retain its established scale and
 coordinate behavior, but its columns are transparent in both individual-order and grouped-bar
 display modes. The visible bars are exclusively the custom 8px-to-18px overlay, so a thin native
