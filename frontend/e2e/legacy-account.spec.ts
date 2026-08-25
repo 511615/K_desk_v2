@@ -6,6 +6,7 @@ test('account detail URL remains the server-rendered legacy page', async ({ page
   await expect(page.locator('#copyOriginBtn')).toHaveCount(1)
   await expect(page.locator('#eaCommentBtn')).toHaveCount(1)
   await expect(page.locator('#toxicBtn')).toHaveCount(1)
-  await expect(page.locator('#orderDetails')).toHaveCount(1)
+  await expect(page.locator('#inlineKlineSection')).toHaveCount(1)
+  await expect(page.locator('#inlineKlineFrame')).toHaveCount(1)
   await expect(page.locator('#app')).toHaveCount(0)
 })

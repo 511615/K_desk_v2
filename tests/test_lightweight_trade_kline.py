@@ -151,6 +151,17 @@ def test_lightweight_renderer_keeps_bar_pane_and_time_axis_compact():
     assert "chart.panes()[1].setStretchFactor(.6)" in html
 
 
+def test_lightweight_renderer_formats_compact_time_axis_from_quote_timestamps():
+    """Compressed trading time must label quotes, never the synthetic 2000 anchor."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_compact_time_labels", trades, bars, mapping)
+
+    assert "tickMarkFormatter:axisTickMarkFormatter" in html
+    assert "function axisTickMarkFormatter" in html
+    assert "compactTimes.length" in html
+    assert "bars[index]?.time" in html
+
+
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
     """An inline chart expands in the account page instead of adding an iframe scrollbar."""
     trades, bars, mapping = _fixture()

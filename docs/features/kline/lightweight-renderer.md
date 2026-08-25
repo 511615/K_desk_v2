@@ -7,7 +7,7 @@ apis: ["GET /api/accounts/by-login/{login}/inline-kline", "POST /api/kline/gener
 code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
 tests: ["tests/test_lightweight_trade_kline.py"]
 depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
-last_verified_version: 2.1.2
+last_verified_version: 2.1.4
 last_verified_date: 2026-08-25
 ---
 
@@ -28,6 +28,9 @@ metrics, order table and optional funds-event replay. Lightweight Charts supplie
 pan, zoom and responsive resize behavior. When embedded in the legacy account detail, the document
 reports its rendered height to the parent; the parent validates the sending frame and expands the
 embed so the account page owns scrolling instead of showing a nested K-line scrollbar.
+Compressed time preserves the original quote timestamp labels on the horizontal axis. Its internal
+continuous ordering must never expose the synthetic `2000-01-01` anchor used to remove market-closed
+gaps; switching between compressed and real time changes spacing only, not displayed dates.
 
 ## API contract
 
@@ -63,8 +66,10 @@ artifact. It shares cache normalization helpers with the legacy generator.
 ## Tests and acceptance
 
 `tests/test_lightweight_trade_kline.py` verifies series, markers, filters, timeline payload, embedded
-height reporting and the absence of an MT5 dependency in rendered HTML. Python compilation and the
-existing K-line tests must pass before promotion.
+height reporting, real quote labels in compressed time and the absence of an MT5 dependency in rendered
+HTML. Release E2E verifies the server-rendered legacy account page retains the inline K-line section
+and frame, which replaced the removed order-details block. Python compilation and the existing K-line
+tests must pass before promotion.
 
 ## Compatibility and deprecation
 

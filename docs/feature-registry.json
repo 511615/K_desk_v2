@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "9002da796a98",
+  "registryVersion": "d24999933ce3",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -681,7 +681,7 @@
         "KLN-DB-001",
         "KLN-TIMELINE-001"
       ],
-      "last_verified_version": "2.1.2",
+      "last_verified_version": "2.1.4",
       "last_verified_date": "2026-08-25",
       "document": "docs/features/kline/lightweight-renderer.md"
     },
