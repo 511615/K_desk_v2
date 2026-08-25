@@ -202,9 +202,12 @@ def test_lightweight_renderer_keeps_profit_axis_and_crosshair_value_in_the_price
     assert "const PROFIT_AXIS_X_OFFSET=5" in html
     assert "String(rect.width-PROFIT_AXIS_X_OFFSET)" in html
     assert "function updateProfitCrosshair(param)" in html
-    assert "active.coordinateToPrice(param.point.y-geometry.top)" in html
+    assert "active.coordinateToPrice(paneY)" in html
     assert "chart.subscribeCrosshairMove(updateProfitCrosshair)" in html
     assert "chart.subscribeClick(updateProfitCrosshair)" in html
+    assert "function updateProfitCrosshairFromPointer(event)" in html
+    assert "event.clientY-host.getBoundingClientRect().top-geometry.top" in html
+    assert "host.addEventListener('pointerdown',updateProfitCrosshairFromPointer)" in html
     assert "profitCrosshairValue" in html
 
 

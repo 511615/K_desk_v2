@@ -104,6 +104,8 @@ native crosshair is inside the Profit pane, the overlay converts its pane-local 
 the exact Profit value and displays that signed two-decimal value at the same axis position; leaving
 the pane clears the transient value. The same conversion runs on a chart click, so the displayed
 value remains available when a user pins the crosshair at a specific Profit coordinate.
+The pointer path uses the chart host's client Y coordinate minus the measured Profit-pane offset,
+which remains correct whether the underlying chart event reports pane-local or chart-local Y.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
