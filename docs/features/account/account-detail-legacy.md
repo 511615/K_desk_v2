@@ -47,7 +47,7 @@ page key includes the selected route and latest-order version; the response is l
 short interval so a panel refresh does not repeat the quote read. This direct display never submits
 a durable job, never waits on port `8766`, and never creates a chart HTML artifact. The existing
 manual chart controls remain available, unchanged, for full-history, symbol-scoped and
-funds-timeline charts. The embedded document request uses browser `no-store`/`no-cache` directives
+funds-timeline charts. The embedded document request uses the browser `no-store` directive
 so a renderer deployment cannot remain hidden behind a stale client-side chart document; this does
 not alter the endpoint's private cache contract for other callers.
 The top-right account search accepts a numeric Login and opens its detail without returning to the

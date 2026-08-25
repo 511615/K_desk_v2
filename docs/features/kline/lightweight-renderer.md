@@ -99,8 +99,8 @@ The visible Profit and Volume bars use a chart-host overlay in addition to the n
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
 the width adapting to the current zoom level up to 18px. Filtering, symbol changes, pane switches,
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
-remain unchanged. The account-detail embed requests this document with browser `no-store`/`no-cache`
-directives, so a page reload after a renderer deployment cannot retain an older chart document.
+remain unchanged. The account-detail embed requests this document with the browser `no-store`
+directive, so a page reload after a renderer deployment cannot retain an older chart document.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

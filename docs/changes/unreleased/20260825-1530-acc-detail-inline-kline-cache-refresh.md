@@ -12,8 +12,8 @@ compatibility: compatible
 
 The account-detail browser fetch could reuse an older inline K-line HTML document after a renderer
 release, leaving visual fixes such as lower-bar width unavailable until its client cache expired. The
-account page now requests its inline K-line document with browser `cache: 'no-store'` and
-`Cache-Control: no-cache`. Each account-page reload therefore receives the current renderer document;
+account page now requests its inline K-line document with browser `cache: 'no-store'`. Each
+account-page reload therefore receives the current renderer document;
 the endpoint's existing private cache policy and all chart data contracts are unchanged.
 
 ## Impact
@@ -27,7 +27,7 @@ Updated `ACC-DETAIL-001` and `KLN-RENDER-001` to document the browser-side refre
 
 ## Verification
 
-The legacy account-detail unit test asserts the cache directives and the focused account-detail and
+The legacy account-detail unit test asserts the cache directive and the focused account-detail and
 Lightweight renderer test suites pass. Release validation performs the normal Fast/Full, production
 contract and browser embedded-source checks.
 
