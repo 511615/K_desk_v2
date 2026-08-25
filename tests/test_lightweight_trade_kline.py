@@ -213,6 +213,17 @@ def test_lightweight_renderer_keeps_profit_axis_and_crosshair_value_in_the_price
     assert "profitCrosshairValue" in html
 
 
+def test_lightweight_renderer_uses_profit_stack_mode_for_overlay_axis_and_crosshair():
+    """The Profit overlay must retain individual values unless its control says merged."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_profit_stack_mode", trades, bars, mapping)
+
+    assert "function profitPanelBars(rows)" in html
+    assert "barStack?groupProfitBars(rows):rows.map" in html
+    assert "const rows=panel==='profit'?profitPanelBars(" in html
+    assert "const profitValues=profitPanelBars(closedRows)" in html
+
+
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
     """An inline chart expands in the account page instead of adding an iframe scrollbar."""
     trades, bars, mapping = _fixture()

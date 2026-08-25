@@ -111,8 +111,10 @@ Profit-axis coordinates used by the bars and labels; it does not rely on a separ
 conversion that can use a different multi-pane coordinate space.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
-Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
-the width adapting to the current zoom level up to 18px. Filtering, symbol changes, pane switches,
+Profit follows the visible `Profit柱：单独 / 合并` control end-to-end: `单独` retains each normalized
+closed order's Profit for the bar, symmetric axis and crosshair, while `合并` sums only orders in the
+same M1 bucket for all three. Volume remains grouped by M1 bucket. Each visible bar has a fixed
+minimum width of 8px, with the width adapting to the current zoom level up to 18px. Filtering, symbol changes, pane switches,
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
 remain unchanged. The account-detail embed requests this document with the browser `no-store`
 directive and a page-load version query parameter, so a reload after a renderer deployment cannot
@@ -165,7 +167,9 @@ M1 timestamps identify the start of a one-minute interval. Orders map to their c
 (the most recent bar at or before the trade time), while the buy/sell node, close node and holding
 line retain their second-level fraction within that interval. Earlier events appear to the left and
 later events to the right without adding synthetic K bars or changing the M1 candle. Profit and
-Volume indicators intentionally remain grouped to their containing M1 interval.
+Volume indicators intentionally remain grouped to their containing M1 interval. Profit is grouped
+only when the explicit `Profit柱：合并` mode is active; individual mode preserves the source order
+value even for several orders opened in the same minute.
 
 M1 OHLC bars are Bid values. Endpoint validation is direction-aware: buy opens and sell closes are
 checked against the Bid high plus the recorded spread (Ask upper envelope); sell opens and buy closes
