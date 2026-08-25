@@ -426,16 +426,21 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "function galaxyCommunityMemberships" in page.text
     assert "function galaxyOrbitOverlapBands" in page.text
     assert "orbitOnly:true" in page.text
-    assert "function galaxyCompactSameCrmBand" in page.text
-    assert "compactCommunity:true" in page.text
     assert "membersByBand" in page.text
     assert "overlayMemberCount:members.length" in page.text
     assert "nodes:members.map(item=>item.node)" in page.text
     assert "span=.12" not in page.text
     assert "nodes:[node]" not in page.text
-    assert "group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1)" in page.text
-    assert "if(group.componentMemberCount&&group.type==='same_crm_user')continue" in page.text
-    assert "group.componentMemberCount+'账户'" in page.text
+    assert "function galaxyTrackIsCollapsed" in page.text
+    assert "function galaxyTrackNodeVisible" in page.text
+    assert "function galaxyTrackToggleKey" in page.text
+    assert "trackOnly:true" in page.text
+    assert "点击轨道展开" in page.text
+    assert "if(expandedRelationGroups.has(groupKey))expandedRelationGroups.delete(groupKey)" in page.text
+    assert "function galaxyCompactSameCrmBand" not in page.text
+    assert "compactCommunity:true" not in page.text
+    assert "function drawCollapsedCommunities" not in page.text
+    assert "ctx.arc(group.anchor.x,group.anchor.y" not in page.text
     assert "const GALAXY_LEAF_BADGE_SCALE=.62" in page.text
     assert "drawScaledTerminalBadge(state,x,y,size*GALAXY_LEAF_BADGE_SCALE)" in page.text
     assert "function drawIntersectingCommunities" not in page.text
@@ -444,6 +449,9 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "function relationRoute" in page.text
     assert "quadraticCurveTo" in page.text
     assert "routeLaneCursor" in page.text
+    assert "function galaxyDrawSelectedRoute(){\n  if(!data)return;" in page.text
+    assert "renderOverview=function(){if(!data)return;routeLaneCursor.clear()" in page.text
+    assert "ctx.setTransform(d,0,0,d,0,0);if(!data)return;renderOverview();fitMapToBoard()" in page.text
     assert page.text.count("function renderOverview") == 1
     assert "function relationTheme" in page.text
     assert "function nodeShape" in page.text
