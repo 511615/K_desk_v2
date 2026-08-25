@@ -8,7 +8,7 @@ code: ["src/kdesk/__init__.py", "src/kdesk/build_info.py", "scripts/governance.p
 tests: ["tests/test_governance.py", "tests/test_architecture.py", "tests/test_production_versioning.py", "tests/test_verify_live_matrix.py"]
 depends_on: []
 last_verified_version: 2.1.1
-last_verified_date: 2026-08-19
+last_verified_date: 2026-08-25
 ---
 
 # Feature documentation lifecycle
@@ -51,6 +51,9 @@ The Python governance CLI is cross-platform; PowerShell composes local Windows v
 ## Tests and acceptance
 
 Tests validate parsing, registry determinism, change records, architecture boundaries and metadata.
+Build-metadata verification accepts the governed `main`, `dev` and named `feature/*` worktrees, as
+well as detached execution, so an isolated feature branch can complete Full verification before its
+controlled promotion.
 Production release is pinned to `D:\risk\K_desk_v2_main` on `main`; ad-hoc deployment worktrees are
 prohibited. After restart, `verify_deployed_release.ps1` checks Git SHA, version, source root,
 branch, profile and critical route contracts.

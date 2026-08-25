@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "ea8e5b5383b4",
+  "registryVersion": "7f99c4864b2b",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -563,7 +563,7 @@
       ],
       "depends_on": [],
       "last_verified_version": "2.1.1",
-      "last_verified_date": "2026-08-19",
+      "last_verified_date": "2026-08-25",
       "document": "docs/features/governance/feature-lifecycle.md"
     },
     {

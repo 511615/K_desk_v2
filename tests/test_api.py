@@ -128,7 +128,7 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     assert payload["compatibilityLevel"] == "legacy-account-v1"
     assert payload["sourceRoot"]
     assert payload["pythonExecutable"]
-    assert payload["branch"] in {"main", "dev", "detached"}
+    assert payload["branch"] in {"main", "dev", "detached"} or payload["branch"].startswith("feature/")
     assert payload["defaultRoutes"] == {
         "kuzuRisk": "focus-force",
         "kuzuGalaxy": "graph_type=galaxy",
