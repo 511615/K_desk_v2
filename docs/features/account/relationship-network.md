@@ -50,11 +50,11 @@ Same-CRM aggregation is deliberately relation-family scoped: connected component
 from `same_crm_user` account-to-account evidence, and reverse copies of the same pair are one
 presentation fact. LastIP, IB, EA, Copy or other evidence may overlap those accounts but cannot
 enlarge or split their same-CRM component. In Galaxy, a component spanning logical discovery layers
-uses the nearest non-subject member's existing star-track ring as its shared visual band. All member
-accounts stay individually visible, tightly packed with preserved click spacing and selectable in that
-one band; the band label shows the complete component count. This is a layout-only projection and does
-not change evidence,
-propagation, score or expansion eligibility.
+uses the nearest non-subject member's existing star-track ring as its shared visual band. It starts
+collapsed: the band label shows the complete component count while no member account or member edge
+is drawn. Clicking the band boundary expands those members in the same band; clicking that boundary
+again collapses them. This is a layout-only projection and does not change evidence, propagation,
+score or expansion eligibility.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
@@ -122,13 +122,12 @@ the detailed graph: the selected account, its local evidence and its complete ac
 the investigation subject are rendered without changing community expansion state.
 Galaxy canvas interaction is owned by one capture-phase dispatcher. It reads an immutable hit map
 built after the last completed render and never invokes layout while classifying a click. Hit priority
-is expanded-community collapse marker, visible account/IB node, collapsed community boundary or
-anchor, relation edge, then blank canvas. The dispatcher consumes every canvas click before legacy
-compatibility listeners can act, so one gesture performs at most one expand, collapse, select or
-edge-inspection action. Members hidden by a collapsed group are excluded from node hit targets.
-When a visible node has been moved by its component's star-track aggregation, the dispatcher also
-checks the current rendered node coordinates after the frozen-frame lookup. This fallback selects
-the visible account without recalculating layout or falling through to a relation-band action.
+is visible account/IB node, relation-track boundary, relation edge, then blank canvas. The dispatcher
+consumes every canvas click before legacy compatibility listeners can act, so one gesture performs at
+most one expand, collapse, select or edge-inspection action. A collapsed relation track has no
+synthetic anchor or member hit target. Clicking its boundary expands it; clicking the expanded
+boundary collapses it again. Intersecting relation families remain overlapping segments on the same
+star-track radius rather than becoming circles or duplicate account nodes.
 The overview intentionally renders only the selected account's local evidence cluster and its
 deduplicated parent chain back to the problem account. Intermediate CRM/evidence entities remain
 hidden, but their relationship type is retained on the visible account-to-account segment. Siblings
