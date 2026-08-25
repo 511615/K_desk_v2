@@ -7,7 +7,7 @@ apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/acco
 code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.3
+last_verified_version: 2.1.4
 last_verified_date: 2026-08-25
 ---
 
@@ -34,9 +34,9 @@ community retains one aggregate edge; expanded communities expose member evidenc
 derives relation-family components from the complete returned evidence set, so a trading account can
 belong to overlapping LastIP, same-name, IB, EA or Copy communities at the same time. An account with
 more than one such membership remains individually visible rather than being swallowed by one
-canonical aggregate anchor. Intersections use compact coloured arc segments on the account's existing
-star-track ring; relation families may run in parallel on that same orbit, with their own label and
-member count. The renderer never draws a second centroid circle around a component.
+canonical aggregate anchor. At a shared account, the renderer keeps the canonical wide relation band
+and overlays only the other relation family's normal-width segment on that same star-track radius.
+There are no synthetic lanes, duplicate member-count labels or centroid circles around a component.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

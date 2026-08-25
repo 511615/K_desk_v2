@@ -119,7 +119,7 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         payload = client.get("/api/meta").json()
-    assert payload["version"] == "2.1.3"
+    assert payload["version"] == "2.1.4"
     assert payload["gitSha"]
     assert payload["buildTime"]
     assert payload["schemaRevision"] in {"unversioned", "uninitialized", "0001"}
@@ -423,9 +423,13 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "function galaxyRelationshipCommunities" in page.text
     assert "function galaxyCommunityMemberships" in page.text
     assert "function galaxyOrbitOverlapBands" in page.text
-    assert "function drawOrbitOverlapBands" in page.text
+    assert "orbitOnly:true" in page.text
+    assert "span=.12" in page.text
+    assert "nodes:[node]" in page.text
     assert "group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1)" in page.text
     assert "function drawIntersectingCommunities" not in page.text
+    assert "function drawOrbitOverlapBands" not in page.text
+    assert "band.lane" not in page.text
     assert "function relationRoute" in page.text
     assert "quadraticCurveTo" in page.text
     assert "routeLaneCursor" in page.text

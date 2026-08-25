@@ -7,7 +7,7 @@ apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login
 code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.3
+last_verified_version: 2.1.4
 last_verified_date: 2026-08-25
 ---
 
@@ -236,10 +236,11 @@ remain available in the evidence panel instead of being drawn beside every ring.
 Canvas relation communities retain their canonical collapsed controls, but Galaxy additionally builds
 relation-family components from every returned evidence edge. Therefore same-CRM, same-IP, EA, rebate,
 copy-order and IB components can intersect at one account; that account keeps its individual position
-instead of being hidden in one canonical anchor. Intersection membership is rendered as compact,
-parallel coloured arc segments on the existing star-track orbit, never as a new circle around a
-component centroid; each segment retains its family label and member count. The detail control or
-community band still expands only its canonical group.
+instead of being hidden in one canonical anchor. At an intersection, the canonical normal-width band
+remains and the additional relation family overlays only a normal-width segment at that account on the
+same star-track radius. It creates neither parallel synthetic lanes nor duplicate labels/member counts,
+and never draws a component-centroid circle. The detail control or community band still expands only
+its canonical group.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
 Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "f72fc8fa8a62",
+  "registryVersion": "9002da796a98",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -93,7 +93,7 @@
         "TOX-PUSH-001",
         "TOX-HEDGE-001"
       ],
-      "last_verified_version": "2.1.3",
+      "last_verified_version": "2.1.4",
       "last_verified_date": "2026-08-25",
       "document": "docs/features/account/relationship-network.md"
     },
@@ -172,7 +172,7 @@
         "TOX-PUSH-001",
         "TOX-HEDGE-001"
       ],
-      "last_verified_version": "2.1.3",
+      "last_verified_version": "2.1.4",
       "last_verified_date": "2026-08-25",
       "document": "docs/features/account/score-propagated-kuzu-investigation.md"
     },
