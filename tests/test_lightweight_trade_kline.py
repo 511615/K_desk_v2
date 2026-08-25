@@ -197,6 +197,9 @@ def test_lightweight_renderer_formats_compact_time_axis_from_quote_timestamps():
     assert "function axisTickMarkFormatter" in html
     assert "compactTimes.length" in html
     assert "bars[index]?.time" in html
+    assert "localization:{timeFormatter:chartTimeFormatter}" in html
+    assert "function chartTimeFormatter(time)" in html
+    assert "return raw||axisTickMarkFormatter(value)" in html
 
 def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     """Dense chart intervals retain readable lower-pane bars while panning and zooming."""

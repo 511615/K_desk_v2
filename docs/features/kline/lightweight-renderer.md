@@ -151,7 +151,9 @@ The overlay translates its pane-local price coordinates into the lower indicator
 the candlestick pane or end above the visible Profit zero line. The horizontal axis emits the
 full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
 `HH:MM` labels otherwise; it preserves the original quote timestamps while preventing dense labels
-from overlapping.
+from overlapping. The compressed axis uses a synthetic continuous value only for spacing. Its
+crosshair time formatter resolves that value back to the source M1 timestamp before rendering, so
+the hover label can never expose the synthetic `2000-01-01` date.
 The Profit histogram and its custom overlay share the explicit dashed zero line as their only
 baseline. Native last-value price lines are disabled for Profit and Volume, so the current value
 cannot introduce a second coloured horizontal line that appears to shift one colour's origin.
