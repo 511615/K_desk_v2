@@ -106,6 +106,9 @@ so a readable Profit/Volume bar can never cover the candlestick pane. The horizo
 full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
 `HH:MM` labels otherwise; it preserves the original quote timestamps while preventing dense labels
 from overlapping.
+The Profit histogram and its custom overlay share the explicit dashed zero line as their only
+baseline. Native last-value price lines are disabled for Profit and Volume, so the current value
+cannot introduce a second coloured horizontal line that appears to shift one colour's origin.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

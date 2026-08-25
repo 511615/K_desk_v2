@@ -178,6 +178,8 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "if(index<=0)return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`" in html
     assert "if(date.getHours()===0&&date.getMinutes()===0)return `${pad(date.getMonth()+1)}-${pad(date.getDate())}`" in html
     assert "return `${pad(date.getHours())}:${pad(date.getMinutes())}`" in html
+    assert "priceScaleId:'profit',base:0,lastValueVisible:false,priceLineVisible:false" in html
+    assert "priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false" in html
 
 
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
