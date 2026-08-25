@@ -12,35 +12,35 @@ def render_kuzu_risk_page() -> str:
 // time.  This first capture listener is the single authoritative dispatcher: it
 // consumes every click and works from the last rendered, immutable hit frame.
 // A click must never call ringLayout(), because layout mutates node positions.
-let galaxyHitFrame={markers:[],nodes:[],groups:[],edges:[]};
+let galaxyHitFrame={nodes:[],groups:[],edges:[]};
 function galaxyScreenDistanceToSegment(point,start,end){const dx=end.x-start.x,dy=end.y-start.y,length=dx*dx+dy*dy;if(!length)return Math.hypot(point.x-start.x,point.y-start.y);const ratio=Math.max(0,Math.min(1,((point.x-start.x)*dx+(point.y-start.y)*dy)/length));return Math.hypot(point.x-(start.x+ratio*dx),point.y-(start.y+ratio*dy))}
 function galaxyScreenDistanceToPath(point,path){let best=Infinity;for(let index=1;index<path.length;index++)best=Math.min(best,galaxyScreenDistanceToSegment(point,path[index-1],path[index]));return best}
 function galaxyHitAngleBetween(angle,start,end){const norm=value=>(value+Math.PI*2)%(Math.PI*2),a=norm(angle),s=norm(start),e=norm(end);return s<=e?a>=s&&a<=e:a>=s||a<=e}
 function galaxyPickHit(mouse,frame=galaxyHitFrame){
-  for(const hit of frame.markers)if(Math.hypot(mouse.x-hit.x,mouse.y-hit.y)<=hit.radius)return{kind:'marker',target:hit.group};
   for(const hit of frame.nodes)if(Math.hypot(mouse.x-hit.x,mouse.y-hit.y)<=hit.radius)return{kind:'node',target:hit.node,groupKey:hit.groupKey||''};
-  for(const hit of frame.groups){if(hit.anchor&&Math.hypot(mouse.x-hit.anchor.x,mouse.y-hit.anchor.y)<=hit.anchor.radius)return{kind:'group',target:hit.group};const dx=mouse.x-hit.center.x,dy=mouse.y-hit.center.y;if(Math.abs(Math.hypot(dx,dy)-hit.radius)<=hit.tolerance&&galaxyHitAngleBetween(Math.atan2(dy,dx),hit.start,hit.end))return{kind:'group',target:hit.group}}
+  for(const hit of frame.groups){const dx=mouse.x-hit.center.x,dy=mouse.y-hit.center.y;if(Math.abs(Math.hypot(dx,dy)-hit.radius)<=hit.tolerance&&galaxyHitAngleBetween(Math.atan2(dy,dx),hit.start,hit.end))return{kind:'group',target:hit.group}}
   for(const hit of frame.edges)if(galaxyScreenDistanceToPath(mouse,hit.path)<=hit.tolerance)return{kind:'edge',target:hit.edge};
   return{kind:'empty',target:null};
 }
 function galaxyDispatchClick(event){
   event.preventDefault();event.stopImmediatePropagation();
   if(!data||copyInspector?.classList.contains('open'))return;
-  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},frozenHit=galaxyPickHit(mouse),liveNode=galaxyLiveNodeHit(mouse),hit=frozenHit.kind==='marker'?frozenHit:(liveNode||frozenHit);
-  if(hit.kind==='marker'){expandedRelationGroups.delete(hit.target.key);activeGroupKey=hit.target.key;selectedEdgeKey='';renderOverview();renderDetail();return}
+  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top};
+  const liveNode=galaxyLiveNodeHit(mouse);if(liveNode){selectedId=liveNode.target.id;activeGroupKey=liveNode.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
+  const hit=galaxyPickHit(mouse);
   if(hit.kind==='node'){selectedId=hit.target.id;activeGroupKey=hit.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
-  if(hit.kind==='group'){expandedRelationGroups.add(hit.target.key);activeGroupKey=hit.target.key;selectedEdgeKey='';renderOverview();renderDetail();return}
+  if(hit.kind==='group'){if(expandedRelationGroups.has(hit.target.key))expandedRelationGroups.delete(hit.target.key);else expandedRelationGroups.add(hit.target.key);activeGroupKey=hit.target.key;selectedEdgeKey='';renderOverview();renderDetail();return}
   if(hit.kind==='edge'){selectedEdgeKey=hit.target.id;activeGroupKey=edgeCommunityKey(hit.target);renderOverview();renderDetail();if(relationKey(hit.target.type)==='copy_order')fetchCopyInspection(hit.target)}
 }
+function galaxyVisibleNodeHitPixels(node,scale){const depth=Math.min(4,accountDepth(node)),base=node.isSubject?19:node.type==='ib_user'?11:depth===1?10.5:depth===2?8.5:7,painted=base*2;return Math.max(nodeHitPixels(node,scale),(painted+7)*Math.max(scale,.01))}
 function galaxyRebuildHitFrame(){
-  if(!data){galaxyHitFrame={markers:[],nodes:[],groups:[],edges:[]};return}
-  const scale=Math.max(view.scale||1,.01),toScreen=point=>({x:view.x+point.x*scale,y:view.y+point.y*scale}),collapsed=typeof collapsedVisualGroups!=='undefined'?(collapsedVisualGroups||[]):[],collapsedKeys=new Set(collapsed.map(group=>group.key)),markers=[],nodes=[],groups=[],edges=[];
-  for(const group of typeof expandedVisibleBands!=='undefined'?(expandedVisibleBands||[]):[]){const point=galaxyExpandedMarkerPoint(group),screen=toScreen(point);markers.push({x:screen.x,y:screen.y,radius:Math.max(18,13*scale+8),group})}
-  for(const node of graphNodes()){const point=layout.get(node.id);if(!point||collapsedKeys.has(point.groupKey))continue;const screen=toScreen(point);nodes.push({x:screen.x,y:screen.y,radius:nodeHitPixels(node,scale),node,groupKey:point.groupKey||''})}
-  const centerPoint=expandedBandCenter||collapsed[0]?.center;
-  if(centerPoint){const center=toScreen(centerPoint);for(const group of collapsed){const anchor=group.anchor?toScreen(group.anchor):null;groups.push({group,center,radius:Number(group.radius||0)*scale,start:group.start,end:group.end,tolerance:Math.max(18,22*scale),anchor:anchor?{...anchor,radius:Math.max(22,18*scale+8)}:null})}}
+  if(!data){galaxyHitFrame={nodes:[],groups:[],edges:[]};return}
+  const scale=Math.max(view.scale||1,.01),toScreen=point=>({x:view.x+point.x*scale,y:view.y+point.y*scale}),collapsed=typeof collapsedVisualGroups!=='undefined'?(collapsedVisualGroups||[]):[],expanded=typeof expandedVisibleBands!=='undefined'?(expandedVisibleBands||[]):[],collapsedKeys=new Set(collapsed.map(group=>group.key)),nodes=[],groups=[],edges=[];
+  for(const node of graphNodes()){const point=layout.get(node.id);if(!point||collapsedKeys.has(point.groupKey))continue;const screen=toScreen(point);nodes.push({x:screen.x,y:screen.y,radius:galaxyVisibleNodeHitPixels(node,scale),node,groupKey:point.groupKey||''})}
+  const centerPoint=expandedBandCenter||collapsed[0]?.center||expanded[0]?.center;
+  if(centerPoint){const center=toScreen(centerPoint);for(const group of [...collapsed,...expanded])groups.push({group,center,radius:Number(group.radius||0)*scale,start:group.start,end:group.end,tolerance:Math.max(12,17*scale)})}
   for(const edge of typeof relationHitEdges!=='undefined'?(relationHitEdges||[]):[]){const route=relationRoute(edge);if(!route)continue;const path=[];for(let index=0;index<=20;index++)path.push(toScreen(quadraticPoint(route,index/20)));edges.push({edge,path,tolerance:Math.max(10,12*scale)})}
-  galaxyHitFrame={markers,nodes,groups,edges};
+  galaxyHitFrame={nodes,groups,edges};
 }
 function galaxyLiveNodeHit(mouse){
   if(!data)return null;
@@ -48,7 +48,7 @@ function galaxyLiveNodeHit(mouse){
   let candidate=null,best=Infinity;
   for(const node of graphNodes()){
     const point=layout.get(node.id);if(!point||collapsed.has(point.groupKey))continue;
-    const x=view.x+point.x*scale,y=view.y+point.y*scale,distance=Math.hypot(mouse.x-x,mouse.y-y),radius=nodeHitPixels(node,scale);
+    const x=view.x+point.x*scale,y=view.y+point.y*scale,distance=Math.hypot(mouse.x-x,mouse.y-y),radius=galaxyVisibleNodeHitPixels(node,scale);
     if(distance<=radius&&distance<best){candidate={kind:'node',target:node,groupKey:point.groupKey||''};best=distance}
   }
   return candidate;
@@ -409,7 +409,7 @@ function renderGalaxyGroupActions(){
 galaxyResetButton.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();if(!data)return;const subject=accounts().find(item=>item.isSubject);expandedRelationGroups.clear();selectedId=subject?.id||'';activeType='';activeGroupKey='';selectedEdgeKey='';selectedEdgeNodes=new Set();view={scale:1,x:0,y:0};fit();renderOverview();renderDetail();status.textContent='已恢复初始关系视图'});
 galaxyGroupActions.remove();
 function galaxyExpandedMarkerPoint(group){const center=expandedBandCenter||{x:canvas.width/2,y:canvas.height/2};const anchor=groupAnchorPoint(group,center),dx=anchor.x-center.x,dy=anchor.y-center.y,length=Math.hypot(dx,dy)||1;return{x:anchor.x+dx/length*24,y:anchor.y+dy/length*24}}
-function drawGalaxyExpandedMarkers(){if(!data||typeof expandedVisibleBands==='undefined'||!expandedVisibleBands.length)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const group of expandedVisibleBands){const marker=galaxyExpandedMarkerPoint(group),theme=relationTheme(group.type);ctx.beginPath();ctx.arc(marker.x,marker.y,13,0,Math.PI*2);ctx.fillStyle='rgba(8,20,36,.97)';ctx.fill();ctx.strokeStyle=theme.stroke;ctx.lineWidth=2.5;ctx.stroke();ctx.fillStyle=theme.stroke;ctx.font='bold 15px Microsoft YaHei';ctx.textAlign='center';ctx.fillText('−',marker.x,marker.y+5)}ctx.textAlign='start';ctx.restore()}
+function drawGalaxyExpandedMarkers(){}
 const galaxyRenderOverviewWithControls=renderOverview;renderOverview=function(){galaxyRenderOverviewWithControls();drawGalaxyExpandedMarkers();renderGalaxyGroupActions();document.querySelector('.galaxy-group-actions')?.remove();galaxyRebuildHitFrame()};
 queuePoll=function(delay=2000){clearTimeout(pollTimer);if(document.hidden){const resume=()=>{if(document.hidden)return;document.removeEventListener('visibilitychange',resume);queuePoll(250)};document.addEventListener('visibilitychange',resume);return}pollTimer=setTimeout(()=>load(true),delay)};
 window.addEventListener('pagehide',()=>{clearTimeout(pollTimer);controller?.abort()});

@@ -467,6 +467,7 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert page.status_code == 200
     assert "function galaxyRebuildHitFrame" in page.text
     assert "function galaxyPickHit" in page.text
+    assert "function galaxyVisibleNodeHitPixels" in page.text
     assert "function galaxyDispatchClick" in page.text
     assert "function galaxyVisualEndpointKey" in page.text
     assert "galaxyCanvas.addEventListener('click',galaxyDispatchClick,true)" in page.text
@@ -476,10 +477,10 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]
     assert "ringLayout(" not in picker
     assert "ringLayout(" not in dispatcher
-    assert picker.index("frame.markers") < picker.index("frame.nodes")
     assert picker.index("frame.nodes") < picker.index("frame.groups")
     assert picker.index("frame.groups") < picker.index("frame.edges")
-    assert "kind==='marker'" in dispatcher
+    assert "const liveNode=galaxyLiveNodeHit(mouse);if(liveNode)" in dispatcher
+    assert "expandedRelationGroups.has(hit.target.key)" in dispatcher
     assert "kind==='node'" in dispatcher
     assert "kind==='group'" in dispatcher
     assert "kind==='edge'" in dispatcher

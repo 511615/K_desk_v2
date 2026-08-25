@@ -122,13 +122,15 @@ the detailed graph: the selected account, its local evidence and its complete ac
 the investigation subject are rendered without changing community expansion state.
 Galaxy canvas interaction is owned by one capture-phase dispatcher. It reads an immutable hit map
 built after the last completed render and never invokes layout while classifying a click. Hit priority
-is expanded-community collapse marker, visible account/IB node, collapsed community boundary or
-anchor, relation edge, then blank canvas. The dispatcher consumes every canvas click before legacy
+is the current visible account/IB node, collapsed or expanded community boundary, relation edge, then
+blank canvas. The dispatcher consumes every canvas click before legacy
 compatibility listeners can act, so one gesture performs at most one expand, collapse, select or
 edge-inspection action. Members hidden by a collapsed group are excluded from node hit targets.
-When a visible node has been moved by its component's star-track aggregation, the dispatcher also
-checks the current rendered node coordinates after the frozen-frame lookup. This fallback selects
-the visible account without recalculating layout or falling through to a relation-band action.
+When a visible node has been moved by its component's star-track aggregation, the dispatcher first
+checks the current rendered node coordinates and the complete painted-node radius. This selects the
+visible account without recalculating layout or falling through to a relation-band action. Expanded
+tracks use their own empty arc boundary as the collapse target; they do not draw or register a
+separate collapse marker.
 The overview intentionally renders only the selected account's local evidence cluster and its
 deduplicated parent chain back to the problem account. Intermediate CRM/evidence entities remain
 hidden, but their relationship type is retained on the visible account-to-account segment. Siblings

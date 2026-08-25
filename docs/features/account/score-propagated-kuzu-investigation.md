@@ -102,9 +102,10 @@ detections. The same-direction detector uses principal orders, two-second open/c
 recurrence floor. The opposite detector uses five-second open/close windows and at least 80% lot
 similarity. Repeated order pairs are evidence details of one peer relationship, not parallel graph edges.
 The compatibility canvas has one authoritative capture-phase click dispatcher backed by a frozen
-post-render hit frame. It does not recompute or mutate ring layout during hit testing. Expanded-group
-collapse markers take precedence over overlapping member nodes; visible nodes take precedence over
-collapsed boundaries; boundaries take precedence over edges. Every click is consumed by this
+post-render hit frame. It does not recompute or mutate ring layout during hit testing. A visible
+account or IB node always takes precedence over either collapsed or expanded boundaries; boundaries
+take precedence over edges. The node target uses its complete painted radius and a small pointer
+allowance. Every click is consumed by this
 dispatcher, including blank clicks, so older compatibility listeners cannot cause double toggles,
 stale-coordinate misses or a node selection and group toggle from the same gesture.
 Clicking a visible copy-order edge opens an on-demand, read-only modal. Its first tab is scoped to
@@ -333,8 +334,8 @@ cannot hide an otherwise valid path. This is a presentation/performance change o
 alter the read-only API or source database contract.
 
 Galaxy group rings use a two-state interaction. Clicking a collapsed ring/anchor expands that one
-community. Once expanded, a small minus marker is drawn beside the ring; clicking that marker merges
-the community again. Account and evidence-edge clicks retain their selection behavior, while blank-
+community. Once expanded, clicking an empty part of that same ring merges the community again; no
+separate minus marker is drawn or clickable. Account and evidence-edge clicks retain their selection behavior, while blank-
 canvas clicks leave the current selection unchanged. The temporary DOM group-operation list is not
 shown in the workspace. A small “恢复初始” control is the only action that clears the selection,
 collapsed/expanded state, and route highlight.
