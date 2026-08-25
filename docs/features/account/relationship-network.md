@@ -38,8 +38,11 @@ derives relation-family components from the complete returned evidence set, so a
 belong to overlapping LastIP, same-name, IB, EA or Copy communities at the same time. An account with
 more than one such membership remains individually visible rather than being swallowed by one
 canonical aggregate anchor. At a shared account, the renderer keeps the canonical wide relation band
-and overlays only the other relation family's normal-width segment on that same star-track radius.
-There are no synthetic lanes, duplicate member-count labels or centroid circles around a component.
+and overlays the other relation family's normal-width segment on that same star-track radius. When
+two or more accounts in one compact group share that second relation, the overlay covers their common
+contiguous member span rather than creating one tiny segment per account. A one-account overlap remains
+a short segment. There are no synthetic lanes, duplicate member-count labels or centroid circles around
+a component.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
@@ -48,8 +51,9 @@ from `same_crm_user` account-to-account evidence, and reverse copies of the same
 presentation fact. LastIP, IB, EA, Copy or other evidence may overlap those accounts but cannot
 enlarge or split their same-CRM component. In Galaxy, a component spanning logical discovery layers
 uses the nearest non-subject member's existing star-track ring as its shared visual band. All member
-accounts stay individually visible, adjacent and selectable in that one band; the band label shows
-the complete component count. This is a layout-only projection and does not change evidence,
+accounts stay individually visible, tightly packed with preserved click spacing and selectable in that
+one band; the band label shows the complete component count. This is a layout-only projection and does
+not change evidence,
 propagation, score or expansion eligibility.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
@@ -139,7 +143,7 @@ path instead of a full edge web. Selecting an overview account updates the detai
 account-to-evidence-to-peer view below.
 Node fill is a strict propagated-score gradient: the problem account is red, then high-score red,
 orange, gold and yellow-green low-score nodes; a node stopped by the threshold is green regardless of
-score. A completed account with no discovered account child receives a large dark-green 叶 badge
+score. A completed account with no discovered account child receives a compact dark-green 叶 badge
 only when its additive expansionState=expanded and expansionEvidenceAvailable=true confirm that
 it was actually queried with available evidence. A score-eligible, pending or unvisited account never
 receives that badge merely because the current rendered graph has no child.
@@ -156,8 +160,10 @@ local mark. `P` is blue,
 `T` amber, `TA` rose and `A` red; `T`/`TA`/`A` have an additional high-visibility ring. This badge
 is a local workflow mark, not a propagated score or a new risk conclusion.
 Account and IB nodes use a 2× larger base radius than the first rollout so the in-node database
-status, leaf badge and selected-node label remain legible at normal zoom. The node hit target grows
-with the rendered node size, so selecting a larger node does not require clicking its former centre.
+status and selected-node label remain legible at normal zoom. The 叶 badge intentionally uses 62% of
+the unscaled node badge size, so its outcome marker remains visible without visually dominating the
+account. The node hit target grows with the rendered node size, so selecting a larger node does not
+require clicking its former centre.
 The overview has a left-side extensible `风险表`. Its first risk item is deliberately narrow: it lists
 only rendered trading accounts whose routed database status is `T`, `TA` or `A`, ordered by propagated
 score then account number. Each row shows account, database status, relationship layer and score;

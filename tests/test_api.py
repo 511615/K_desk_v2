@@ -426,11 +426,18 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "function galaxyCommunityMemberships" in page.text
     assert "function galaxyOrbitOverlapBands" in page.text
     assert "orbitOnly:true" in page.text
-    assert "span=.12" in page.text
-    assert "nodes:[node]" in page.text
+    assert "function galaxyCompactSameCrmBand" in page.text
+    assert "compactCommunity:true" in page.text
+    assert "membersByBand" in page.text
+    assert "overlayMemberCount:members.length" in page.text
+    assert "nodes:members.map(item=>item.node)" in page.text
+    assert "span=.12" not in page.text
+    assert "nodes:[node]" not in page.text
     assert "group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1)" in page.text
     assert "if(group.componentMemberCount&&group.type==='same_crm_user')continue" in page.text
     assert "group.componentMemberCount+'账户'" in page.text
+    assert "const GALAXY_LEAF_BADGE_SCALE=.62" in page.text
+    assert "drawScaledTerminalBadge(state,x,y,size*GALAXY_LEAF_BADGE_SCALE)" in page.text
     assert "function drawIntersectingCommunities" not in page.text
     assert "function drawOrbitOverlapBands" not in page.text
     assert "band.lane" not in page.text

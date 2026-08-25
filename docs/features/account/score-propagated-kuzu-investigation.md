@@ -115,8 +115,9 @@ response or hold the expansion worker.
 The relationship-name mapping is defined once in the initial page script, so line labels, evidence
 cards, relationship-path narration and the loading/control wording cannot diverge at runtime.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
-IB identities are hexagons and threshold-stopped accounts are green diamonds. A prominent green 叶
-terminal badge requires the completed expansionState=expanded and available evidence confirmation,
+IB identities are hexagons and threshold-stopped accounts are green diamonds. A compact green 叶
+terminal badge, scaled independently at 62% of the unscaled node badge size, requires the completed
+expansionState=expanded and available evidence confirmation,
 as well as no account child. It is never inferred from a high score plus an empty currently rendered
 child list. The selected account profile is prepended above the legacy Galaxy detail section and
 foregrounds the account, propagation score, layer, database status and expansion outcome; a completed
@@ -237,16 +238,17 @@ Canvas relation communities retain their canonical collapsed controls, but Galax
 relation-family components from every returned evidence edge. Therefore same-CRM, same-IP, EA, rebate,
 copy-order and IB components can intersect at one account; that account keeps its individual position
 instead of being hidden in one canonical anchor. At an intersection, the canonical normal-width band
-remains and the additional relation family overlays only a normal-width segment at that account on the
-same star-track radius. It creates neither parallel synthetic lanes nor duplicate labels/member counts,
-and never draws a component-centroid circle. The detail control or community band still expands only
-its canonical group.
+remains and the additional relation family overlays the shared member span on the same star-track
+radius. A multi-account overlap produces one contiguous segment across those compact members; a
+single-account overlap stays short. It creates neither parallel synthetic lanes nor duplicate
+labels/member counts, and never draws a component-centroid circle. The detail control or community
+band still expands only its canonical group.
 For same-CRM specifically, components are calculated only from the same-CRM account evidence and
 reverse pair evidence is canonicalized before presentation. A cross-layer same-CRM component is
 assigned to the closest non-subject discovery ring, where its complete member set is drawn as one
-existing star-track band with every account still visible and individually clickable. LastIP, IB, EA,
-Copy and other intersections remain overlays; they do not pull members into, or scatter members out
-of, that same-CRM band.
+compact existing star-track band with every account still visible and individually clickable. LastIP,
+IB, EA, Copy and other intersections remain overlays; they do not pull members into, or scatter
+members out of, that same-CRM band.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
 Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
