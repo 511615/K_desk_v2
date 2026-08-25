@@ -114,13 +114,11 @@ class AccountRelationshipRiskService:
                     account_filters,
                     remaining_seconds=source_budget,
                     include_ib_aggregate=account_key == root_key,
-                    include_automation=(
-                        account_key == root_key
-                        or (
-                            account_key not in known_shared_ip_members
-                            and account_key not in known_shared_cid_members
-                        )
-                    ),
+                    # A LastIP/CID cohort lets us deduplicate only that cohort
+                    # lookup.  Its members can still have different EA or
+                    # copy-trading evidence, so each expanded account must run
+                    # those account-specific sources independently.
+                    include_automation=True,
                 )
                 if callable(budgeted_build)
                 else self._evidence_network.build(account_login, account_filters)

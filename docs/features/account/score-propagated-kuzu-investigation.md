@@ -233,9 +233,11 @@ the direct collapse target.
 Evidence edges include a direction marker in the detail canvas, while repeated interaction instructions
 remain available in the evidence panel instead of being drawn beside every ring.
 
-Canvas relation communities use one canonical key (`source account + relation family`). Therefore
-same-CRM, same-IP, EA, rebate, copy-order and IB communities render as one representative line by
-default, with a member count; the detail control or community band expands only that community.
+Canvas relation communities retain their canonical collapsed controls, but Galaxy additionally builds
+relation-family components from every returned evidence edge. Therefore same-CRM, same-IP, EA, rebate,
+copy-order and IB components can intersect at one account; that account keeps its individual position
+instead of being hidden in one canonical anchor. Intersecting boundaries render their own family label
+and member count, while the detail control or community band still expands only its canonical group.
 Every rendered line is registered as a hit target. Clicking a line selects and highlights it (and
 opens copy-order evidence when applicable), while clicking a node keeps node selection behavior.
 Collapsed communities are rendered as their own canvas anchors instead of borrowing a representative
@@ -272,9 +274,9 @@ and never injects evidence as HTML. `kuzu_focus_workspace_page.py` is the defaul
 read-only legacy boundary. Same-CRM edges use its mapping-only legacy payload instead of a full
 trade-history dashboard read. Relationship-only EA and Copy reads bypass the dashboard result cache,
 and its aggregate query runs only for the seed account in one request.
-For a current-LastIP cohort, EA/Copy discovery is performed by the representative account; sibling
-accounts still expand through CRM and LastIP evidence but report their skipped automation source
-coverage explicitly.
+For a current-LastIP/CID cohort, only the repeated cohort follow-up is deduplicated. EA/Copy discovery
+still runs for every score-eligible account because sharing an IP/CID does not establish identical
+expert or copy-trading behavior; the response never represents those automation sources as reused.
 
 The expansion coordinator retains at most three distinct running, queued or completed investigation
 snapshots. Completed snapshots expire after 90 seconds and the least recently accessed completed

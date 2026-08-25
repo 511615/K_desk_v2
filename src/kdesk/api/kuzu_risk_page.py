@@ -102,13 +102,53 @@ renderDetail=function(){finalRenderDetailBase();const node=byId().get(selectedId
 relationshipGroup=function(node){if(node.isSubject)return'subject';const owner=parent(node);return String(owner?owner.id:'root')+'|'+relationKey(branchType(node))};
 function groupAnchorPoint(group,center){const points=group.nodes.map(node=>layout.get(node.id)).filter(Boolean);if(!points.length)return{x:center.x,y:center.y};let vx=0,vy=0,radius=0;for(const point of points){const dx=point.x-center.x,dy=point.y-center.y,length=Math.hypot(dx,dy)||1;vx+=dx/length;vy+=dy/length;radius+=length}const angle=Math.atan2(vy,vx),r=radius/points.length;return{x:center.x+Math.cos(angle)*r,y:center.y+Math.sin(angle)*r}}
 let collapsedVisualGroups=[];
+// A relationship graph is not a tree: the same account may simultaneously be
+// in a LastIP, same-name, IB, EA, or copy-trading component.  Build components
+// from all returned evidence edges rather than the one score-ledger parent used
+// by the radial placement.  This keeps cross-community membership visible.
+function galaxyRelationshipCommunities(){
+  const entities=byId(),buckets=new Map();
+  for(const edge of data?.relationships||[]){
+    const from=entities.get(edge.source),to=entities.get(edge.target);
+    if(!from||!to||from.id===to.id||!['account','ib_user'].includes(from.type)||!['account','ib_user'].includes(to.type))continue;
+    const type=relationKey(edge.type),bucket=buckets.get(type)||[];bucket.push({from:from.id,to:to.id});buckets.set(type,bucket);
+  }
+  const communities=[];
+  for(const [type,edges] of buckets){
+    const adjacent=new Map();
+    for(const edge of edges){if(!adjacent.has(edge.from))adjacent.set(edge.from,new Set());if(!adjacent.has(edge.to))adjacent.set(edge.to,new Set());adjacent.get(edge.from).add(edge.to);adjacent.get(edge.to).add(edge.from)}
+    const seen=new Set();
+    for(const start of adjacent.keys()){
+      if(seen.has(start))continue;
+      const members=[],pending=[start];seen.add(start);
+      while(pending.length){const current=pending.pop();members.push(current);for(const next of adjacent.get(current)||[])if(!seen.has(next)){seen.add(next);pending.push(next)}}
+      if(members.length>1){members.sort();communities.push({key:'intersection|'+type+'|'+members.join('|'),type,members})}
+    }
+  }
+  return communities;
+}
+function galaxyCommunityMemberships(){const memberships=new Map();for(const community of galaxyRelationshipCommunities())for(const id of community.members){const current=memberships.get(id)||[];current.push(community);memberships.set(id,current)}return memberships}
+function galaxyCommunityMembershipCount(id){return(galaxyCommunityMemberships().get(id)||[]).length}
 const communityRingLayoutBase=ringLayout;
-ringLayout=function(all,w,h){const result=communityRingLayoutBase(all,w,h);collapsedVisualGroups=[];for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){if(group.nodes.length<2||expandedRelationGroups.has(group.key))continue;const anchor=groupAnchorPoint(group,result.center),groupMembers=[...group.nodes];for(const member of groupMembers){const point=layout.get(member.id);if(point)layout.set(member.id,{...point,x:anchor.x,y:anchor.y,groupKey:group.key})}collapsedVisualGroups.push({...group,anchor,groupMembers})}return result};
+ringLayout=function(all,w,h){const result=communityRingLayoutBase(all,w,h);collapsedVisualGroups=[];for(const depth of [1,2,3,4])for(const group of result.groupsByDepth.get(depth)||[]){if(group.nodes.length<2||expandedRelationGroups.has(group.key)||group.nodes.some(node=>galaxyCommunityMembershipCount(node.id)>1))continue;const anchor=groupAnchorPoint(group,result.center),groupMembers=[...group.nodes];for(const member of groupMembers){const point=layout.get(member.id);if(point)layout.set(member.id,{...point,x:anchor.x,y:anchor.y,groupKey:group.key})}collapsedVisualGroups.push({...group,anchor,groupMembers})}return result};
 function groupedEdges(result,node){const allEdges=result.edges||[],buckets=new Map(),out=[];for(const edge of allEdges){if(edgeIsPath(edge))continue;const key=edgeCommunityKey(edge);if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(edge)}for(const edge of allEdges){if(edgeIsPath(edge)||edgeGroupIsExpanded(edge,node?.id)){out.push(edge);continue}const key=edgeCommunityKey(edge),groupMembers=buckets.get(key)||[];if(groupMembers[0]!==edge)continue;out.push({...edge,id:'selected-group|'+key,grouped:true,groupCount:groupMembers.length,groupMembers:groupMembers.map(item=>item.to)})}return{...result,edges:out}}
 selectedBranch=function(node){return groupedEdges(finalBaseSelectedBranch(node),node)};
 function drawCollapsedCommunities(){if(!data||!collapsedVisualGroups.length)return;ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);for(const group of collapsedVisualGroups){const theme=relationTheme(group.type),active=group.key===activeGroupKey,size=18;ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size,0,Math.PI*2);ctx.fillStyle='rgba(8,20,36,.96)';ctx.fill();ctx.strokeStyle=active?'#f8fafc':theme.stroke;ctx.lineWidth=active?4:3;ctx.stroke();ctx.beginPath();ctx.arc(group.anchor.x,group.anchor.y,size-5,0,Math.PI*2);ctx.fillStyle=theme.fill;ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(String(group.groupMembers.length),group.anchor.x,group.anchor.y+4);ctx.font='bold 10px Microsoft YaHei';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(group.type)+' 群落',group.anchor.x,group.anchor.y-25)}ctx.textAlign='start';ctx.restore()}
+function drawIntersectingCommunities(){
+  if(!data)return;
+  const memberships=galaxyCommunityMemberships(),communities=galaxyRelationshipCommunities().filter(community=>community.members.some(id=>(memberships.get(id)||[]).length>1));
+  if(!communities.length)return;
+  ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);ctx.setLineDash([7,6]);
+  for(const community of communities){
+    const points=community.members.map(id=>layout.get(id)).filter(Boolean);if(points.length<2)continue;
+    const center=points.reduce((total,point)=>({x:total.x+point.x,y:total.y+point.y}),{x:0,y:0});center.x/=points.length;center.y/=points.length;
+    const radius=Math.max(36,...points.map(point=>Math.hypot(point.x-center.x,point.y-center.y)))+18,theme=relationTheme(community.type);
+    ctx.beginPath();ctx.arc(center.x,center.y,radius,0,Math.PI*2);ctx.fillStyle=theme.fill;ctx.globalAlpha=.18;ctx.fill();ctx.globalAlpha=.78;ctx.strokeStyle=theme.stroke;ctx.lineWidth=2;ctx.stroke();ctx.globalAlpha=1;ctx.setLineDash([]);ctx.font='bold 11px Microsoft YaHei';ctx.textAlign='center';ctx.fillStyle=theme.stroke;ctx.fillText(relationShortLabel(community.type)+' · '+points.length+'个节点',center.x,center.y-radius-8);ctx.setLineDash([7,6]);
+  }
+  ctx.setLineDash([]);ctx.textAlign='start';ctx.restore();
+}
 const communityRenderOverviewBase=renderOverview;
-renderOverview=function(){communityRenderOverviewBase();drawCollapsedCommunities()};
+renderOverview=function(){communityRenderOverviewBase();drawIntersectingCommunities();drawCollapsedCommunities()};
 canvas.addEventListener('click',event=>{if(!data)return;const point=world(event),radius=24/Math.max(view.scale,.1);for(const group of collapsedVisualGroups){if(Math.hypot(point.x-group.anchor.x,point.y-group.anchor.y)>radius)continue;event.preventDefault();event.stopImmediatePropagation();expandedRelationGroups.add(group.key);activeGroupKey=group.key;renderOverview();renderDetail();return}},true);
 // Expanded member nodes take precedence over a community-band hit target.
 canvas.addEventListener('click',event=>{if(!data)return;const rect=canvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},scale=Math.max(view.scale,.01);for(const node of graphNodes()){const p=layout.get(node.id);if(!p)continue;const sx=view.x+p.x*scale,sy=view.y+p.y*scale;if(Math.hypot(mouse.x-sx,mouse.y-sy)>nodeHitPixels(node,scale))continue;selectedId=node.id;activeGroupKey=p.groupKey||'';activeType='';event.preventDefault();event.stopImmediatePropagation();renderOverview();renderDetail();return}},true);

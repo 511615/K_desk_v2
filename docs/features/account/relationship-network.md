@@ -30,9 +30,13 @@ nodes report 已完成扩散 · 无新增账户 only when the snapshot proves th
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
 accounts are returned as one relation bundle whose sections remain separately auditable. A collapsed
-community retains one aggregate edge; expanded communities expose member evidence edges. The business
-presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal CRM keys and
-unnecessary personal identifiers from both the profile and relation-detail contracts.
+community retains one aggregate edge; expanded communities expose member evidence edges. Galaxy also
+derives relation-family components from the complete returned evidence set, so a trading account can
+belong to overlapping LastIP, same-name, IB, EA or Copy communities at the same time. An account with
+more than one such membership remains individually visible rather than being swallowed by one
+canonical aggregate anchor; the intersecting boundaries carry their own family label and member count.
+The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
+CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
@@ -211,10 +215,11 @@ The UI calls this evidence `同名账户` and hides the internal CRM table name 
 EA and Copy evidence retain their normal relationship facts but are marked internally as
 relationship-only reads, bypassing the legacy dashboard result cache so completed nodes do not
 accumulate large payloads in 8777.
-When a node belongs to an already-read current-LastIP or current-CID cohort, the cohort representative's EA/Copy
-evidence is reused: sibling nodes continue same-name, LastIP and CID expansion but skip duplicate heavy EA/Copy
-reads. Source coverage records the skipped reads and reason, so this optimisation is never presented
-as an individual automation query.
+When a node belongs to an already-read current-LastIP or current-CID cohort, the repeated LastIP/CID
+follow-up itself is skipped. This cohort optimisation never suppresses per-account EA or Copy evidence:
+accounts sharing one current IP/CID can still have different expert or copy-trading behavior, so every
+score-eligible account runs those account-specific sources. Coverage records only the skipped cohort
+follow-up, not a falsely implied completed automation query.
 It then writes only a request-scoped temporary Kuzu `Entity`/`Evidence` projection, reads it back
 through Kuzu and removes it before returning. It never writes AC, DBG, MT4, MT5, CRM or K_desk SQLite.
 The CRM hierarchy read resolves account-to-CRM-user, direct parent IB and accounts owned by that

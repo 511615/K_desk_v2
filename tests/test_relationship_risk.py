@@ -842,7 +842,7 @@ def test_relationship_risk_stops_a_broad_ib_branch_at_the_account_safety_cap() -
 def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account() -> None:
     class _TrackingEvidenceNetwork:
         def __init__(self) -> None:
-            self.calls: list[tuple[str, bool]] = []
+            self.calls: list[tuple[str, bool, bool]] = []
 
         def build_with_budget(
             self,
@@ -853,7 +853,7 @@ def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account
             include_ib_aggregate: bool,
             include_automation: bool,
         ) -> dict[str, Any]:
-            self.calls.append((login, include_ib_aggregate))
+            self.calls.append((login, include_ib_aggregate, include_automation))
             subject = {
                 "id": f"account:{login}", "type": "account", "label": login,
                 "platform": filters["platform"], "server": filters["server"], "isSubject": True,
@@ -872,11 +872,21 @@ def test_relationship_risk_only_requests_a_top_ib_aggregate_for_the_seed_account
             return {"entities": [subject], "relationships": [], "relationTypes": [], "coverage": []}
 
     evidence = _TrackingEvidenceNetwork()
-    service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})
+    def shared_ip(login: str, filters: dict[str, str]) -> dict[str, Any]:
+        if login != "100":
+            return {"peers": [], "coverage": []}
+        return {
+            "peers": [{"account": "200", "platform": filters["platform"], "server": filters["server"]}],
+            "coverage": [],
+        }
+
+    service = AccountRelationshipRiskService(evidence, _projection, shared_ip)
 
     service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
 
-    assert evidence.calls == [("100", True), ("200", False)]
+    # A shared LastIP lookup may be deduplicated, but it must never suppress
+    # the peer account's own EA/copy-trading evidence collection.
+    assert evidence.calls == [("100", True, True), ("200", False, True)]
 
 
 def test_relationship_risk_returns_partial_graph_when_shared_ip_ignores_its_budget() -> None:
