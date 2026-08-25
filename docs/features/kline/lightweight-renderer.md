@@ -66,10 +66,10 @@ artifact. It shares cache normalization helpers with the legacy generator.
 ## Tests and acceptance
 
 `tests/test_lightweight_trade_kline.py` verifies series, markers, filters, timeline payload, embedded
-height reporting, real quote labels in compressed time and the absence of an MT5 dependency in rendered
-HTML. Release E2E verifies the server-rendered legacy account page retains the inline K-line section
-and frame, which replaced the removed order-details block. Python compilation and the existing K-line
-tests must pass before promotion.
+height reporting, real quote labels in compressed time, readable dynamic lower-pane bar widths and
+the absence of an MT5 dependency in rendered HTML. Release E2E verifies the server-rendered legacy
+account page retains the inline K-line section and frame, which replaced the removed order-details
+block. Python compilation and the existing K-line tests must pass before promotion.
 
 ## Compatibility and deprecation
 
@@ -94,6 +94,12 @@ The Profit indicator explicitly uses `base=0`, one symmetric absolute-value scal
 negative values, and a shared high-contrast dashed zero baseline. Profit bars are therefore
 anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
 green and extend downward with equal visual magnitude for equal absolute profit.
+
+The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
+Each visible time bucket is grouped for this presentation and has a fixed minimum width of 5px, with
+the width adapting to the current zoom level up to 12px. Filtering, symbol changes, pane switches,
+panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
+remain unchanged.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

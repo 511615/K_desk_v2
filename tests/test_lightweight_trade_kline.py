@@ -161,6 +161,16 @@ def test_lightweight_renderer_formats_compact_time_axis_from_quote_timestamps():
     assert "compactTimes.length" in html
     assert "bars[index]?.time" in html
 
+def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
+    """Dense chart intervals retain readable lower-pane bars while panning and zooming."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_readable_bars", trades, bars, mapping)
+
+    assert "PANEL_BAR_MIN_WIDTH=5" in html
+    assert "PANEL_BAR_MAX_WIDTH=12" in html
+    assert "function panelBarWidth" in html
+    assert "function paintPanelBars" in html
+
 
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
     """An inline chart expands in the account page instead of adding an iframe scrollbar."""
