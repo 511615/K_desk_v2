@@ -50,7 +50,8 @@ manual chart controls remain available, unchanged, for full-history, symbol-scop
 funds-timeline charts. The embedded document request uses the browser `no-store` directive and a
 page-load version query parameter, so a renderer deployment cannot remain hidden behind a stale
 client-side chart document; this does not alter the endpoint's private cache contract for other
-callers.
+callers. The account-detail HTML itself responds with `no-cache, must-revalidate`, ensuring a normal
+browser refresh receives the current inline-document request script.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
 ledger. It reuses the read-only account lookup route. When the Login exists on multiple platforms or
 servers, a source-selection dialog lists every candidate and the user must choose one before
@@ -205,6 +206,8 @@ handler. The form accepts Enter or the query button and does not change the curr
 is invalid or lookup fails.
 The complete inline script must pass the bundled Node.js syntax check before a detail-page change is
 accepted.
+The account-detail HTML response must send `Cache-Control: no-cache, must-revalidate` so a chart
+renderer release is not hidden by a cached parent page.
 
 ## Compatibility and deprecation
 

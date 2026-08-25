@@ -101,7 +101,8 @@ the width adapting to the current zoom level up to 18px. Filtering, symbol chang
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
 remain unchanged. The account-detail embed requests this document with the browser `no-store`
 directive and a page-load version query parameter, so a reload after a renderer deployment cannot
-retain an older chart document.
+retain an older chart document. Its parent account-detail document is revalidated on every browser
+refresh so this versioned embed loader itself cannot remain stale.
 The overlay translates its pane-local price coordinates into the lower indicator pane and clips there,
 so a readable Profit/Volume bar can never cover the candlestick pane. The horizontal axis emits the
 full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
@@ -114,8 +115,9 @@ The custom red/green bars take their base coordinate directly from the zero-line
 from the histogram's coordinate conversion, guaranteeing that both colours meet the visible dashed
 Profit zero axis even if Lightweight Charts applies different histogram geometry.
 The native Profit/Volume histogram data remains present only to retain its established scale and
-coordinate behavior, but its columns are transparent. The visible bars are exclusively the custom
-8px-to-18px overlay, so a thin native bar cannot appear beside or through the readable column.
+coordinate behavior, but its columns are transparent in both individual-order and grouped-bar
+display modes. The visible bars are exclusively the custom 8px-to-18px overlay, so a thin native
+bar cannot appear beside or through the readable column.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

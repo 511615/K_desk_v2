@@ -357,7 +357,10 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     @app.get("/account/{login}", response_class=HTMLResponse)
     async def account_page(login: str):
         login = _safe_login(login)
-        return HTMLResponse(await run_in_threadpool(legacy.account_page, login))
+        return HTMLResponse(
+            await run_in_threadpool(legacy.account_page, login),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     @app.get("/api/accounts")
     def accounts() -> dict:
