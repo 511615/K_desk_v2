@@ -46,6 +46,14 @@ score, relationship layer and expansion outcome in plain language. It intentiona
 coverage dates and investigation implementation prose; those remain available only when an operator
 opens an auditable relationship-evidence detail.
 
+If the snapshot returns direct-IB rebate anomaly edges, the Galaxy side panel also renders an
+independent **IB 直属返佣核查** card. It groups the materialised members by their direct IB and exposes
+the returned inclusion reason and evidence values (actual trade P/L, rebate, combined profit, rebate
+share, rebate deal count and newest rebate record), alongside the returned abnormal/total account
+count when present. The presentation is evidence-only: it does not create an additional expansion or
+risk conclusion. Clicking a row highlights that account only; it must not expand or collapse its
+star-track community.
+
 Relationship communities are collapsed by default. Their boundary is clickable and toggles a local
 presentation state without restarting the investigation: collapsed state shows the member count,
 the highest member status in `TA > A > T > P > M > B` order and one aggregate edge; expanded state

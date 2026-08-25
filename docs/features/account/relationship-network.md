@@ -38,6 +38,14 @@ shows only the operator decisions—identity, routed database status, propagated
 expansion outcome. Raw coverage dates, query-completeness prose and technical limitations remain in
 the auditable relation-evidence view and are not repeated as an account-profile card.
 
+When the current snapshot contains `ib_direct_rebate` evidence, Galaxy adds a separate **IB 直属返佣核查**
+card directly below the selected profile. It groups rows by the returned direct-IB entity and displays
+only the already materialised accounts, the returned abnormal/total count when available, each
+inclusion reason, database status, actual trade P/L, rebate, combined profit, rebate share, rebate
+deal count and most recent rebate record. Values are copied from the edge evidence; the card does not
+infer that an IB or account is fraudulent. Selecting a row only selects/highlights that account and
+never toggles a relation star-track or recomputes expansion.
+
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
 accounts are returned as one relation bundle whose sections remain separately auditable. A collapsed
