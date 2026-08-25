@@ -61,10 +61,11 @@ enlarge or split their same-CRM component. In Galaxy, a component spanning logic
 uses the nearest non-subject member's existing star-track ring as its shared visual band. It starts
 collapsed: the band label shows the complete component count while no member account or member edge
 is drawn. Clicking the band boundary expands those members in the same band; every expanded account
-shows its numeric login above the point, and every visible original account/IB relation incident to a
-member is restored as its own raw-ID line. Clicking such a line opens the existing read-only relation
-evidence detail. Clicking the boundary again collapses the band. This is a layout-only projection and
-does not change evidence, propagation, score or expansion eligibility.
+shows its numeric login above the point. Expansion does not add every incident raw account/IB edge:
+cross-community relations retain their normal star-track projection, preventing long cross-graph
+arrows and overlapping labels. Existing rendered local evidence lines remain selectable. Clicking the
+boundary again collapses the band. This is a layout-only projection and does not change evidence,
+propagation, score or expansion eligibility.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is

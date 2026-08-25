@@ -532,7 +532,7 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
 
 
-def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_and_raw_relation_edges(tmp_path: Path) -> None:
+def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_without_cross_graph_raw_edges(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
     with TestClient(app) as client:
@@ -540,9 +540,8 @@ def test_kuzu_risk_galaxy_expanded_community_keeps_account_labels_and_raw_relati
 
     assert page.status_code == 200
     assert "const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey)" in page.text
-    assert "function galaxyExpandedMemberDetailEdges" in page.text
-    assert "expandedMemberDetail|" in page.text
-    assert "id:String(raw.id||'expandedMemberDetail|'" in page.text
+    assert "function galaxyExpandedMemberDetailEdges" not in page.text
+    assert "expandedMemberDetail|" not in page.text
     node = shutil.which("node")
     if node:
         scripts = re.findall(r"<script>([\s\S]*?)</script>", page.text)

@@ -57,9 +57,10 @@ star-track community.
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
-expanded state shows individual accounts with their numeric logins above the points and every visible
-original account/IB relation incident to a member as a separate raw-ID edge. Clicking that edge opens
-its existing relation evidence detail. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct
+expanded state shows individual accounts with their numeric logins above the points. It never adds
+every incident raw account/IB edge to the canvas: cross-community facts retain their normal
+star-track projection so expansion cannot create cross-graph arrows or stacked labels. Existing local
+evidence lines remain inspectable. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct
 lines and never become orbit communities. The right evidence panel exposes the same action for
 keyboard-accessible use.
 The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an
@@ -267,10 +268,11 @@ collapsed existing star-track band. The track label carries the relation and mem
 account node or member edge is drawn until an operator clicks its boundary. A second boundary click
 collapses the same track. LastIP, IB, EA, Copy and other intersections remain overlapping segments;
 they do not pull members into, or scatter members out of, that same-CRM band.
-Every rendered line is registered as a hit target. Expanded same-CRM member lines retain their raw
-relationship IDs, so clicking a line selects and highlights it and opens its exact relation evidence
-(including copy-order evidence when applicable), while clicking a visible node keeps node selection
-behavior. A collapsed Galaxy community is not rendered as a canvas anchor: the relation star-track
+Every existing rendered evidence line is registered as a hit target. Expanding a same-CRM band does
+not add cross-community raw member lines; it keeps the ordinary star-track projection and prevents
+long labels/lines from crossing the workspace. Clicking an existing line selects and highlights it
+and opens its exact relation evidence (including copy-order evidence when applicable), while clicking
+a visible node keeps node selection behavior. A collapsed Galaxy community is not rendered as a canvas anchor: the relation star-track
 itself is the aggregate. Its widened band boundary toggles the member projection in both directions,
 and hidden members are absent from node and edge hit targets. No presentation-only bridge or centroid
 circle is introduced for a collapsed track.

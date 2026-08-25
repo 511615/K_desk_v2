@@ -286,23 +286,6 @@ function galaxyFocusEdgeVisible(edge){
   const chain=route(selected),pairs=new Set(chain.slice(1).map((node,index)=>[chain[index].id,node.id].sort().join('|')));
   return pairs.has([edge?.from?.id,edge?.to?.id].sort().join('|'))||edge?.from?.id===selected.id||edge?.to?.id===selected.id;
 }
-const galaxyBaseFocusEdgeVisible=galaxyFocusEdgeVisible;
-galaxyFocusEdgeVisible=function(edge){return Boolean(edge?.expandedMemberDetail)||galaxyBaseFocusEdgeVisible(edge)};
-function galaxyExpandedMemberDetailEdges(){
-  const entities=byId(),visible=new Set(graphNodes().map(node=>node.id)),members=new Set(),edges=[],seen=new Set();
-  for(const community of galaxyRelationshipCommunities())if(community.type==='same_crm_user'&&expandedRelationGroups.has(community.key))for(const id of community.members)members.add(id);
-  if(!members.size)return edges;
-  for(const raw of data?.relationships||[]){
-    const from=entities.get(raw.source),to=entities.get(raw.target);
-    if(!from||!to||!visible.has(from.id)||!visible.has(to.id)||!members.has(from.id)&&!members.has(to.id))continue;
-    if(!['account','ib_user'].includes(from.type)||!['account','ib_user'].includes(to.type))continue;
-    const type=relationKey(raw.type),pair=galaxyEdgePairKey({from,to,type});
-    if(seen.has(pair))continue;
-    seen.add(pair);
-    edges.push({id:String(raw.id||'expandedMemberDetail|'+from.id+'|'+to.id+'|'+type),from,to,type,directed:isDirectedRelation(type),expandedMemberDetail:true});
-  }
-  return edges;
-}
 const routedRenderOverviewBase=renderOverview;
 let galaxyRenderedEdgeKeys=new Set();
 drawRelationEdge=function(edge){
@@ -329,8 +312,6 @@ function galaxyDrawSelectedRoute(){
   }
 }
 renderOverview=function(){if(!data)return;routeLaneCursor.clear();galaxyRenderedEdgeKeys.clear();routedRenderOverviewBase();galaxyDrawSelectedRoute();const selectedNode=byId().get(selectedId),subject=accounts().find(item=>item.isSubject),note=document.getElementById('overviewNote');if(note&&selectedNode&&subject&&selectedNode.id!==subject.id)note.textContent='局部调查视图：仅显示「'+selectedNode.label+'」的临近关系及其返回中心账户的完整路径；点击空白处恢复全部关系。';const selectedEdge=relationHitEdges.find(edge=>edge.id===selectedEdgeKey);if(selectedEdge&&relationKey(selectedEdge.type)==='copy_order'&&!copyInspector.classList.contains('open'))fetchCopyInspection(selectedEdge)};
-const galaxyRenderOverviewWithExpandedDetails=renderOverview;
-renderOverview=function(){galaxyRenderOverviewWithExpandedDetails();if(!data)return;for(const edge of galaxyExpandedMemberDetailEdges())drawRelationEdge(edge)};
 // Blank-canvas clicks intentionally have no reset behavior. The explicit
 // "恢复初始" control at the end of this script is the only reset path.
 distanceToRelationEdge=function(point,edge){const route=relationRoute(edge);if(!route)return Infinity;let best=Infinity,previous=route.from;for(let index=1;index<=24;index++){const current=quadraticPoint(route,index/24),dx=current.x-previous.x,dy=current.y-previous.y,lengthSquared=dx*dx+dy*dy;let ratio=lengthSquared?Math.max(0,Math.min(1,((point.x-previous.x)*dx+(point.y-previous.y)*dy)/lengthSquared)):0;best=Math.min(best,Math.hypot(point.x-(previous.x+ratio*dx),point.y-(previous.y+ratio*dy)));previous=current}return best};
