@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-_FIELDS = ["openTime", "closeTime", "ticket", "symbol", "type", "volume", "openPrice", "isOpen"]
+_FIELDS = [
+    "openTime", "closeTime", "ticket", "symbol", "type", "volume", "openPrice", "isOpen",
+    "contractSize", "profitRate", "marginRate",
+]
 
 
 def _text(value: Any) -> str:
@@ -39,6 +42,12 @@ def _row(row: Mapping[str, Any]) -> dict[str, Any] | None:
         "volume": _number(row.get("Volume")),
         "openPrice": _number(row.get("Open Price")),
         "isOpen": is_open,
+        # MT5 exports these execution-time values on each deal/position.  They
+        # are intentionally carried alongside the position replay rather than
+        # replaced with a current product default in the browser.
+        "contractSize": _number(row.get("Contract Size")),
+        "profitRate": _number(row.get("Profit Rate")),
+        "marginRate": _number(row.get("Margin Rate")),
     }
 
 

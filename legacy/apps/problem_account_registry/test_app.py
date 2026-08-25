@@ -13,6 +13,9 @@ import ea_comment_group
 
 
 class SourceNotesTests(unittest.TestCase):
+    def test_mt5_extended_volume_uses_the_exported_one_hundred_million_lot_scale(self):
+        self.assertEqual(app.normalize_mt5_volume_ext(5_000_000), 0.05)
+
     def test_missing_optional_source_notes_returns_empty_text(self):
         missing_path = Path(tempfile.gettempdir()) / "kdesk-missing-source-notes.txt"
         if missing_path.exists():

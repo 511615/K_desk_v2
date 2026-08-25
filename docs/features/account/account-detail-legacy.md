@@ -45,9 +45,13 @@ remains available to existing callers.
 The inline chart's `仓位` panel is account-wide within the selected K-line time window: it counts
 and lists every overlapping product while the candlestick plot stays on the selected symbol. Its
 Balance and Credit values come from the cached factual account ledger and its red risk count contains
-only detected platform Stop Out or negative-balance-clear evidence. Where all active products do
-not have a same-source historical price and contract specification, it explicitly leaves floating
-P/L, margin and margin level unavailable instead of inventing a cross-product valuation.
+only detected platform Stop Out or negative-balance-clear evidence. For MT5 it reconstructs each
+active execution with its recorded contract size and conversion rates, a same-source M1 mark and
+the selected account's actual exported leverage; it then shows per-order and total floating P/L,
+estimated used margin, margin usage and margin level where every active row has the required
+inputs. Missing product marks or unsupported margin modes are called out per row and prevent a
+misleading total. The page never inserts a default leverage, guessed contract multiplier or a
+synthetic stop-out price.
 The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits

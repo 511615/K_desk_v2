@@ -1076,6 +1076,19 @@ def normalize_mt5_volume(value: object) -> float:
         return 0.0
 
 
+def normalize_mt5_volume_ext(value: object) -> float:
+    """Convert MT5's `VolumeExt` fixed-point unit to lots.
+
+    MT5 deal/position exports use `Volume` (1/10,000 lot) and `VolumeExt`
+    (1/100,000,000 lot) as distinct fields.  Mixing those units inflates an
+    open position by 10,000 and makes any replayed margin meaningless.
+    """
+    try:
+        return round(float(value or 0) / 100000000, 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def normalize_mt4_volume(value: object) -> float:
     try:
         return round(float(value or 0) / 100, 6)
@@ -1487,18 +1500,20 @@ def query_mysql_mt5_account_meta(cur, source: dict, account: str) -> dict:
     default_currency = normalize_text(source.get("default_currency")).upper() or "USD"
     try:
         cur.execute(
-            f"select `Group` as AccountGroup from `{source['schema']}`.`mt5_users_view` where Login = %s limit 1",
+            f"select `Group` as AccountGroup, Leverage from `{source['schema']}`.`mt5_users_view` where Login = %s limit 1",
             (int(account),),
         )
         row = cur.fetchone() or {}
         if row:
             account_group = row.get("AccountGroup")
-            return account_money_meta(
+            meta = account_money_meta(
                 mt5_group_currency(account_group, default_currency),
                 account_group,
                 source.get("name"),
                 "mt5_users_view.Group",
             )
+            meta["leverage"] = mysql_int(row.get("Leverage"))
+            return meta
     except Exception:
         # Some export schemas contain deals before a compatible users view is available.
         pass
@@ -1507,6 +1522,71 @@ def query_mysql_mt5_account_meta(cur, source: dict, account: str) -> dict:
         source_name=source.get("name"),
         currency_source="source.default_currency",
     )
+
+
+def query_mysql_mt5_valuation_inputs(source: dict, account: str, symbols: set[str]) -> dict:
+    """Read current MT5 product rules and account facts for inline valuation.
+
+    Deal/position execution fields remain the primary source for contract and
+    conversion values.  This bounded read only supplies the account's actual
+    leverage plus product calculation modes when an execution row lacks them.
+    """
+    if not source or source.get("kind") != "mt5_deals" or not normalize_text(account).isdigit():
+        return {}
+    requested = sorted({normalize_text(symbol) for symbol in symbols if normalize_text(symbol)})
+    try:
+        with mysql_trade_connect(source) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"select `Group` as AccountGroup, Leverage from `{source['schema']}`.`mt5_users_view` where Login = %s limit 1",
+                    (int(account),),
+                )
+                user = cur.fetchone() or {}
+                cur.execute(
+                    f"select Balance, Credit, Equity, Margin, MarginLevel from `{source['schema']}`.`mt5_accounts` where Login = %s limit 1",
+                    (int(account),),
+                )
+                current = cur.fetchone() or {}
+                specs: dict[str, dict] = {}
+                if requested:
+                    placeholders = ",".join(["%s"] * len(requested))
+                    cur.execute(
+                        f"""
+                        select Symbol, CurrencyProfit, CurrencyMargin, CalcMode, ContractSize,
+                               MarginInitial, MarginInitialBuy, MarginInitialSell
+                        from `{source['schema']}`.`mt5_symbols`
+                        where Symbol in ({placeholders})
+                        """,
+                        requested,
+                    )
+                    for row in cur.fetchall():
+                        symbol = normalize_text(row.get("Symbol"))
+                        if symbol:
+                            specs[symbol] = {
+                                "profitCurrency": normalize_text(row.get("CurrencyProfit")).upper(),
+                                "marginCurrency": normalize_text(row.get("CurrencyMargin")).upper(),
+                                "calcMode": mysql_int(row.get("CalcMode")),
+                                "contractSize": numeric_value(row.get("ContractSize")),
+                                "marginInitial": numeric_value(row.get("MarginInitial")),
+                                "marginInitialBuy": numeric_value(row.get("MarginInitialBuy")),
+                                "marginInitialSell": numeric_value(row.get("MarginInitialSell")),
+                            }
+                currency = mt5_group_currency(user.get("AccountGroup"), source.get("default_currency", "USD"))
+                return {
+                    "accountCurrency": currency,
+                    "leverage": mysql_int(user.get("Leverage")),
+                    "symbolSpecs": specs,
+                    "current": {
+                        "balance": numeric_value(current.get("Balance")),
+                        "credit": numeric_value(current.get("Credit")),
+                        "equity": numeric_value(current.get("Equity")),
+                        "margin": numeric_value(current.get("Margin")),
+                        "marginLevel": numeric_value(current.get("MarginLevel")),
+                    },
+                }
+    except Exception as exc:
+        logger.warning("inline K-line valuation metadata unavailable for %s: %s", account, exc)
+        return {}
 
 
 def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_meta: dict | None = None) -> list[dict]:
@@ -1560,6 +1640,7 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
                     "expert_id": normalize_text(reversal.get("ExpertID")),
                     "tick_value": numeric_value(reversal.get("TickValue")), "tick_size": numeric_value(reversal.get("TickSize")),
                     "contract_size": numeric_value(reversal.get("ContractSize")),
+                    "profit_rate": numeric_value(reversal.get("RateProfit")), "margin_rate": numeric_value(reversal.get("RateMargin")),
                     "market_bid": numeric_value(reversal.get("MarketBid")), "market_ask": numeric_value(reversal.get("MarketAsk")),
                     "price_gateway": numeric_value(reversal.get("PriceGateway")), "holding_seconds": 0,
                     "raw_json": json.dumps({"source": source.get("name"), "reversal": reversal}, ensure_ascii=False, default=str),
@@ -1611,6 +1692,8 @@ def mt5_deals_to_trades(deals: list[dict], source: dict, account: str, account_m
                 "tick_value": numeric_value(open_row.get("TickValue") or close_row.get("TickValue")),
                 "tick_size": numeric_value(open_row.get("TickSize") or close_row.get("TickSize")),
                 "contract_size": numeric_value(open_row.get("ContractSize") or close_row.get("ContractSize")),
+                "profit_rate": numeric_value(open_row.get("RateProfit") or close_row.get("RateProfit")),
+                "margin_rate": numeric_value(open_row.get("RateMargin") or close_row.get("RateMargin")),
                 "market_bid": numeric_value(open_row.get("MarketBid")),
                 "market_ask": numeric_value(open_row.get("MarketAsk")),
                 "price_gateway": numeric_value(open_row.get("PriceGateway")),
@@ -1631,7 +1714,7 @@ def query_mysql_mt5_source(source: dict, account: str, symbol: str = "", start: 
         select Deal, Login, `Order`, PositionID, Action, Entry, Reason, Time, TimeMsc,
                Symbol, Price, Volume, VolumeExt, VolumeClosed, VolumeClosedExt,
                Profit, Commission, Storage, Fee, Comment, ExpertID, PriceSL, PriceTP,
-               ContractSize, TickValue, TickSize, MarketBid, MarketAsk, PriceGateway
+               ContractSize, TickValue, TickSize, RateProfit, RateMargin, MarketBid, MarketAsk, PriceGateway
         from `{source['schema']}`.`{source['table']}`
         where {' and '.join(where)}
         order by PositionID, Time, Deal
@@ -1774,7 +1857,7 @@ def query_mysql_current_positions(source: dict, account: str) -> list[dict]:
                         f"""
                         select Position, Login, Symbol, Action, TimeCreate, TimeCreateMsc,
                                PriceOpen, PriceCurrent, PriceSL, PriceTP, Volume, VolumeExt,
-                               Profit, Storage, Comment, ExpertID
+                               Profit, Storage, RateProfit, RateMargin, ContractSize, Comment, ExpertID
                         from `{source['schema']}`.`mt5_positions`
                         where Login = %s and Action in (0, 1)
                         order by TimeCreate, Position
@@ -1793,11 +1876,13 @@ def query_mysql_current_positions(source: dict, account: str) -> list[dict]:
                             "account": account, "ticket": normalize_text(row.get("Position")),
                             "open_time": mysql_datetime_text(row.get("TimeCreateMsc") or row.get("TimeCreate")),
                             "close_time": now_text, "type": "buy" if mysql_int(row.get("Action")) == 0 else "sell",
-                            "volume": normalize_mt5_volume(row.get("VolumeExt") or row.get("Volume")),
+                            "volume": normalize_mt5_volume_ext(row.get("VolumeExt")) if row.get("VolumeExt") not in (None, "") else normalize_mt5_volume(row.get("Volume")),
                             "symbol": normalize_text(row.get("Symbol")), "open_price": row.get("PriceOpen") or 0,
                             "close_price": row.get("PriceCurrent") or 0,
                             "commission": 0, "taxes": 0, "swap": numeric_value(row.get("Storage")) * scale,
                             "profit": numeric_value(row.get("Profit")) * scale,
+                            "contract_size": numeric_value(row.get("ContractSize")),
+                            "profit_rate": numeric_value(row.get("RateProfit")), "margin_rate": numeric_value(row.get("RateMargin")),
                             "sl": row.get("PriceSL") or "", "tp": row.get("PriceTP") or "",
                             "comment": normalize_text(row.get("Comment")), "expert_id": normalize_text(row.get("ExpertID")),
                             "holding_seconds": max(0, (now - (parse_trade_time(row.get("TimeCreateMsc") or row.get("TimeCreate")) or now)).total_seconds()),
@@ -2363,6 +2448,7 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
             raise RuntimeError("账户详情直出 K 线缺少 MT5 只读报价组件")
 
         canonical = [canonical_trade_row(row) for row in rows]
+        all_canonical = [canonical_trade_row(row) for row in [*closed_rows, *current_rows]]
         trades = pd.DataFrame(canonical)
         for column in ("Open Time", "Close Time"):
             trades[column] = pd.to_datetime(trades[column], errors="coerce")
@@ -2455,12 +2541,73 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
                 )
         window_start = trade_time_text(trades["Open Time"].min())
         window_end = trade_time_text(trades["Close Time"].max())
+        # The visible K-line remains limited to recent orders, but valuation
+        # needs a same-source mark for every product held in that window.
+        # Missing products are fetched into a separate compact quote payload;
+        # they do not appear in the selected-symbol chart dropdown.
+        account_quote_bars = dict(bars_by_symbol)
+        overlap_rows = [
+            row for row in all_canonical
+            if normalize_text(row.get("Open Time")) <= window_end
+            and (bool(row.get("Is Open")) or normalize_text(row.get("Close Time")) > window_start)
+        ]
+        for report_symbol in sorted({normalize_text(row.get("Item")) for row in overlap_rows if normalize_text(row.get("Item"))} - set(account_quote_bars)):
+            raw_group = pd.DataFrame([row for row in overlap_rows if normalize_text(row.get("Item")) == report_symbol])
+            if raw_group.empty:
+                continue
+            for column in ("Open Time", "Close Time"):
+                raw_group[column] = pd.to_datetime(raw_group[column], errors="coerce")
+            raw_group = raw_group.dropna(subset=["Open Time", "Close Time", "Open Price"])
+            alignment_group = raw_group[
+                ~raw_group["Is Open"].astype(bool)
+                & (raw_group["Open Time"] >= pd.Timestamp(window_start))
+                & (raw_group["Close Time"] <= pd.Timestamp(window_end))
+            ].copy()
+            if alignment_group.empty:
+                errors.append(f"{report_symbol}: 重叠仓位没有可校验的成交端点")
+                continue
+            query_group = raw_group.copy()
+            query_group["Open Time"] = query_group["Open Time"].clip(lower=pd.Timestamp(window_start))
+            query_group["Close Time"] = query_group["Close Time"].clip(upper=pd.Timestamp(window_end))
+            for provider, is_fallback in registry.candidates(platform, server):
+                if not quote_generator.mt5.initialize(path=str(provider.terminal), timeout=6000):
+                    errors.append(f"{report_symbol} / {provider.id}: M1 报价终端连接失败：{quote_generator.mt5.last_error()}")
+                    continue
+                try:
+                    mapping, _align, sample = quote_generator.choose_by_m1_envelope(
+                        report_symbol,
+                        alignment_group,
+                        aliases=provider.aliases,
+                        fallback_source=is_fallback,
+                        allowed_hour_offsets=provider.allowed_hour_offsets,
+                    )
+                    correction = provider.price_corrections.get(report_symbol)
+                    if correction is None:
+                        correction = provider.price_corrections.get(quote_generator.canonical_symbol(report_symbol), 0.0)
+                    mapping["configured_price_correction"] = float(correction or 0.0)
+                    quote_bars = quote_generator.load_or_fetch_bars(
+                        stem,
+                        f"account_{report_symbol}",
+                        mapping["mt5_symbol"],
+                        mapping["time_mode"],
+                        mapping["hour_delta"],
+                        query_group,
+                        provider_id=provider.id,
+                    )
+                    account_quote_bars[report_symbol] = quote_generator.apply_display_price_alignment(
+                        report_symbol, quote_bars, sample, mapping
+                    )
+                    break
+                except Exception as exc:
+                    errors.append(f"{report_symbol} / {provider.id}: {exc}")
+                finally:
+                    quote_generator.mt5.shutdown()
         timeline = build_db_kline_timeline(
             account,
             {"platform": platform, "server": server, "start": window_start, "end": window_end},
         )
         account_replay = build_account_position_replay(
-            [canonical_trade_row(row) for row in [*closed_rows, *current_rows]],
+            all_canonical,
             start=window_start,
             end=window_end,
             chart_times_by_symbol={
@@ -2468,6 +2615,26 @@ def account_inline_kline_html(account: str, filters: dict | None = None) -> str:
                 for report_symbol, frame in bars_by_symbol.items()
             },
         )
+        valuation_symbols = {
+            normalize_text(row.get("Item")) for row in all_canonical
+            if normalize_text(row.get("Item"))
+        }
+        valuation = query_mysql_mt5_valuation_inputs(source, account, valuation_symbols)
+        # Quotes are compacted to close marks only.  They use the same accepted
+        # source/mapping already used by the visible K-line and never trigger a
+        # second terminal query during browser interaction.
+        valuation["quoteBarsBySymbol"] = {
+            str(report_symbol): [
+                [trade_time_text(value), numeric_value(close)]
+                for value, close in zip(frame["time"], frame["close"])
+            ]
+            for report_symbol, frame in account_quote_bars.items()
+        }
+        valuation["quoteCoverage"] = {
+            "requestedSymbols": len(valuation_symbols),
+            "quotedSymbols": len(valuation["quoteBarsBySymbol"]),
+        }
+        account_replay["valuation"] = valuation
         return account_cache_set(
             cache_key,
             build_lightweight_html(
@@ -8596,6 +8763,9 @@ def canonical_trade_row(row: dict) -> dict[str, object]:
         "Is Cent Account": bool(row.get("is_cent_account")),
         "Platform": normalize_text(row.get("platform")),
         "Server": normalize_text(row.get("server")),
+        "Contract Size": numeric_value(row.get("contract_size")),
+        "Profit Rate": numeric_value(row.get("profit_rate")),
+        "Margin Rate": numeric_value(row.get("margin_rate")),
     }
 
 

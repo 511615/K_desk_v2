@@ -67,10 +67,16 @@ visible direct-chart time window. The account service creates that compact event
 the selected route's complete read-only order history and sends only the window-overlapping rows
 plus the already swept per-chart-time totals. A chart pan or zoom therefore does not rescan account
 history. Balance and Credit use the existing full-account funds replay and only sourced platform
-Stop Out or negative-balance-clear records are labelled as liquidation facts. Intraday floating
-P/L, margin and margin level are deliberately left as unavailable until every active product has a
-same-source M1 mark and historical contract specification; the chart never substitutes a default
-balance, leverage or synthetic liquidation price.
+Stop Out or negative-balance-clear records are labelled as liquidation facts. For MT5, the position
+panel carries each execution's contract size and profit/margin conversion rate, the account's actual
+exported leverage, current product calculation mode and directional margin rate, plus compact
+same-source M1 close marks. It derives floating P/L per active execution and then totals it; it
+derives estimated margin only where the exported calculation mode is supported (`Futures` or `CFD
+leverage`) and all inputs are present. Usage and margin level use factual Balance/Credit plus the
+derived floating P/L. A row that lacks a mark, contract, conversion or supported margin rule
+remains individually labelled as unavailable and blocks a false account-wide total. The renderer
+never falls back to a default balance, leverage or symbol multiplier, and it does not label an
+estimated liquidation price as factual when the group stop-out threshold is absent.
 
 ## Loading, empty and failure behavior
 

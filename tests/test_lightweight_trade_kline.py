@@ -103,6 +103,30 @@ def test_lightweight_renderer_uses_account_replay_for_the_all_product_position_p
     assert "全账户仓位" in html
 
 
+def test_lightweight_renderer_values_all_product_positions_from_execution_contracts_and_quotes():
+    trades, bars, mapping = _fixture()
+    replay = {
+        "fields": ["openTime", "closeTime", "ticket", "symbol", "type", "volume", "openPrice", "isOpen", "contractSize", "profitRate", "marginRate"],
+        "rows": [["2026-08-20 10:00:00", "2026-08-20 10:03:00", "GOLD-1", "XAUUSD", "sell", 0.04, 4589.26, False, 100, 1, 1]],
+        "seriesBySymbol": {"EURUSD": [["2026-08-20 10:00:00", 1, 0.04]]},
+        "valuation": {
+            "accountCurrency": "USD",
+            "leverage": 500,
+            "quoteBarsBySymbol": {"XAUUSD": [["2026-08-20 10:00:00", 4627.06]]},
+            "symbolSpecs": {"XAUUSD": {"contractSize": 100, "profitCurrency": "USD", "marginCurrency": "USD", "calcMode": 4}},
+        },
+    }
+    html = build_lightweight_html("10001", "10001_valued_positions", trades, bars, mapping, account_replay=replay)
+
+    assert "function accountPositionValuation(at,open)" in html
+    assert "function quoteAt(symbol,at)" in html
+    assert "contractSize" in html
+    assert "mode===4" in html
+    assert "浮动盈亏" in html
+    assert "DATA.positionMeta?.leverage)||500" not in html
+    assert "initialBalance)||10000" not in html
+
+
 def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():
     trades, bars, mapping = _fixture()
     trades.loc[0, "Is Open"] = True
