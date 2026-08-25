@@ -460,6 +460,12 @@ sequence guards, clickable transparent edge hit layers, same-CRM-only collapsed 
 resolution, expanded-member account-number labels, raw member-edge detail routing and the
 copy/open-close-sync/opposite-lock wording split. JavaScript syntax is checked from rendered Galaxy
 HTML in addition to Python compile, Ruff and governance validation.
+Relation-display regressions cover raw-edge 404 and snapshot 409, `scope=auto` single-account output
+without group totals, explicit group paging, member de-duplication by route, IB 109094-style
+known/included/statistic coverage, rebate-share aggregation, multi-currency split and partial source
+coverage. Both focus-force and Galaxy pages must expose the shared table on an edge click, keep node
+clicks as profiles, preserve raw-evidence access and ensure a member-row click only selects/highlights
+the existing node without changing graph layout or community state.
 
 Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,
 DBG MT5 Live2 account 5200101 routing/finance/orders, rebate, copy/EA, Toxic job recovery, K-line

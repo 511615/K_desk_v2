@@ -1582,7 +1582,7 @@ def query_mysql_mt5_valuation_inputs(source: dict, account: str, symbols: set[st
                     # labels this as an equity-zero pressure price until a
                     # sourced threshold is available.
                     "riskBoundaryMode": "equity_zero",
-                    "riskBoundaryNote": "账户组强平阈值未导出；按权益归零压力价计算，其他产品维持该快照标记价。",
+                    "riskBoundaryNote": "其它产品维持该快照标记价；此产品到该价格时，全账户权益归零。账户组强平阈值未导出，因此这不是平台实际强平价。",
                     "current": {
                         "balance": numeric_value(current.get("Balance")),
                         "credit": numeric_value(current.get("Credit")),

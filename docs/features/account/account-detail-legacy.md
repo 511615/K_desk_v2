@@ -55,6 +55,10 @@ would reach zero while every other product remains at the selected snapshot mark
 as an `权益归零压力价` risk boundary, not as a factual broker stop-out, until the account group's
 actual stop-out percentage is present in a read-only source. The page never inserts a default
 leverage, guessed contract multiplier or synthetic broker stop-out price.
+When the user selects the embedded chart's `仓位` pane, an in-chart legend remains visible: blue
+means all-account open-position count and yellow means all-account total lots. It intentionally
+does not call the yellow series margin usage. The risk card also states that its price is the point
+where replayed all-account equity becomes zero with other products held at the selected marks.
 The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits

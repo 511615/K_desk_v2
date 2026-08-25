@@ -122,6 +122,7 @@ class AccountRelationshipNetworkService:
         builder.add_copy_origins(payloads.get("copyOrigins", {}))
         builder.add_copy_groups(payloads.get("copyGroups", {}))
         builder.add_rebate(payloads.get("sameName", {}))
+        builder.finalize_display_metadata()
 
         coverage.sort(key=lambda item: item["source"])
         failed = [item for item in coverage if item["status"] == "failed"]
@@ -220,12 +221,17 @@ class _EvidenceGraphBuilder:
         evidence: list[str],
         *,
         key: str = "",
+        metrics: dict[str, Any] | None = None,
+        display_anchor_id: str = "",
+        display_group_key: str = "",
+        display_member_count: int | None = None,
+        display_member_id: str = "",
     ) -> None:
         relation_id = key or "|".join((relation_type, source, target, label))
         if relation_id in self._relationship_ids:
             return
         self._relationship_ids.add(relation_id)
-        self.relationships.append({
+        relationship = {
             "id": relation_id,
             "type": relation_type,
             "typeLabel": RELATION_TYPES[relation_type],
@@ -233,7 +239,65 @@ class _EvidenceGraphBuilder:
             "target": target,
             "label": label,
             "evidence": [item for item in evidence if item],
-        })
+            "metrics": metrics if isinstance(metrics, dict) else {},
+        }
+        if display_anchor_id:
+            relationship["display_anchor_id"] = display_anchor_id
+        if display_group_key:
+            relationship["display_group_key"] = display_group_key
+        if display_member_count is not None:
+            relationship["display_member_count"] = max(int(display_member_count), 0)
+        if display_member_id:
+            relationship["display_member_id"] = display_member_id
+        self.relationships.append(relationship)
+
+    def finalize_display_metadata(self) -> None:
+        """Attach stable, structural display-group fields without changing graph edges."""
+        account_component_types = {"same_crm_user", "same_name", "login_ip", "client_id"}
+        for relation_type in account_component_types:
+            rows = [
+                edge for edge in self.relationships
+                if edge["type"] == relation_type
+                and self._entity_by_id.get(edge["source"], {}).get("type") == "account"
+                and self._entity_by_id.get(edge["target"], {}).get("type") == "account"
+            ]
+            components: list[set[str]] = []
+            for edge in rows:
+                endpoints = {edge["source"], edge["target"]}
+                connected = [component for component in components if component & endpoints]
+                merged = set().union(endpoints, *connected)
+                components = [component for component in components if component not in connected]
+                components.append(merged)
+            for component in components:
+                anchor = min(component)
+                group_key = f"{relation_type}|{anchor}|undirected"
+                for edge in rows:
+                    if {edge["source"], edge["target"]} <= component:
+                        edge.setdefault("display_anchor_id", anchor)
+                        edge.setdefault("display_group_key", group_key)
+                        edge.setdefault("display_member_count", len(component))
+        for edge in self.relationships:
+            source, target = edge["source"], edge["target"]
+            source_type = self._entity_by_id.get(source, {}).get("type")
+            target_type = self._entity_by_id.get(target, {}).get("type")
+            anchor = edge.get("display_anchor_id") or (
+                source if source_type in {"ib_user", "ea_feature", "copy_group", "relation_group", "ib_group", "rebate"}
+                else target if target_type in {"ib_user", "ea_feature", "copy_group", "relation_group", "ib_group", "rebate"}
+                else source
+            )
+            anchor_entity = self._entity_by_id.get(anchor, {})
+            route = "|".join(filter(None, (_text(anchor_entity.get("platform")), _text(anchor_entity.get("server")))))
+            edge.setdefault("display_anchor_id", anchor)
+            edge.setdefault("display_group_key", f"{edge['type']}|{anchor}|{route or 'all-routes'}")
+        groups: dict[str, set[str]] = {}
+        for edge in self.relationships:
+            key = _text(edge.get("display_group_key"))
+            members = groups.setdefault(key, set())
+            for endpoint in (edge["source"], edge["target"]):
+                if self._entity_by_id.get(endpoint, {}).get("type") == "account":
+                    members.add(endpoint)
+        for edge in self.relationships:
+            edge.setdefault("display_member_count", len(groups.get(_text(edge.get("display_group_key")), set())))
 
     def add_same_name(self, payload: dict[str, Any]) -> None:
         panels = _mapping(payload.get("riskPanels"))
@@ -264,6 +328,11 @@ class _EvidenceGraphBuilder:
                     _money_evidence("综合盈利", row.get("comprehensiveProfit"), row.get("currency")),
                     _money_evidence("返佣", row.get("rebate"), row.get("currency")),
                 ],
+                metrics={
+                    "comprehensiveProfit": row.get("comprehensiveProfit"),
+                    "rebate": row.get("rebate"),
+                    "currency": _text(row.get("currency")),
+                },
             )
 
     def add_crm_ib_relationship(self, payload: dict[str, Any]) -> None:
@@ -289,6 +358,23 @@ class _EvidenceGraphBuilder:
                 _number_text(member.get("rebateOrderCount")) and f"返佣关联成交：{_number_text(member.get('rebateOrderCount'))} 笔",
                 _text(member.get("lastRebateAt")) and f"最近返佣记录：{_text(member.get('lastRebateAt'))}",
             ]
+
+        def anomaly_metrics(member: dict[str, Any], total: Any) -> dict[str, Any]:
+            return {
+                "databaseStatus": _text(member.get("databaseStatus")) or "B",
+                "tradeProfit": member.get("tradeProfit"),
+                "rebateAmount": member.get("rebateAmount"),
+                "combinedProfit": member.get("combinedProfit"),
+                "rebateShare": member.get("rebateShare"),
+                "rebateOrderCount": member.get("rebateOrderCount"),
+                "lastRebateAt": _text(member.get("lastRebateAt")),
+                "inclusionReasons": [
+                    _text(item) for item in member.get("inclusionReasons", [])
+                    if _text(item)
+                ] if isinstance(member.get("inclusionReasons"), list) else [],
+                "currency": _text(member.get("currency")) or "USD",
+                "knownMembers": _int(total),
+            }
 
         for record in _items(payload.get("records")):
             crm_user_id = _text(record.get("crmUserId"))
@@ -362,6 +448,10 @@ class _EvidenceGraphBuilder:
                         "IB 异常直属返佣账户",
                         [*anomaly_evidence(member, crm_user_id), _route_text(platform, server)],
                         key=f"ib-anomalous-rebate|{own_ib_entity}|{account_id}",
+                        metrics=anomaly_metrics(member, own_total),
+                        display_anchor_id=own_ib_entity,
+                        display_group_key=f"ib_direct_rebate|{own_ib_entity}|outbound",
+                        display_member_count=own_total,
                     )
 
             direct_ib_user_id = _text(record.get("directIbUserId"))
@@ -449,6 +539,10 @@ class _EvidenceGraphBuilder:
                         "IB 异常直属返佣账户",
                         [*anomaly_evidence(member, direct_ib_user_id), _route_text(platform, server)],
                         key=f"ib-anomalous-rebate|{direct_ib_entity}|{account_id}",
+                        metrics=anomaly_metrics(member, record.get("directIbTotalAccounts")),
+                        display_anchor_id=direct_ib_entity,
+                        display_group_key=f"ib_direct_rebate|{direct_ib_entity}|outbound",
+                        display_member_count=_int(record.get("directIbTotalAccounts")),
                     )
 
             top_ib_user_id = _text(record.get("topIbUserId"))
@@ -529,6 +623,9 @@ class _EvidenceGraphBuilder:
                     _text(group.get("expertId")) and f"查询账号标识：{_text(group.get('expertId'))}",
                 ],
                 key=f"ea-subject|{group_id}",
+                metrics={"expertId": _text(group.get("expertId")), "matchRule": _text(group.get("matchRule"))},
+                display_anchor_id=group_id,
+                display_group_key=f"ea_feature|{group_id}|outbound",
             )
             for member in _items(group.get("members")):
                 account = _text(member.get("account"))
@@ -555,6 +652,13 @@ class _EvidenceGraphBuilder:
                         _money_evidence("净盈亏", member.get("netProfit"), member.get("currency")),
                     ],
                     key=f"ea-member|{group_id}|{account_id}",
+                    metrics={
+                        "orders": member.get("orders"), "closedOrders": member.get("orders"),
+                        "netProfit": member.get("netProfit"), "currency": _text(member.get("currency")),
+                        "expertIds": _items(member.get("expertIds")), "matchClue": _text(member.get("matchClue")),
+                    },
+                    display_anchor_id=group_id,
+                    display_group_key=f"ea_feature|{group_id}|outbound",
                 )
 
     def add_copy_origins(self, payload: dict[str, Any]) -> None:
@@ -583,6 +687,13 @@ class _EvidenceGraphBuilder:
                     _money_evidence("当前账号跟单净盈亏", origin.get("netProfit"), origin.get("currency")),
                 ],
                 key=f"copy-subject|{source_id}",
+                metrics={
+                    "matchedOrders": origin.get("matchedOrders"), "orders": origin.get("orders"),
+                    "netProfit": origin.get("netProfit"), "currency": _text(origin.get("currency")),
+                },
+                display_anchor_id=source_id,
+                display_group_key=f"copy_order|{source_id}|outbound",
+                display_member_id=self.subject_id,
             )
             for follower in _items(origin.get("followers")):
                 follower_login = _text(follower.get("account"))
@@ -609,6 +720,15 @@ class _EvidenceGraphBuilder:
                         _text(follower.get("lastTime")) and f"最后记录：{_text(follower.get('lastTime'))}",
                     ],
                     key=f"copy-follower|{source_id}|{follower_id}",
+                    metrics={
+                        "orders": follower.get("orders"), "matchedOrders": follower.get("matchedOrders"),
+                        "matchedSourceOrders": follower.get("matchedSourceOrders"), "lots": follower.get("lots") or follower.get("volume"),
+                        "netProfit": follower.get("netProfit"), "currency": _text(follower.get("currency")),
+                        "firstTime": _text(follower.get("firstTime")), "lastTime": _text(follower.get("lastTime")),
+                    },
+                    display_anchor_id=source_id,
+                    display_group_key=f"copy_order|{source_id}|outbound",
+                    display_member_id=follower_id,
                 )
 
     def add_copy_groups(self, payload: dict[str, Any]) -> None:
@@ -634,6 +754,9 @@ class _EvidenceGraphBuilder:
                     _count_evidence("账户数", _mapping(group.get("totals")).get("accounts")),
                 ],
                 key=f"copy-group-subject|{group_id}",
+                metrics={"knownMembers": _mapping(group.get("totals")).get("accounts")},
+                display_anchor_id=group_id,
+                display_group_key=f"copy_group|{group_id}|outbound",
             )
             for member in _items(group.get("members")):
                 account = _text(member.get("account"))
@@ -658,6 +781,13 @@ class _EvidenceGraphBuilder:
                         _money_evidence("产生返佣", member.get("rebate"), member.get("currency")),
                     ],
                     key=f"copy-group-member|{group_id}|{account_id}",
+                    metrics={
+                        "closedOrders": member.get("closedOrders"), "openOrders": member.get("openOrders"),
+                        "closedLots": member.get("closedLots"), "combinedNetProfit": member.get("combinedNetProfit"),
+                        "rebate": member.get("rebate"), "currency": _text(member.get("currency")),
+                    },
+                    display_anchor_id=group_id,
+                    display_group_key=f"copy_group|{group_id}|outbound",
                 )
 
     def add_rebate(self, payload: dict[str, Any]) -> None:
@@ -682,6 +812,9 @@ class _EvidenceGraphBuilder:
                 _count_evidence("返佣明细行", finance.get("rebateRows")),
                 "仅汇总当前账户所属 CRM 路由的 rebate_task_detail 记录。",
             ],
+            metrics={"rebateAmount": finance.get("rebate"), "rebateRows": finance.get("rebateRows"), "currency": currency},
+            display_anchor_id=rebate_id,
+            display_group_key=f"rebate|{rebate_id}|outbound",
         )
 
 

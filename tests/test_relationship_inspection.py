@@ -116,3 +116,127 @@ def test_profile_metrics_are_business_facing_and_hide_internal_fields() -> None:
     assert profile["metrics"]["behavior"]["已平仓订单数"] == 12
     ea = next(item for item in profile["tags"] if item["name"] == "EA")
     assert ea["metrics"] == {"匹配订单数": 7, "Comment 归一结果": "ATM_DualAI"}
+
+
+def test_relation_display_keeps_account_to_account_edge_in_single_mode() -> None:
+    data = snapshot()
+    data["relationships"][2].update({
+        "display_group_key": "copy_order|account:100|outbound|MT5|AC CN MT5",
+        "display_anchor_id": "account:100|MT5|AC CN MT5",
+        "metrics": {"matchedOrders": 8, "orders": 8, "netProfit": 12.5, "currency": "USD"},
+    })
+
+    display = RelationshipInspectionService().build_relation_display("copy-1", data)
+
+    assert display["mode"] == "single"
+    assert display["summary_metrics"] == []
+    assert display["single_metrics"]
+    assert display["member_page"]["items"] == []
+    assert display["group_actions"][0]["scope"] == "group"
+
+
+def test_relation_display_ib_group_uses_materialised_members_and_explicit_coverage() -> None:
+    data = {
+        "revision": 8,
+        "filters": {"platform": "MT5", "server": "AC CN MT5"},
+        "entities": [
+            {"id": "account:100", "type": "account", "label": "100", "isSubject": True},
+            {"id": "ib_user:109094", "type": "ib_user", "label": "IB 109094"},
+            {"id": "account:234889", "type": "account", "label": "234889", "databaseStatus": "P"},
+            {"id": "account:234890", "type": "account", "label": "234890", "databaseStatus": "B"},
+        ],
+        "relationships": [
+            {
+                "id": "ib-1", "source": "ib_user:109094", "target": "account:234889", "type": "ib_direct_rebate",
+                "display_group_key": "ib_direct_rebate|ib_user:109094|outbound|MT5|AC CN MT5",
+                "display_anchor_id": "ib_user:109094", "display_member_count": 27,
+                "metrics": {
+                    "tradeProfit": 54234.12, "rebateAmount": 777.87, "combinedProfit": 55011.99,
+                    "rebateShare": 0.014, "rebateOrderCount": 698, "lastRebateAt": "2026-08-21 12:40:00",
+                    "currency": "USD", "inclusionReasons": ["返佣主导盈利"],
+                },
+            },
+            {
+                "id": "ib-2", "source": "ib_user:109094", "target": "account:234890", "type": "ib_direct_rebate",
+                "display_group_key": "ib_direct_rebate|ib_user:109094|outbound|MT5|AC CN MT5",
+                "display_anchor_id": "ib_user:109094", "display_member_count": 27,
+                "metrics": {
+                    "tradeProfit": 57152.20, "rebateAmount": 693.77, "combinedProfit": 57845.97,
+                    "rebateShare": 0.012, "rebateOrderCount": 627, "lastRebateAt": "2026-08-21 12:40:02",
+                    "currency": "USD", "inclusionReasons": ["数据库状态 P"],
+                },
+            },
+        ],
+        "coverage": [], "limitations": [], "inProgress": False,
+    }
+
+    display = RelationshipInspectionService().build_relation_display("ib-1", data, scope="group")
+
+    assert display["mode"] == "group"
+    assert display["coverage"] == {
+        "known_members": 27,
+        "included_members": 2,
+        "statistic_members": 2,
+        "omitted_members": 25,
+        "status": "partial",
+        "reason": "统计仅基于当前筛选范围内有完整证据的账户",
+    }
+    assert display["member_page"]["total"] == 2
+    assert {item["account"]["login"] for item in display["member_page"]["items"]} == {"234889", "234890"}
+    metrics = {item["id"]: item["value"] for item in display["summary_metrics"]}
+    assert metrics["rebateAmount_USD"] == 1471.64
+    assert metrics["rebateShare"] == 0.01304
+
+
+def test_relation_display_group_scope_deduplicates_connected_same_ip_members() -> None:
+    data = snapshot()
+    data["relationships"] = [
+        {"id": "ip-1", "source": "account:100|MT5|AC CN MT5", "target": "account:101|MT5|AC CN MT5", "type": "login_ip", "metrics": {"closedOrders": 4, "netProfit": 5, "currency": "USD"}},
+        {"id": "ip-2", "source": "account:101|MT5|AC CN MT5", "target": "account:102|MT5|AC CN MT5", "type": "login_ip", "metrics": {"closedOrders": 6, "netProfit": -3, "currency": "USD"}},
+    ]
+
+    display = RelationshipInspectionService().build_relation_display("ip-1", data, scope="group", member_limit=1)
+
+    assert display["mode"] == "group"
+    assert display["coverage"]["included_members"] == 3
+    assert display["member_page"] == {"page": 1, "limit": 1, "total": 3, "items": display["member_page"]["items"]}
+    assert len(display["member_page"]["items"]) == 1
+
+
+def test_relation_display_group_splits_currency_and_weights_holding_duration() -> None:
+    data = snapshot()
+    data["relationships"] = [
+        {
+            "id": "ip-1", "source": "account:100|MT5|AC CN MT5", "target": "account:101|MT5|AC CN MT5",
+            "type": "login_ip", "metrics": {
+                "netProfit": 10, "currency": "USD", "holdingSecondsTotal": 600, "holdingOrderCount": 2,
+            },
+        },
+        {
+            "id": "ip-2", "source": "account:101|MT5|AC CN MT5", "target": "account:102|MT5|AC CN MT5",
+            "type": "login_ip", "metrics": {
+                "netProfit": 20, "currency": "USC", "holdingSecondsTotal": 300, "holdingOrderCount": 1,
+            },
+        },
+    ]
+
+    display = RelationshipInspectionService().build_relation_display("ip-1", data, scope="group")
+
+    metrics = {item["id"]: item["value"] for item in display["summary_metrics"]}
+    assert metrics["netProfit_USD"] == 10
+    assert metrics["netProfit_USC"] == 20
+    assert "netProfit" not in metrics
+    assert metrics["averageHoldingSeconds"] == 300
+
+
+def test_relation_display_group_scope_safely_downgrades_when_only_one_member_exists() -> None:
+    data = snapshot()
+    data["entities"].append({"id": "ib_user:1", "type": "ib_user", "label": "IB 1"})
+    data["relationships"] = [{
+        "id": "identity", "source": "account:100|MT5|AC CN MT5", "target": "ib_user:1", "type": "ib_identity",
+    }]
+
+    display = RelationshipInspectionService().build_relation_display("identity", data, scope="group")
+
+    assert display["mode"] == "single"
+    assert display["member_page"]["total"] == 0

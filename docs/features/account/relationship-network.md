@@ -3,8 +3,8 @@ feature_id: ACC-REL-001
 title: Account relationship network
 module: account
 status: active
-apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
+apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -38,13 +38,36 @@ shows only the operator decisions—identity, routed database status, propagated
 expansion outcome. Raw coverage dates, query-completeness prose and technical limitations remain in
 the auditable relation-evidence view and are not repeated as an account-profile card.
 
-When the current snapshot contains `ib_direct_rebate` evidence, Galaxy adds a separate **IB 直属返佣核查**
-card directly below the selected profile. It groups rows by the returned direct-IB entity and displays
-only the already materialised accounts, the returned abnormal/total count when available, each
+When a user clicks `ib_direct_rebate` evidence, Galaxy opens the shared **IB 直属返佣核查** relation
+display rather than an automatic card below the selected profile. It groups only the already
+materialised accounts by the returned direct-IB entity and displays the returned abnormal/total count,
 inclusion reason, database status, actual trade P/L, rebate, combined profit, rebate share, rebate
-deal count and most recent rebate record. Values are copied from the edge evidence; the card does not
-infer that an IB or account is fraudulent. Selecting a row only selects/highlights that account and
-never toggles a relation star-track or recomputes expansion.
+deal count and most recent rebate record. Values are structured edge facts; the table does not infer
+that an IB or account is fraudulent. Selecting a row only selects/highlights that account and never
+toggles a relation star-track or recomputes expansion.
+
+## Relation display table
+
+Clicking a visible raw relationship edge opens the shared `关系展示表`; selecting a node continues to
+open only its account profile. The table is bound to the current snapshot revision and returns 409 on
+a stale revision. It never starts relationship expansion, changes score, changes a same-CRM orbit, or
+repositions a node. Both the default focus workspace and explicit Galaxy workspace consume the same
+read-only table contract.
+
+An account-to-account edge defaults to **single mode**. It shows only that account's facts for the
+clicked relation and its original evidence; it must not report a member count, total P/L or averaged
+group value. An account-to-relation-entity edge (IB identity, EA feature, Copy group or CRM community)
+can open **group mode**; ordinary LastIP, CID, same-name and copy edges retain direct lines but expose
+an explicit `查看…账户群` table action when the materialised snapshot contains more than one member.
+Group members are de-duplicated by account/platform/server and come only from the current snapshot.
+
+Every group table separates `known_members`, `included_members` and `statistic_members`; partial
+evidence remains partial rather than being extrapolated. Direct-IB rebate additionally reports the
+original cohort denominator alongside only the materialised anomaly accounts, so an `异常 8 / 共 27`
+card states clearly when money totals are based on 8 complete evidence accounts. IB, EA and Copy use
+their identified relation orders/rows. Common IP/CID/same-name tables may make a capped,
+operator-triggered, read-only account-summary request for already materialised members; those metrics
+are labelled as member-trade aggregation and never imply causation.
 
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
@@ -242,6 +265,11 @@ score, colour, hop count, expansion state and score ledger. Account entities add
 account's actual route; cached expansion data is not mutated. The former evidence-only response is
 replaced by this contract. `presentationGraph` is additive and contains relation entities, grouped
 member edges, auditable subject paths and the unchanged account status fields.
+`GET /api/accounts/by-login/{login}/relationship-network/relation-display` is additive to
+`relation-detail`: it accepts the same filters plus a raw `edge_id`, `scope=auto|single|group` and
+bounded member pagination. It returns a stable display key, relation/anchor metadata, coverage,
+mode-specific metrics, paged member rows, group actions and safe evidence. `relation-detail` remains
+the source for a user explicitly requesting original per-edge evidence.
 
 ## Data, routing and read-only constraints
 

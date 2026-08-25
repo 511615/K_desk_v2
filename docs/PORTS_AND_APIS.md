@@ -63,6 +63,11 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
 - `GET /api/accounts/by-login/{login}/relationship-network/relation-detail` - paged, presentation-safe
   evidence for one stable edge or multi-relation bundle; accepts `edge_id`, optional `job_id`,
   `snapshot_version`, `detail_page` and `detail_limit`
+- `GET /api/accounts/by-login/{login}/relationship-network/relation-display` - snapshot-bound
+  relationship table opened only by a graph edge or relation-group action. It accepts `edge_id`,
+  `scope=auto|single|group`, `member_page`, `member_limit` and existing relationship filters.
+  Account-to-account clicks remain single-account facts; only an explicit/eligible group request
+  returns group summaries, member paging and separate known/included/statistic coverage counts.
 - `GET /api/accounts/by-login/{login}/copy-origins` - accepts optional `platform`, `server`,
   `symbol`, `start` and `end`; `start/end` filter by opening time and blank values mean full history
 - `GET /api/accounts/by-login/{login}/copy-group-profit` - accepts the same filters, including the

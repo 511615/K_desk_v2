@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import re
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import kuzu
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
@@ -572,6 +574,47 @@ def test_kuzu_focus_workspace_collapses_only_same_crm_relation_groups(tmp_path: 
     assert "entity.type!=='relation_group'||entity.relationType!=='same_crm_user'" in page.text
 
 
+def test_relationship_renderers_share_click_only_relation_display_table(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        focus = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=focus-force")
+        galaxy = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=galaxy")
+
+    assert focus.status_code == galaxy.status_code == 200
+    for page in (focus, galaxy):
+        assert "KdeskRelationDisplay" in page.text
+        assert "关系展示表" in page.text
+        assert "relationship-network/relation-display" in page.text
+    assert "onSelectMember:nodeId=>{if(S.by.has(nodeId))" in focus.text
+    assert "inspectionLoadRelationEvidence=inspectionLoadRelation" in galaxy.text
+
+
+def test_relationship_display_renderer_scripts_parse_in_node(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    with TestClient(app) as client:
+        pages = [
+            client.get("/kuzu-risk?account=302360&graph_type=focus-force"),
+            client.get("/kuzu-risk?account=302360&graph_type=galaxy"),
+        ]
+
+    configured_node = os.environ.get("KDESK_NODE", "")
+    node = configured_node if configured_node and Path(configured_node).is_file() else shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is unavailable; set KDESK_NODE to enable relationship script syntax checks")
+    with TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        for page_index, page in enumerate(pages):
+            assert page.status_code == 200
+            scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", page.text, flags=re.S)
+            for script_index, script in enumerate(scripts):
+                if not script.strip():
+                    continue
+                path = root / f"relationship-{page_index}-{script_index}.js"
+                path.write_text(script, encoding="utf-8")
+                check = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, check=False)
+                assert check.returncode == 0, check.stderr
+
+
 def test_kuzu_risk_galaxy_uses_compact_controls_and_plain_language_profile(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
 
@@ -680,6 +723,48 @@ def test_relationship_inspection_endpoints_read_the_current_snapshot(tmp_path: P
     assert relation.json()["job_id"] == "investigation-7"
     assert "user_id" not in relation.text
     assert stale.status_code == 409
+
+
+def test_relationship_display_endpoint_is_snapshot_bound_and_validates_scope(tmp_path: Path, monkeypatch) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+    snapshot = {
+        "revision": 7,
+        "entities": [
+            {"id": "account:100", "type": "account", "label": "100", "isSubject": True},
+            {"id": "account:101", "type": "account", "label": "101", "databaseStatus": "P"},
+        ],
+        "relationships": [{
+            "id": "same-ip:100:101", "source": "account:100", "target": "account:101", "type": "login_ip",
+            "metrics": {"closedOrders": 3, "netProfit": 5, "currency": "USD"},
+        }],
+        "coverage": [], "limitations": [], "inProgress": False,
+    }
+    monkeypatch.setattr(app.state.relationship_expansion, "get_or_start", lambda *_args: snapshot)
+    monkeypatch.setattr(app.state.legacy, "call", lambda *_args: {})
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-display",
+            params={"edge_id": "same-ip:100:101", "scope": "auto", "snapshot_version": 7},
+        )
+        stale = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-display",
+            params={"edge_id": "same-ip:100:101", "snapshot_version": 6},
+        )
+        invalid = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-display",
+            params={"edge_id": "same-ip:100:101", "scope": "all"},
+        )
+        missing = client.get(
+            "/api/accounts/by-login/100/relationship-network/relation-display",
+            params={"edge_id": "missing"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "single"
+    assert stale.status_code == 409
+    assert invalid.status_code == 422
+    assert missing.status_code == 404
 
 
 def test_kuzu_risk_galaxy_locator_is_independent_risk_colored_and_clickable(tmp_path: Path) -> None:

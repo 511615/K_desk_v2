@@ -1143,6 +1143,128 @@
         }
       }
     },
+    "/api/accounts/by-login/{login}/relationship-network/relation-display": {
+      "get": {
+        "summary": "Relationship Relation Display",
+        "description": "Read a snapshot-bound, presentation-only table without changing investigation state.",
+        "operationId": "relationship_relation_display_api_accounts_by_login__login__relationship_network_relation_display_get",
+        "parameters": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login"
+            }
+          },
+          {
+            "name": "edge_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 220,
+              "title": "Edge Id"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(auto|single|group)$",
+              "default": "auto",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 12,
+              "title": "Threshold"
+            }
+          },
+          {
+            "name": "include_toxic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Toxic"
+            }
+          },
+          {
+            "name": "member_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Member Page"
+            }
+          },
+          {
+            "name": "member_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Member Limit"
+            }
+          },
+          {
+            "name": "snapshot_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Snapshot Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/kuzu-demo": {
       "get": {
         "summary": "Kuzu Demo Page",

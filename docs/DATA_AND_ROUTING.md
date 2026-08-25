@@ -503,6 +503,12 @@ continues to use its existing endpoint independently.
 Relationship-only EA and Copy calls pass an internal `_relationship=1` marker across the legacy
 bridge. That marker preserves the returned read-only evidence but bypasses the dashboard result cache;
 it is not a public API parameter and does not alter interactive dashboard caching.
+The click-only relation display consumes the immutable relationship snapshot first. For a group table
+it may request a bounded presentation summary for at most 50 already materialised account routes,
+with four read-only requests in flight; it never discovers an additional account, reuses another
+route for a shared Login, or writes a graph/CRM/trading record. IB, EA and Copy values are retained
+as structured edge metrics, not parsed from evidence prose. Any unavailable member summary leaves
+coverage partial rather than contributing a zero or a guessed cross-currency sum.
 Within one discovered current-LastIP cohort, only the representative account runs EA and Copy
 discovery. Sibling accounts retain their CRM and LastIP reads and return explicit skipped-source
 coverage; the graph does not silently claim that their individual automation history was queried.

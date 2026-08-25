@@ -265,6 +265,14 @@
   75th percentile, rebate share at least 70%, and trading P/L no more than 30% of rebate. Qualified
   status and rebate reasons are unioned without duplicating an account. These are investigation clues,
   not a fraud conclusion.
+- Relationship-display summaries are presentation facts, not new relationship or risk rules. A
+  single account-to-account edge shows only that account's relation-scoped metrics. Group summaries
+  use only the snapshot's de-duplicated materialised members and relation-specific orders where they
+  exist. Sums are computed from underlying values rather than averages of account averages; average
+  holding is weighted by valid closed-order duration/count when those source fields are available.
+  Rebate share is total rebate divided by total combined profit only when its denominator is positive.
+  Currency values are never summed across distinct display currencies; they are split and coverage is
+  partial when conversion evidence is incomplete.
 
 ## Toxic and market-pushing
 

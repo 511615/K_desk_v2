@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from kdesk.api.relation_display_page import relation_display_assets
+
 
 def render_kuzu_risk_page() -> str:
     return """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kuzu 关联风险扩散</title><style>
@@ -563,5 +565,10 @@ function galaxyRenderIbRebatePanel(){
   galaxyIbRebatePanel.querySelectorAll('[data-ib-rebate-account]').forEach(button=>button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();const id=String(button.dataset.ibRebateAccount||'');if(!byId().has(id))return;selectedId=id;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}));
 }
 const galaxyRenderDetailWithIbRebate=renderDetail;renderDetail=function(){galaxyRenderDetailWithIbRebate();galaxyRenderIbRebatePanel()};
+// ACC-REL-001 / ACC-REL-003: the former always-visible IB card is retained only
+// as compatibility code.  Edge clicks now open the shared relation-display table,
+// so a node selection cannot create a second, unsolicited aggregate panel.
+const galaxyRenderDetailWithRelationDisplay=renderDetail;renderDetail=function(){galaxyRenderDetailWithRelationDisplay();galaxyIbRebatePanel.hidden=true};
+const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:params.toString(),snapshotVersion:data?.revision,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
-</script></body></html>"""
+</script></body></html>""" + relation_display_assets()

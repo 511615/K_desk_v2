@@ -18,6 +18,12 @@ PROFILE_THRESHOLDS = {
     "minimum_losing_holding_minutes": 30.0,
 }
 DIRECTED = {"copy_order", "direct_ib", "ib_direct_account", "ib_owned_account", "ib_identity", "ib_direct_rebate"}
+RELATION_DISPLAY_ENTITY_TYPES = {"ib_user", "ea_feature", "copy_group", "relation_group", "ib_group", "rebate"}
+RELATION_DISPLAY_GROUP_TYPES = {
+    "same_crm_user", "same_name", "login_ip", "client_id", "ea_feature", "copy_order", "copy_group",
+    "rebate", "ib_direct_rebate", "toxic_sync_same", "toxic_sync_opposite", "trade_open_close_sync",
+    "suspected_hedge",
+}
 STRENGTH = {
     "same_crm_user": 0.95,
     "login_ip": 0.90,
@@ -342,6 +348,392 @@ class RelationshipInspectionService:
                 ),
             },
         }
+
+    def build_relation_display(
+        self,
+        requested_id: str,
+        snapshot: dict[str, Any],
+        *,
+        scope: str = "auto",
+        member_page: int = 1,
+        member_limit: int = 50,
+        account_summaries: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Build the click-only relation table from one immutable investigation snapshot.
+
+        This deliberately consumes only entities already materialised by the investigation.  It
+        never starts a new relationship traversal, so a table cannot change graph layout or score.
+        ``account_summaries`` is an optional, read-only augmentation supplied by the API for the
+        bounded current snapshot members.
+        """
+        if scope not in {"auto", "single", "group"}:
+            raise ValueError("关系展示范围无效")
+        if member_page < 1 or not 1 <= member_limit <= 200:
+            raise ValueError("成员分页参数无效")
+        summary_digest = hashlib.sha1(repr(account_summaries or {}).encode()).hexdigest()
+        cache_key = (
+            "relation-display", snapshot.get("subjectId"), snapshot.get("revision"),
+            repr(snapshot.get("filters") if isinstance(snapshot.get("filters"), dict) else {}),
+            requested_id, scope, member_page, member_limit, summary_digest,
+        )
+        if cached := self._cached(cache_key):
+            return cached
+        edges = [item for item in snapshot.get("relationships", []) if isinstance(item, dict)]
+        selected = next((item for item in edges if edge_id(item) == requested_id), None)
+        if selected is None:
+            raise KeyError("当前调查快照中不存在该关系")
+        entities = {text(item.get("id")): item for item in snapshot.get("entities", []) if isinstance(item, dict)}
+        kind = text(selected.get("type"))
+        source_id, target_id = text(selected.get("source")), text(selected.get("target"))
+        source, target = entities.get(source_id, {}), entities.get(target_id, {})
+        anchor_id, direction = self._display_anchor(selected, entities)
+        group_edges, members = self._display_group(selected, edges, entities, anchor_id)
+        account_summaries = account_summaries or {}
+        member_rows = self._display_member_rows(members, group_edges, entities, account_summaries)
+        selected_has_relation_entity = text(source.get("type")) in RELATION_DISPLAY_ENTITY_TYPES or text(
+            target.get("type")
+        ) in RELATION_DISPLAY_ENTITY_TYPES
+        can_group = kind in RELATION_DISPLAY_GROUP_TYPES and len(member_rows) > 1
+        mode = "group" if (scope == "group" and can_group) or (scope == "auto" and selected_has_relation_entity and can_group) else "single"
+        filters = snapshot.get("filters") if isinstance(snapshot.get("filters"), dict) else {}
+        relation_label = PRESENTATION.get(kind, (text(selected.get("typeLabel")) or kind, "", ""))[0]
+        anchor = self._endpoint(entities.get(anchor_id), anchor_id)
+        route = "|".join(filter(None, (text(anchor.get("platform")), text(anchor.get("server"))))) or "all-routes"
+        time_range = f"{text(filters.get('start')) or 'all'}..{text(filters.get('end')) or 'all'}"
+        display_key = "/".join((
+            f"snapshot:{snapshot.get('revision', 0)}", kind or "unknown", anchor_id or "unknown", direction, route, time_range,
+        ))
+        selected_metrics = self._display_metrics(selected, account_summaries.get(self._account_endpoint_id(selected, entities), {}))
+        result = {
+            "ok": True,
+            "mode": mode,
+            "display_key": display_key,
+            "snapshot_version": snapshot.get("revision", 0),
+            "relation": {
+                "type": kind,
+                "label": relation_label,
+                "direction": self._display_direction(selected, entities),
+                "anchor": anchor,
+            },
+            "coverage": self._display_coverage(selected, group_edges, member_rows, snapshot),
+            "summary_metrics": [],
+            "single_metrics": [],
+            "member_page": {"page": member_page, "limit": member_limit, "total": 0, "items": []},
+            "group_actions": self._display_actions(kind, can_group, len(member_rows), requested_id, mode),
+            "evidence": self._evidence(selected),
+        }
+        if mode == "single":
+            result["single_metrics"] = self._single_display_metrics(kind, selected_metrics)
+            return self._store(cache_key, result)
+        result["summary_metrics"] = self._group_display_metrics(kind, member_rows)
+        start = (member_page - 1) * member_limit
+        result["member_page"] = {
+            "page": member_page,
+            "limit": member_limit,
+            "total": len(member_rows),
+            "items": member_rows[start : start + member_limit],
+        }
+        return self._store(cache_key, result)
+
+    def relation_display_member_accounts(self, requested_id: str, snapshot: dict[str, Any]) -> list[dict[str, str]]:
+        """Return a bounded, de-duplicated account route list for optional read-only summaries."""
+        edges = [item for item in snapshot.get("relationships", []) if isinstance(item, dict)]
+        selected = next((item for item in edges if edge_id(item) == requested_id), None)
+        if selected is None:
+            raise KeyError("当前调查快照中不存在该关系")
+        entities = {text(item.get("id")): item for item in snapshot.get("entities", []) if isinstance(item, dict)}
+        anchor_id, _direction = self._display_anchor(selected, entities)
+        _group_edges, members = self._display_group(selected, edges, entities, anchor_id)
+        return [
+            {
+                "node_id": node_id,
+                "login": text(entities.get(node_id, {}).get("label")),
+                "platform": text(entities.get(node_id, {}).get("platform")),
+                "server": text(entities.get(node_id, {}).get("server")),
+            }
+            for node_id in members
+            if text(entities.get(node_id, {}).get("type")) == "account"
+        ]
+
+    @staticmethod
+    def _display_anchor(edge: dict[str, Any], entities: dict[str, dict[str, Any]]) -> tuple[str, str]:
+        source_id, target_id = text(edge.get("source")), text(edge.get("target"))
+        source_type, target_type = text(entities.get(source_id, {}).get("type")), text(entities.get(target_id, {}).get("type"))
+        explicit = text(edge.get("display_anchor_id"))
+        if explicit:
+            return explicit, "outbound" if source_id == explicit else "inbound"
+        if source_type in RELATION_DISPLAY_ENTITY_TYPES:
+            return source_id, "outbound"
+        if target_type in RELATION_DISPLAY_ENTITY_TYPES:
+            return target_id, "inbound"
+        return source_id, "outbound" if text(edge.get("type")) in DIRECTED else "undirected"
+
+    def _display_group(
+        self,
+        selected: dict[str, Any],
+        edges: list[dict[str, Any]],
+        entities: dict[str, dict[str, Any]],
+        anchor_id: str,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Resolve group members only from the current snapshot, never by a fresh source read."""
+        kind = text(selected.get("type"))
+        group_key = text(selected.get("display_group_key"))
+        if group_key:
+            group_edges = [edge for edge in edges if text(edge.get("type")) == kind and text(edge.get("display_group_key")) == group_key]
+        elif text(entities.get(anchor_id, {}).get("type")) in RELATION_DISPLAY_ENTITY_TYPES:
+            group_edges = [
+                edge for edge in edges
+                if text(edge.get("type")) == kind and anchor_id in {text(edge.get("source")), text(edge.get("target"))}
+            ]
+        else:
+            # Account-account groups are connected components for the same evidence family.  A
+            # builder-provided key takes precedence above; this fallback retains legacy snapshots.
+            seen = {text(selected.get("source")), text(selected.get("target"))}
+            group_edges = []
+            changed = True
+            while changed:
+                changed = False
+                for edge in edges:
+                    if text(edge.get("type")) != kind:
+                        continue
+                    endpoints = {text(edge.get("source")), text(edge.get("target"))}
+                    if endpoints & seen:
+                        if edge not in group_edges:
+                            group_edges.append(edge)
+                        previous = len(seen)
+                        seen.update(endpoints)
+                        changed = changed or len(seen) != previous
+        member_ids: list[str] = []
+        for edge in group_edges:
+            for node_id in (text(edge.get("source")), text(edge.get("target"))):
+                if text(entities.get(node_id, {}).get("type")) == "account" and node_id not in member_ids:
+                    member_ids.append(node_id)
+        return group_edges or [selected], member_ids
+
+    def _display_member_rows(
+        self,
+        member_ids: list[str],
+        group_edges: list[dict[str, Any]],
+        entities: dict[str, dict[str, Any]],
+        account_summaries: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        rows = []
+        for node_id in member_ids:
+            metrics: dict[str, Any] = {}
+            evidence: list[str] = []
+            for edge in group_edges:
+                if node_id not in {text(edge.get("source")), text(edge.get("target"))}:
+                    continue
+                metric_owner = text(edge.get("display_member_id"))
+                if metric_owner and metric_owner != node_id:
+                    continue
+                if not metric_owner:
+                    source_type = text(entities.get(text(edge.get("source")), {}).get("type"))
+                    target_type = text(entities.get(text(edge.get("target")), {}).get("type"))
+                    if source_type == target_type == "account" and node_id != text(edge.get("target")):
+                        continue
+                metrics.update(self._display_metrics(edge, {}))
+                evidence.extend(self._evidence(edge))
+            metrics.update(account_summaries.get(node_id, {}))
+            endpoint = self._endpoint(entities.get(node_id), node_id)
+            rows.append({
+                "account": endpoint,
+                "metrics": self._member_display_metrics(metrics),
+                "evidence": list(dict.fromkeys(evidence))[:12],
+            })
+        return sorted(rows, key=lambda item: (item["account"]["login"], item["account"]["platform"], item["account"]["server"]))
+
+    @staticmethod
+    def _display_metrics(edge: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+        result = dict(edge.get("metrics") if isinstance(edge.get("metrics"), dict) else {})
+        result.update(summary if isinstance(summary, dict) else {})
+        return result
+
+    def _display_coverage(
+        self,
+        selected: dict[str, Any],
+        group_edges: list[dict[str, Any]],
+        member_rows: list[dict[str, Any]],
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        declared = [
+            self._number(edge.get("display_member_count") or edge.get("knownMembers") or edge.get("totalMembers"))
+            for edge in group_edges + [selected]
+        ]
+        known = max([int(value) for value in declared if value > 0] or [len(member_rows)])
+        statistic = sum(1 for row in member_rows if any(self._numeric(value.get("value")) is not None for value in row["metrics"]))
+        failed = [item for item in snapshot.get("coverage", []) if isinstance(item, dict) and item.get("status") in {"failed", "timeout"}]
+        status_value = "pending" if snapshot.get("inProgress") else "partial" if failed or statistic < known else "complete"
+        return {
+            "known_members": known,
+            "included_members": len(member_rows),
+            "statistic_members": statistic,
+            "omitted_members": max(known - len(member_rows), 0),
+            "status": status_value,
+            "reason": "统计仅基于当前筛选范围内有完整证据的账户",
+        }
+
+    def _single_display_metrics(self, kind: str, metrics: dict[str, Any]) -> list[dict[str, Any]]:
+        fields = {
+            "ib_direct_rebate": ("tradeProfit", "rebateAmount", "combinedProfit", "rebateShare", "rebateOrderCount", "lastRebateAt", "inclusionReasons"),
+            "ea_feature": ("orders", "closedOrders", "lots", "closedLots", "netProfit", "averageHoldingSeconds", "symbols", "matchClue"),
+            "copy_order": ("matchedOrders", "matchedSourceOrders", "orders", "lots", "netProfit", "firstTime", "lastTime"),
+            "copy_group": ("closedOrders", "openOrders", "closedLots", "combinedNetProfit", "rebate"),
+            "login_ip": ("closedOrders", "lots", "netProfit", "averageHoldingSeconds"),
+            "client_id": ("closedOrders", "lots", "netProfit", "averageHoldingSeconds"),
+            "same_crm_user": ("closedOrders", "lots", "netProfit", "comprehensiveProfit", "rebate"),
+            "same_name": ("closedOrders", "lots", "netProfit", "comprehensiveProfit", "rebate"),
+            "toxic_sync_same": ("matchedOrders", "lots", "openDeltaSeconds", "closeDeltaSeconds", "matchRate"),
+            "toxic_sync_opposite": ("matchedOrders", "lots", "openDeltaSeconds", "closeDeltaSeconds", "lotSimilarity", "matchRate"),
+            "rebate": ("rebateAmount", "rebateRows", "tradeProfit", "rebateShare"),
+        }.get(kind, tuple(metrics))
+        return [self._metric(key, metrics[key], metrics) for key in fields if key in metrics and metrics[key] not in (None, "", [], {})]
+
+    def _member_display_metrics(self, metrics: dict[str, Any]) -> list[dict[str, Any]]:
+        fields = (
+            "databaseStatus", "tradeProfit", "rebateAmount", "combinedProfit", "rebateShare", "rebateOrderCount", "lastRebateAt",
+            "closedOrders", "orders", "openOrders", "matchedOrders", "matchedSourceOrders", "lots", "closedLots", "netProfit",
+            "combinedNetProfit", "averageHoldingSeconds", "symbols", "firstTime", "lastTime", "inclusionReasons", "matchClue",
+            "holdingSecondsTotal", "holdingOrderCount", "currency",
+        )
+        return [self._metric(key, metrics[key], metrics) for key in fields if key in metrics and metrics[key] not in (None, "", [], {})]
+
+    def _group_display_metrics(self, kind: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        raw_rows = [{item["id"]: item["value"] for item in row["metrics"]} for row in rows]
+        if kind == "ib_direct_rebate":
+            metrics = [self._metric("abnormal_accounts", len(rows), {}), self._metric("account_count", len(rows), {})]
+            metrics += self._sum_money_metrics(raw_rows, ("tradeProfit", "rebateAmount", "combinedProfit"))
+            rebate = self._sum_number(raw_rows, "rebateAmount")
+            combined = self._sum_number(raw_rows, "combinedProfit")
+            if rebate is not None and combined and combined > 0:
+                metrics.append(self._metric("rebateShare", round(rebate / combined, 6), {}))
+            metrics += self._sum_plain_metrics(raw_rows, ("rebateOrderCount",))
+            latest = max((text(row.get("lastRebateAt")) for row in raw_rows if text(row.get("lastRebateAt"))), default="")
+            if latest:
+                metrics.append(self._metric("lastRebateAt", latest, {}))
+            p_plus = sum(1 for row in raw_rows if status(row.get("databaseStatus")) in {"P", "T", "A", "TA"})
+            metrics.append(self._metric("p_plus_accounts", p_plus, {}))
+            return metrics
+        if kind == "ea_feature":
+            metrics = [self._metric("account_count", len(rows), {})]
+            metrics += self._profit_loss_counts(raw_rows, "netProfit")
+            metrics += self._sum_plain_metrics(raw_rows, ("closedOrders", "orders", "closedLots", "lots"))
+            metrics += self._sum_money_metrics(raw_rows, ("netProfit",))
+            metrics += self._holding_metrics(raw_rows)
+            return metrics
+        if kind in {"copy_order", "copy_group"}:
+            metrics = [self._metric("account_count", len(rows), {})]
+            metrics += self._profit_loss_counts(raw_rows, "netProfit", "combinedNetProfit")
+            metrics += self._sum_plain_metrics(raw_rows, ("matchedSourceOrders", "matchedOrders", "orders", "closedOrders", "closedLots", "lots"))
+            metrics += self._sum_money_metrics(raw_rows, ("netProfit", "combinedNetProfit", "rebate"))
+            return metrics
+        metrics = [self._metric("account_count", len(rows), {})]
+        metrics += self._profit_loss_counts(raw_rows, "netProfit", "comprehensiveProfit", "combinedNetProfit")
+        metrics += self._sum_plain_metrics(raw_rows, ("closedOrders", "orders", "closedLots", "lots", "matchedOrders"))
+        metrics += self._sum_money_metrics(raw_rows, ("netProfit", "comprehensiveProfit", "combinedNetProfit", "rebate", "rebateAmount"))
+        metrics += self._holding_metrics(raw_rows)
+        return metrics
+
+    def _display_actions(self, kind: str, can_group: bool, count: int, requested_id: str, mode: str) -> list[dict[str, Any]]:
+        actions = [{"id": "relation_detail", "label": "查看原始关系证据", "edge_id": requested_id}]
+        if mode == "single" and can_group:
+            label = PRESENTATION.get(kind, (kind, "", ""))[0]
+            actions.insert(0, {"id": "open_group", "label": f"查看{label}账户群（{count}）", "scope": "group"})
+        return actions
+
+    @staticmethod
+    def _account_endpoint_id(edge: dict[str, Any], entities: dict[str, dict[str, Any]]) -> str:
+        for node_id in (text(edge.get("target")), text(edge.get("source"))):
+            if text(entities.get(node_id, {}).get("type")) == "account":
+                return node_id
+        return ""
+
+    def _display_direction(self, edge: dict[str, Any], entities: dict[str, dict[str, Any]]) -> str:
+        source = self._endpoint(entities.get(text(edge.get("source"))), text(edge.get("source")))
+        target = self._endpoint(entities.get(text(edge.get("target"))), text(edge.get("target")))
+        return f"{source['login']} → {target['login']}" if text(edge.get("type")) in DIRECTED or edge.get("directed") else "无主从方向"
+
+    def _sum_money_metrics(self, rows: list[dict[str, Any]], fields: tuple[str, ...]) -> list[dict[str, Any]]:
+        result = []
+        for field in fields:
+            by_currency: dict[str, float] = {}
+            for row in rows:
+                value = self._numeric(row.get(field))
+                if value is None:
+                    continue
+                currency = text(row.get("currency") or row.get("displayCurrency") or "未知币种")
+                by_currency[currency] = by_currency.get(currency, 0.0) + value
+            result += [self._metric(f"{field}_{currency}", round(value, 6), {"currency": currency}) for currency, value in sorted(by_currency.items())]
+        return result
+
+    def _sum_plain_metrics(self, rows: list[dict[str, Any]], fields: tuple[str, ...]) -> list[dict[str, Any]]:
+        result = []
+        for field in fields:
+            value = self._sum_number(rows, field)
+            if value is not None:
+                result.append(self._metric(field, round(value, 6), {}))
+        return result
+
+    def _profit_loss_counts(self, rows: list[dict[str, Any]], *fields: str) -> list[dict[str, Any]]:
+        values = []
+        for row in rows:
+            value = next((self._numeric(row.get(field)) for field in fields if self._numeric(row.get(field)) is not None), None)
+            if value is not None:
+                values.append(value)
+        return [
+            self._metric("profitable_accounts", sum(value > 0 for value in values), {}),
+            self._metric("losing_accounts", sum(value < 0 for value in values), {}),
+        ]
+
+    def _holding_metrics(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        total_seconds = self._sum_number(rows, "holdingSecondsTotal")
+        total_orders = self._sum_number(rows, "holdingOrderCount")
+        if total_seconds is None or total_orders is None or total_orders <= 0:
+            return []
+        return [self._metric("averageHoldingSeconds", round(total_seconds / total_orders, 3), {})]
+
+    @staticmethod
+    def _sum_number(rows: list[dict[str, Any]], field: str) -> float | None:
+        values = [RelationshipInspectionService._numeric(row.get(field)) for row in rows]
+        present = [value for value in values if value is not None]
+        return sum(present) if present else None
+
+    @staticmethod
+    def _numeric(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            return float(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _number(value: Any) -> float:
+        return RelationshipInspectionService._numeric(value) or 0.0
+
+    @staticmethod
+    def _metric(metric_id: str, value: Any, context: dict[str, Any]) -> dict[str, Any]:
+        labels = {
+            "abnormal_accounts": "异常账户数", "account_count": "账户数", "p_plus_accounts": "P+ 账户数",
+            "tradeProfit": "实际交易盈亏", "rebateAmount": "返佣", "combinedProfit": "综合盈利",
+            "rebateShare": "返佣占综合盈利", "rebateOrderCount": "返佣关联成交", "lastRebateAt": "最近返佣",
+            "orders": "订单数", "closedOrders": "平仓订单", "openOrders": "持仓订单", "matchedOrders": "匹配订单",
+            "matchedSourceOrders": "匹配源单", "lots": "手数", "closedLots": "平仓手数", "netProfit": "净盈亏",
+            "combinedNetProfit": "综合交易盈亏", "rebate": "返佣", "rebateRows": "返佣笔数",
+            "averageHoldingSeconds": "平均持仓（秒）", "medianHoldingSeconds": "中位持仓（秒）",
+            "holdingSecondsTotal": "有效平仓持仓秒数", "holdingOrderCount": "有效平仓订单数",
+            "profitable_accounts": "盈利账户", "losing_accounts": "亏损账户", "databaseStatus": "数据库状态",
+            "symbols": "涉及品种", "firstTime": "首次跟单", "lastTime": "最近跟单", "inclusionReasons": "纳入原因",
+            "matchClue": "匹配线索", "openDeltaSeconds": "开仓时间差（秒）", "closeDeltaSeconds": "平仓时间差（秒）",
+            "lotSimilarity": "手数相似度", "matchRate": "匹配率",
+            "currency": "展示币种",
+        }
+        base_id = metric_id.rsplit("_", 1)[0] if metric_id.rsplit("_", 1)[0] in labels else metric_id
+        currency = text(context.get("currency") or context.get("displayCurrency"))
+        label = labels.get(base_id, base_id)
+        if metric_id != base_id and currency:
+            label = f"{label}（{currency}）"
+        return {"id": metric_id, "label": label, "value": value, "unit": "%" if base_id in {"rebateShare", "matchRate", "lotSimilarity"} else "", "source": "原始关系证据"}
 
     def _profile_tags(
         self, node: dict[str, Any], snapshot: dict[str, Any], risk: dict[str, Any], automation: dict[str, Any]

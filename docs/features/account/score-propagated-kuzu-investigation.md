@@ -3,8 +3,8 @@ feature_id: ACC-REL-003
 title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
-apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
+apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -46,13 +46,21 @@ score, relationship layer and expansion outcome in plain language. It intentiona
 coverage dates and investigation implementation prose; those remain available only when an operator
 opens an auditable relationship-evidence detail.
 
-If the snapshot returns direct-IB rebate anomaly edges, the Galaxy side panel also renders an
-independent **IB 直属返佣核查** card. It groups the materialised members by their direct IB and exposes
-the returned inclusion reason and evidence values (actual trade P/L, rebate, combined profit, rebate
-share, rebate deal count and newest rebate record), alongside the returned abnormal/total account
-count when present. The presentation is evidence-only: it does not create an additional expansion or
-risk conclusion. Clicking a row highlights that account only; it must not expand or collapse its
-star-track community.
+If the snapshot returns direct-IB rebate anomaly edges, clicking such an edge opens the shared
+**IB 直属返佣核查** relation-display table. It groups the materialised members by their direct IB and
+exposes the returned inclusion reason and structured evidence values (actual trade P/L, rebate,
+combined profit, rebate share, rebate deal count and newest rebate record), alongside the returned
+abnormal/total account count when present. The presentation is evidence-only: it does not create an
+additional expansion or risk conclusion. Clicking a row highlights that account only; it must not
+expand or collapse its star-track community.
+
+The Galaxy and default focus renderer now share a click-only `关系展示表` adapter. An edge click opens
+the table with the selected raw edge and snapshot revision; a node click remains the lazy account
+profile. The IB rebate presentation is an adapter of that table rather than a separate inferred card:
+it displays the returned total cohort denominator, current graph inclusion count and actual statistic
+count before any amount summary. Member row selection highlights the existing account only and never
+changes a track's expanded/collapsed state. The table keeps the raw `relation-detail` action available
+and no relation-table response can add graph nodes, alter propagation or rebuild the layout.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
@@ -176,6 +184,12 @@ it never uses a local ledger action or changes the cached expansion payload. The
 `presentationGraph` contains relation entities and auditable paths without changing propagation
 scores or the existing `entities`/`relationships` contract. `GET /api/kuzu-risk/graph?threshold=1..100` remains a static
 local-file trial. Invalid thresholds are rejected and Kuzu failures are sanitized.
+The additive `GET /api/accounts/by-login/{login}/relationship-network/relation-display` accepts a
+raw `edge_id`, bounded member page and `scope=auto|single|group`. It is snapshot-bound like node
+profile/relation-detail. A raw account-to-account click always resolves to single mode unless the
+operator explicitly chooses the returned group action; entity-backed multi-member relations resolve
+to group mode. Invalid edge IDs return 404, invalid scope/page parameters are rejected, and stale
+snapshots return 409.
 
 ## Data, routing and read-only constraints
 

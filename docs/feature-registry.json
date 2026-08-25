@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "94dfda10b612",
+  "registryVersion": "ccf6ebc075ce",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -54,7 +54,8 @@
       "apis": [
         "GET /api/accounts/by-login/{login}/relationship-network",
         "GET /api/accounts/by-login/{login}/relationship-network/node-profile",
-        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail",
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-display"
       ],
       "code": [
         "src/kdesk/application/relationship_network.py",
@@ -69,6 +70,7 @@
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
+        "src/kdesk/api/relation_display_page.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
         "legacy/apps/problem_account_registry/app.py"
       ],
@@ -134,7 +136,8 @@
         "GET /api/kuzu-risk/graph",
         "GET /api/accounts/by-login/{login}/relationship-network",
         "GET /api/accounts/by-login/{login}/relationship-network/node-profile",
-        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail"
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-detail",
+        "GET /api/accounts/by-login/{login}/relationship-network/relation-display"
       ],
       "code": [
         "legacy/apps/problem_account_registry/app.py",
@@ -143,6 +146,7 @@
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
         "src/kdesk/api/kuzu_risk_page.py",
+        "src/kdesk/api/relation_display_page.py",
         "src/kdesk/application/relationship_expansion.py",
         "src/kdesk/application/relationship_inspection.py",
         "src/kdesk/application/relationship_network.py",

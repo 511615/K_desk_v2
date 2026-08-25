@@ -100,6 +100,8 @@ RELATIONSHIP_SOURCE_TIMEOUT_SECONDS = 120.0
 # or provider allocations in 8777. This is a process wall-clock ceiling, not a
 # source timeout: it returns the newest partial snapshot and reclaims the child.
 RELATIONSHIP_PROCESS_TIMEOUT_SECONDS = 45.0
+RELATIONSHIP_DISPLAY_MAX_MEMBERS = 50
+RELATIONSHIP_DISPLAY_SUMMARY_CONCURRENCY = 4
 
 
 class CopyPoolControlsRequest(BaseModel):
@@ -147,6 +149,38 @@ def _safe_login(login: str) -> str:
     if not login or len(login) > 64 or not re.fullmatch(r"[0-9A-Za-z_.-]+", login):
         raise HTTPException(status_code=400, detail="账号格式无效")
     return login
+
+
+def _relationship_display_account_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep only bounded, presentation-safe trade aggregates for a relation-table member."""
+    panels = payload.get("riskPanels") if isinstance(payload.get("riskPanels"), dict) else payload
+    finance = panels.get("finance") if isinstance(panels.get("finance"), dict) else {}
+    behavior = panels.get("tradeBehavior") if isinstance(panels.get("tradeBehavior"), dict) else {}
+    if not behavior and isinstance(panels.get("behavior"), dict):
+        behavior = panels["behavior"]
+
+    def first(mapping: dict[str, Any], *keys: str) -> Any:
+        return next((mapping[key] for key in keys if mapping.get(key) not in (None, "")), None)
+
+    summary = {
+        "currency": first(finance, "displayCurrency", "currency"),
+        "netProfit": first(finance, "tradeProfit", "closedNetProfit", "netProfit"),
+        "comprehensiveProfit": first(finance, "comprehensiveProfit", "totalProfit"),
+        "rebate": first(finance, "rebate"),
+        "closedOrders": first(behavior, "closedOrders", "orderCount"),
+        "lots": first(behavior, "closedLots", "lots", "totalLots", "volume"),
+        "averageHoldingSeconds": first(behavior, "averageHoldingSeconds"),
+        "holdingSecondsTotal": first(behavior, "holdingSecondsTotal", "totalHoldingSeconds"),
+        "holdingOrderCount": first(behavior, "holdingOrderCount", "closedOrders", "orderCount"),
+    }
+    if summary["averageHoldingSeconds"] is None:
+        minutes = first(behavior, "averageHoldingMinutes", "holdingMinutes")
+        if minutes is not None:
+            try:
+                summary["averageHoldingSeconds"] = float(minutes) * 60
+            except (TypeError, ValueError):
+                pass
+    return {key: value for key, value in summary.items() if value not in (None, "")}
 
 
 def _toxic_sync_payload(legacy: LegacyBridge, login: str, filters: dict[str, str]) -> dict:
@@ -644,6 +678,82 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             )
             payload["job_id"] = job_id
             return payload
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/accounts/by-login/{login}/relationship-network/relation-display")
+    async def relationship_relation_display(
+        login: str,
+        request: Request,
+        edge_id: str = Query(..., min_length=1, max_length=220),
+        scope: str = Query("auto", pattern="^(auto|single|group)$"),
+        threshold: float = Query(12, ge=1, le=100),
+        include_toxic: bool = Query(False),
+        member_page: int = Query(1, ge=1),
+        member_limit: int = Query(50, ge=1, le=200),
+        snapshot_version: int | None = Query(None, ge=0),
+    ):
+        """Read a snapshot-bound, presentation-only table without changing investigation state."""
+        filters = legacy_filters(request.query_params)
+        root = _safe_login(login)
+        snapshot = relationship_expansion.get_or_start(root, filters, threshold, include_toxic)
+        if snapshot_version is not None and int(snapshot.get("revision") or 0) != snapshot_version:
+            raise HTTPException(status_code=409, detail="调查快照已更新，请刷新关系图后重试")
+        safe_snapshot = {
+            **snapshot,
+            "filters": {
+                **(snapshot.get("filters") if isinstance(snapshot.get("filters"), dict) else {}),
+                **filters,
+            },
+        }
+        try:
+            members = relationship_inspection.relation_display_member_accounts(edge_id, safe_snapshot)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        # The graph's structured edge metrics are authoritative for IB/EA/Copy.  Generic
+        # account groups may additionally use a capped, operator-triggered read-only summary.
+        # This cannot discover accounts, and the semaphore prevents a relationship-table click
+        # from creating an unbounded dashboard fan-out.
+        summaries: dict[str, dict[str, Any]] = {}
+        if scope != "single":
+            semaphore = asyncio.Semaphore(RELATIONSHIP_DISPLAY_SUMMARY_CONCURRENCY)
+
+            async def load_summary(member: dict[str, str]) -> tuple[str, dict[str, Any]]:
+                node_id = member["node_id"]
+                if not member["login"]:
+                    return node_id, {}
+                member_filters = {
+                    **filters,
+                    "platform": member["platform"] or filters.get("platform", ""),
+                    "server": member["server"] or filters.get("server", ""),
+                }
+                try:
+                    async with semaphore:
+                        payload = await run_in_threadpool(
+                            legacy.call, "account_risk_panels_payload", _safe_login(member["login"]), member_filters
+                        )
+                    return node_id, _relationship_display_account_summary(payload if isinstance(payload, dict) else {})
+                except (RuntimeError, ValueError):
+                    logger.warning("Relationship display member summary unavailable node=%s", node_id)
+                    return node_id, {}
+
+            summary_rows = await asyncio.gather(
+                *(load_summary(member) for member in members[:RELATIONSHIP_DISPLAY_MAX_MEMBERS]),
+                return_exceptions=False,
+            )
+            summaries = {node_id: item for node_id, item in summary_rows if item}
+        try:
+            return relationship_inspection.build_relation_display(
+                edge_id,
+                safe_snapshot,
+                scope=scope,
+                member_page=member_page,
+                member_limit=member_limit,
+                account_summaries=summaries,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

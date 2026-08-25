@@ -158,6 +158,19 @@ def test_lightweight_renderer_calculates_a_portfolio_risk_boundary_without_guess
     assert "账户组强平阈值未导出" in html
 
 
+def test_lightweight_renderer_labels_the_all_product_position_pane_in_place():
+    """The lower position lines must be self-explanatory without scrolling."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_position_labels", trades, bars, mapping)
+
+    assert 'id="positionPaneLegend"' in html
+    assert "蓝：全账户持仓笔数" in html
+    assert "黄：全账户总手数" in html
+    assert "组合风险边界（权益归零压力价）" in html
+    assert "$('positionPaneLegend').hidden=panel!=='position'" in html
+    assert "仓位使用率" not in html
+
+
 def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():
     trades, bars, mapping = _fixture()
     trades.loc[0, "Is Open"] = True
