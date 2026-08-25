@@ -103,8 +103,9 @@ remain unchanged. The account-detail embed requests this document with the brows
 directive and a page-load version query parameter, so a reload after a renderer deployment cannot
 retain an older chart document. Its parent account-detail document is revalidated on every browser
 refresh so this versioned embed loader itself cannot remain stale.
-The overlay translates its pane-local price coordinates into the lower indicator pane and clips there,
-so a readable Profit/Volume bar can never cover the candlestick pane. The horizontal axis emits the
+The overlay translates its pane-local price coordinates into the lower indicator pane, including the
+4px separator between chart panes, and clips there, so a readable Profit/Volume bar can never cover
+the candlestick pane or end above the visible Profit zero line. The horizontal axis emits the
 full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
 `HH:MM` labels otherwise; it preserves the original quote timestamps while preventing dense labels
 from overlapping.
