@@ -79,7 +79,7 @@ changed by this feature; promotion requires separate parity verification and cut
 The current renderer follows the supplied production artifact's interaction contract: paired
 `隐藏停盘 / 显示停盘` controls, display limit in the toolbar, filters on their own row, overlay pane
 switcher, range status, original order-table columns and position snapshot cards. Nodes keep the
-legacy semantics without ticket text: directional triangles, close squares and dashed holding lines.
+legacy semantics without ticket text: directional triangles, red close squares and dashed holding lines.
 The presentation uses the dark TradingView-style palette; marker colors are light/blue/purple only
 to preserve contrast on that dark surface. Trade nodes are rendered in a transparent overlay using
 the order's normalized open/close plot price and the chart time coordinate. Buy/sell triangles are
@@ -93,7 +93,9 @@ browser lays out the right axis, preventing a horizontal left shift of evidence 
 The Profit indicator explicitly uses `base=0`, one symmetric absolute-value scale for positive and
 negative values, and a shared high-contrast dashed zero baseline. Profit bars are therefore
 anchored to the same baseline; profitable orders are red and extend upward, while losing orders are
-green and extend downward with equal visual magnitude for equal absolute profit.
+green and extend downward with equal visual magnitude for equal absolute profit. Its visible right
+price scale reports the actual Profit values for the current filtered bar set, making the bar height
+auditable without relying on visual proportion alone.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
