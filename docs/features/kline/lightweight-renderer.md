@@ -101,6 +101,11 @@ the width adapting to the current zoom level up to 18px. Filtering, symbol chang
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
 remain unchanged. The account-detail embed requests this document with the browser `no-store`
 directive, so a page reload after a renderer deployment cannot retain an older chart document.
+The overlay translates its pane-local price coordinates into the lower indicator pane and clips there,
+so a readable Profit/Volume bar can never cover the candlestick pane. The horizontal axis emits the
+full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
+`HH:MM` labels otherwise; it preserves the original quote timestamps while preventing dense labels
+from overlapping.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of

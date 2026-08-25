@@ -170,6 +170,14 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "PANEL_BAR_MAX_WIDTH=18" in html
     assert "function panelBarWidth" in html
     assert "function paintPanelBars" in html
+    assert "function panelPaneGeometry" in html
+    assert "base+geometry.top" in html
+    assert "y+geometry.top" in html
+    assert "panelBarClip" in html
+    assert "function axisTickMarkFormatter(time,tickMarkType)" in html
+    assert "if(index<=0)return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`" in html
+    assert "if(date.getHours()===0&&date.getMinutes()===0)return `${pad(date.getMonth()+1)}-${pad(date.getDate())}`" in html
+    assert "return `${pad(date.getHours())}:${pad(date.getMinutes())}`" in html
 
 
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
