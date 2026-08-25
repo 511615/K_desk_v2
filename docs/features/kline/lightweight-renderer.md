@@ -106,6 +106,9 @@ the pane clears the transient value. The same conversion runs on a chart click, 
 value remains available when a user pins the crosshair at a specific Profit coordinate.
 The pointer path uses the chart host's client Y coordinate minus the measured Profit-pane offset,
 which remains correct whether the underlying chart event reports pane-local or chart-local Y.
+The displayed crosshair value is interpolated from the same rendered positive, zero and negative
+Profit-axis coordinates used by the bars and labels; it does not rely on a separate series reverse
+conversion that can use a different multi-pane coordinate space.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
