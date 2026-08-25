@@ -180,6 +180,8 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "return `${pad(date.getHours())}:${pad(date.getMinutes())}`" in html
     assert "priceScaleId:'profit',base:0,lastValueVisible:false,priceLineVisible:false" in html
     assert "priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false" in html
+    assert "panelSeries.profitZero?.priceToCoordinate(0)??active.priceToCoordinate(0)" in html
+    assert "panelSeries={profit,profitZero,volume}" in html
 
 
 def test_lightweight_renderer_reports_its_document_height_when_embedded():

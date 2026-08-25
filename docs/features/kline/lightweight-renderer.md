@@ -100,7 +100,8 @@ Each visible time bucket is grouped for this presentation and has a fixed minimu
 the width adapting to the current zoom level up to 18px. Filtering, symbol changes, pane switches,
 panning, zooming and resize events redraw the overlay; the underlying order values and time mapping
 remain unchanged. The account-detail embed requests this document with the browser `no-store`
-directive, so a page reload after a renderer deployment cannot retain an older chart document.
+directive and a page-load version query parameter, so a reload after a renderer deployment cannot
+retain an older chart document.
 The overlay translates its pane-local price coordinates into the lower indicator pane and clips there,
 so a readable Profit/Volume bar can never cover the candlestick pane. The horizontal axis emits the
 full year/date only at the first source node, `MM-DD` at later midnight boundaries and compact
@@ -109,6 +110,9 @@ from overlapping.
 The Profit histogram and its custom overlay share the explicit dashed zero line as their only
 baseline. Native last-value price lines are disabled for Profit and Volume, so the current value
 cannot introduce a second coloured horizontal line that appears to shift one colour's origin.
+The custom red/green bars take their base coordinate directly from the zero-line series rather than
+from the histogram's coordinate conversion, guaranteeing that both colours meet the visible dashed
+Profit zero axis even if Lightweight Charts applies different histogram geometry.
 
 The chart stage uses a compact 620px vertical layout. Its lower Profit/volume/position pane has a
 `0.6` stretch factor while the time scale keeps a 24px minimum height, reducing the visual weight of
