@@ -98,7 +98,7 @@ price scale is explicitly enabled for the `profit` scale and reports the actual 
 the current filtered bar set, making the bar height auditable without relying on visual proportion
 alone.
 When a browser does not render that custom axis, the Profit SVG overlay also prints the positive
-maximum, zero and negative maximum at their live pane coordinates.
+maximum, zero and negative maximum inside the clipped Profit pane rather than over the K-line axis.
 
 The visible Profit and Volume bars use a chart-host overlay in addition to the native histogram data.
 Each visible time bucket is grouped for this presentation and has a fixed minimum width of 8px, with
