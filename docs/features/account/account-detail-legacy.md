@@ -7,7 +7,7 @@ apis: ["GET /account/{login}", "GET /api/accounts/by-login/{login}/detail", "GET
 code: ["src/kdesk/api/account_app.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "legacy/apps/problem_account_registry/app.py", "frontend/src/main.ts"]
 tests: ["tests/test_api.py", "tests/test_relationship_inspection.py", "legacy/apps/problem_account_registry/test_app.py", "frontend/e2e/legacy-account.spec.ts"]
 depends_on: ["ACC-SEARCH-001", "FIN-COMP-001", "FIN-HISTORY-001", "AUT-COPY-001", "AUT-FOLLOWER-001", "AUT-EA-001", "TOX-PUSH-001", "TOX-POSITION-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.1
+last_verified_version: 2.1.2
 last_verified_date: 2026-08-24
 ---
 
@@ -34,11 +34,14 @@ new account-detail route and does not include internal evidence keys in the link
 All analysis controls remain visible and enabled for every confirmed account route, including an
 account with no completed order. Empty analyses report their own factual empty state (for example,
 `账户暂未做单` or no matching Comment) instead of changing the page layout or hiding the control.
-After a unique platform/server source with completed orders loads, a `交易 K 线` section appears
-immediately above `所有订单`. It directly requests the latest 300 completed buy/sell orders together
-with current positions and their read-only M1 quotes from the account service, then embeds the
-Lightweight Chart in place. Current positions retain their real opening node and extend their holding
-line to the latest cached M1 quote; their floating result is not included in closed-order Profit bars.
+After a unique platform/server source with completed orders loads, a `交易 K 线` section occupies the
+remaining account-detail page content. It directly requests the latest 300 completed buy/sell orders
+together with current positions and their read-only M1 quotes from the account service, then embeds
+the Lightweight Chart in place. Its height expands with its content so the main account page owns the
+single scrollbar. Current positions retain their real opening node and extend their holding line to the
+latest cached M1 quote; their floating result is not included in closed-order Profit bars. The separate
+legacy bottom `所有订单` expandable table is no longer rendered; its compatible read-only JSON endpoint
+remains available to existing callers.
 The
 page key includes the selected route and latest-order version; the response is locally cached for a
 short interval so a panel refresh does not repeat the quote read. This direct display never submits
@@ -185,10 +188,11 @@ DBG CN MT5 account 2014201 is the no-comment EA-route sample: the dialog must li
 keeping the EA headline at zero groups.
 New AC GB MT5 account 954059 must render with `MT5 / AC GB MT5` and zero orders, rather than an
 unidentified platform, before its first deal is recorded.
-For a completed source, the detail HTML includes `inlineKlineFrame` directly above `所有订单` and
-loads it through the 8777 inline endpoint without submitting `/api/kline/generate-from-db`. A
-read-only `647773 / MT5 / AC GB MT5` verification must return a Lightweight Charts document from
-the direct endpoint.
+For a completed source, the detail HTML includes `inlineKlineFrame` without a fixed iframe height,
+accepts only height messages from that frame, and loads it through the 8777 inline endpoint without
+submitting `/api/kline/generate-from-db`. It does not render the former `所有订单` expandable table. A
+read-only `647773 / MT5 / AC GB MT5` verification must return a Lightweight Charts document from the
+direct endpoint.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
 The detail HTML includes the top-right Login search form, its status region and source-aware lookup

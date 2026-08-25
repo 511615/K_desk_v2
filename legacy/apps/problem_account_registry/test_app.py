@@ -2441,9 +2441,16 @@ class OrderListTests(unittest.TestCase):
         self.assertIn('id="accountSourceDialog"', html)
         self.assertIn("matches.length>1", html)
 
-    def test_account_detail_embeds_a_bounded_direct_kline_without_a_job_submission(self):
+    def test_account_detail_embeds_a_full_page_direct_kline_without_a_job_submission(self):
         html = app.ACCOUNT_DETAIL_HTML
         self.assertIn('id="inlineKlineFrame"', html)
+        self.assertIn('scrolling="no"', html)
+        self.assertIn('window.addEventListener(\'message\'', html)
+        self.assertIn("event.source!==frame.contentWindow", html)
+        self.assertIn("kdesk-inline-kline-height", html)
+        self.assertNotIn('height:680px', html)
+        self.assertNotIn('id="orderDetails"', html)
+        self.assertNotIn('<span>所有订单</span>', html)
         self.assertIn("async function loadInlineKline()", html)
         self.assertIn("recentOrders:'300'", html)
         self.assertIn("/inline-kline?${query}", html)

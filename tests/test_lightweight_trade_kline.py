@@ -149,3 +149,13 @@ def test_lightweight_renderer_keeps_bar_pane_and_time_axis_compact():
     assert ".chartShell>.tradeMarkers{height:620px" in html
     assert "minimumHeight:24" in html
     assert "chart.panes()[1].setStretchFactor(.6)" in html
+
+
+def test_lightweight_renderer_reports_its_document_height_when_embedded():
+    """An inline chart expands in the account page instead of adding an iframe scrollbar."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_embedded_height", trades, bars, mapping)
+
+    assert "kdesk-inline-kline-height" in html
+    assert "window.parent!==window" in html
+    assert "ResizeObserver" in html

@@ -7,7 +7,7 @@ apis: ["GET /api/accounts/by-login/{login}/inline-kline", "POST /api/kline/gener
 code: ["src/kdesk/api/account_app.py", "legacy/apps/problem_account_registry/app.py", "legacy/tools/trade_kline_tool/lightweight_trade_kline.py", "legacy/tools/trade_kline_tool/build_enhanced_trade_kline_from_cache.py", "legacy/tools/trade_kline_tool/generate_trade_kline_from_statement.py", "legacy/tools/trade_kline_tool/fused_trade_kline_features.py", "legacy/tools/trade_kline_tool/position_fused_trade_kline.py"]
 tests: ["tests/test_lightweight_trade_kline.py"]
 depends_on: ["KLN-DB-001", "KLN-TIMELINE-001"]
-last_verified_version: 2.1.1
+last_verified_version: 2.1.2
 last_verified_date: 2026-08-25
 ---
 
@@ -25,7 +25,9 @@ without creating a task artifact.
 The artifact keeps symbol selection, compressed/real time axis, order count limit, buy/sell and close
 markers, holding lines, Profit/volume/position panes, filters, time-window positioning, summary
 metrics, order table and optional funds-event replay. Lightweight Charts supplies native crosshair,
-pan, zoom and responsive resize behavior.
+pan, zoom and responsive resize behavior. When embedded in the legacy account detail, the document
+reports its rendered height to the parent; the parent validates the sending frame and expands the
+embed so the account page owns scrolling instead of showing a nested K-line scrollbar.
 
 ## API contract
 
@@ -60,9 +62,9 @@ artifact. It shares cache normalization helpers with the legacy generator.
 
 ## Tests and acceptance
 
-`tests/test_lightweight_trade_kline.py` verifies series, markers, filters, timeline payload and the
-absence of an MT5 dependency in rendered HTML. Python compilation and the existing K-line tests must
-pass before promotion.
+`tests/test_lightweight_trade_kline.py` verifies series, markers, filters, timeline payload, embedded
+height reporting and the absence of an MT5 dependency in rendered HTML. Python compilation and the
+existing K-line tests must pass before promotion.
 
 ## Compatibility and deprecation
 

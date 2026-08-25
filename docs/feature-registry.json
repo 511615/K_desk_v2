@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "ecfad709db61",
+  "registryVersion": "c93588d28250",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -42,7 +42,7 @@
         "TOX-POSITION-001",
         "TOX-HEDGE-001"
       ],
-      "last_verified_version": "2.1.1",
+      "last_verified_version": "2.1.2",
       "last_verified_date": "2026-08-24",
       "document": "docs/features/account/account-detail-legacy.md"
     },
@@ -681,7 +681,7 @@
         "KLN-DB-001",
         "KLN-TIMELINE-001"
       ],
-      "last_verified_version": "2.1.1",
+      "last_verified_version": "2.1.2",
       "last_verified_date": "2026-08-25",
       "document": "docs/features/kline/lightweight-renderer.md"
     },
