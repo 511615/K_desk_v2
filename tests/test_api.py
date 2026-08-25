@@ -119,7 +119,7 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         payload = client.get("/api/meta").json()
-    assert payload["version"] == "2.1.2"
+    assert payload["version"] == "2.1.3"
     assert payload["gitSha"]
     assert payload["buildTime"]
     assert payload["schemaRevision"] in {"unversioned", "uninitialized", "0001"}
