@@ -47,7 +47,9 @@ page key includes the selected route and latest-order version; the response is l
 short interval so a panel refresh does not repeat the quote read. This direct display never submits
 a durable job, never waits on port `8766`, and never creates a chart HTML artifact. The existing
 manual chart controls remain available, unchanged, for full-history, symbol-scoped and
-funds-timeline charts.
+funds-timeline charts. The embedded document request uses browser `no-store`/`no-cache` directives
+so a renderer deployment cannot remain hidden behind a stale client-side chart document; this does
+not alter the endpoint's private cache contract for other callers.
 The top-right account search accepts a numeric Login and opens its detail without returning to the
 ledger. It reuses the read-only account lookup route. When the Login exists on multiple platforms or
 servers, a source-selection dialog lists every candidate and the user must choose one before
@@ -190,7 +192,8 @@ New AC GB MT5 account 954059 must render with `MT5 / AC GB MT5` and zero orders,
 unidentified platform, before its first deal is recorded.
 For a completed source, the detail HTML includes `inlineKlineFrame` without a fixed iframe height,
 accepts only height messages from that frame, and loads it through the 8777 inline endpoint without
-submitting `/api/kline/generate-from-db`. It does not render the former `所有订单` expandable table. A
+submitting `/api/kline/generate-from-db`; its browser fetch opts out of stale document caching. It
+does not render the former `所有订单` expandable table. A
 read-only `647773 / MT5 / AC GB MT5` verification must return a Lightweight Charts document from the
 direct endpoint.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must

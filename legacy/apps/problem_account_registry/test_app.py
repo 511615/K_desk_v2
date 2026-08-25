@@ -2454,6 +2454,8 @@ class OrderListTests(unittest.TestCase):
         self.assertIn("async function loadInlineKline()", html)
         self.assertIn("recentOrders:'300'", html)
         self.assertIn("/inline-kline?${query}", html)
+        self.assertIn("cache:'no-store'", html)
+        self.assertIn("'Cache-Control':'no-cache'", html)
         self.assertIn("loadInlineKline();", html)
         self.assertNotIn("async function autoLoadKline()", html)
 
