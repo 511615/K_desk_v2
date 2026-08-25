@@ -253,6 +253,7 @@ class AccountRelationshipRiskService:
         scored["truncated"] = bool(scored.get("truncated")) or discovery_truncated or projection_truncated
         scored["summary"]["discoveryAccountCount"] = len(visited)
         scored["summary"]["pendingAccountCount"] = len(pending)
+        self._mark_expansion_states(scored["entities"], visited, pending, coverage)
         labels = {item["id"]: item["label"] for item in relation_types}
         for relationship in scored["relationships"]:
             relationship["typeLabel"] = labels.get(relationship["type"], relationship["type"])
@@ -288,6 +289,34 @@ class AccountRelationshipRiskService:
             "presentationGraph": presentation_graph,
             **scored,
         }
+
+    @staticmethod
+    def _mark_expansion_states(
+        entities: list[dict[str, Any]],
+        visited: set[str],
+        pending: dict[str, dict[str, str]],
+        coverage: list[dict[str, str]],
+    ) -> None:
+        """Expose actual expansion completion separately from score eligibility."""
+        available_logins = {
+            str(item.get("account") or "")
+            for item in coverage
+            if item.get("status") == "available" and item.get("account")
+        }
+        for entity in entities:
+            if entity.get("type") != "account":
+                continue
+            entity_id = str(entity.get("id") or "")
+            if entity_id in visited:
+                expansion_state = "expanded"
+            elif entity_id in pending:
+                expansion_state = "pending"
+            elif entity.get("expandable"):
+                expansion_state = "unvisited"
+            else:
+                expansion_state = "threshold"
+            entity["expansionState"] = expansion_state
+            entity["expansionEvidenceAvailable"] = str(entity.get("label") or "") in available_logins
 
     @staticmethod
     def _report_progress(

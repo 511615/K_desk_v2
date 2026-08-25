@@ -119,7 +119,7 @@ def test_api_meta_exposes_governed_build_information(tmp_path: Path) -> None:
     app = create_account_app(make_test_settings(tmp_path))
     with TestClient(app) as client:
         payload = client.get("/api/meta").json()
-    assert payload["version"] == "2.1.1"
+    assert payload["version"] == "2.1.2"
     assert payload["gitSha"]
     assert payload["buildTime"]
     assert payload["schemaRevision"] in {"unversioned", "uninitialized", "0001"}
@@ -475,8 +475,14 @@ def test_kuzu_risk_galaxy_has_lazy_profile_and_relation_evidence_ui(tmp_path: Pa
         "relationship-network/node-profile", "relationship-network/relation-detail",
         "AbortController", "inspectionRequestSequence", "查看账户详情",
         "高度关联账户", "关系证据", "时间同步线索，不等同于跟单",
+        "inspectionPanel.hidden=true;document.querySelector('.detail')?.prepend(inspectionPanel)",
+        "inspection-hero", "传播分", "已完成扩散 · 无新增账户",
     ):
         assert marker in page.text
+
+    terminal_state = page.text.rsplit("function terminalState", 1)[1].split("// ACC-REL-001", 1)[0]
+    assert "node.expansionState!=='expanded'" in terminal_state
+    assert "!node.expansionEvidenceAvailable" in terminal_state
 
 
 def test_relationship_inspection_endpoints_read_the_current_snapshot(tmp_path: Path, monkeypatch) -> None:
@@ -486,7 +492,10 @@ def test_relationship_inspection_endpoints_read_the_current_snapshot(tmp_path: P
         "subjectId": "account:100",
         "entities": [
             {"id": "account:100", "type": "account", "label": "100", "isSubject": True, "databaseStatus": "M"},
-            {"id": "account:101", "type": "account", "label": "101", "databaseStatus": "P", "hops": 1},
+            {
+                "id": "account:101", "type": "account", "label": "101", "databaseStatus": "P", "hops": 1,
+                "expandable": True, "expansionState": "expanded", "expansionEvidenceAvailable": True,
+            },
         ],
         "relationships": [
             {"id": "same-crm:100:101", "source": "account:100", "target": "account:101", "type": "same_crm_user"},
@@ -521,6 +530,8 @@ def test_relationship_inspection_endpoints_read_the_current_snapshot(tmp_path: P
 
     assert profile.status_code == 200
     assert profile.json()["account"]["database_status"] == "P"
+    assert profile.json()["account"]["expansion_state"] == "expanded"
+    assert profile.json()["account"]["expansion_evidence_available"] is True
     assert profile.json()["coverage"]["start"]
     assert relation.status_code == 200
     assert relation.json()["relations"][0]["business_name"] == "同名账户"

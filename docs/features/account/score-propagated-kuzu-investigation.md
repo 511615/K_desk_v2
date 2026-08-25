@@ -7,8 +7,8 @@ apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login
 code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.0
-last_verified_date: 2026-08-24
+last_verified_version: 2.1.2
+last_verified_date: 2026-08-25
 ---
 
 # Score-propagated Kuzu relationship investigation
@@ -115,9 +115,12 @@ response or hold the expansion worker.
 The relationship-name mapping is defined once in the initial page script, so line labels, evidence
 cards, relationship-path narration and the loading/control wording cannot diverge at runtime.
 The score fill and visual identity are kept independent: account circles use the strict score gradient,
-IB identities are hexagons and threshold-stopped accounts are green diamonds. A score-eligible account
-that was completely queried but emitted no account child shows a prominent green `叶` terminal badge;
-this is distinct from a threshold-stopped node and explains a first-ring leaf. The enclosing relation
+IB identities are hexagons and threshold-stopped accounts are green diamonds. A prominent green 叶
+terminal badge requires the completed expansionState=expanded and available evidence confirmation,
+as well as no account child. It is never inferred from a high score plus an empty currently rendered
+child list. The selected account profile is prepended above the legacy Galaxy detail section and
+foregrounds the account, propagation score, layer, database status and expansion outcome; a completed
+high-score investigation therefore reads 已完成扩散 · 无新增账户, not 继续扩散. The enclosing relation
 band has a separate fixed palette (same-name blue, LastIP purple, CID violet, EA cyan, Copy pink, rebate gold, IB indigo,
 same-name teal and Toxic rose), shown in the UI. Every sufficiently wide band carries its short
 relationship label. Selecting a cluster preserves its fixed relation colour and adds a white dashed
@@ -141,7 +144,7 @@ The primary path is `GET /api/accounts/by-login/{login}/relationship-network?thr
 The screen defaults to `include_toxic=false`; operators explicitly select the checkbox before the
 high-cost cross-platform order match. It returns `inProgress` and processed/pending account counts
 while the single-flight background expansion runs, then entities with `score`,
-`hops`, `expandable`, `riskLevel`, `riskColor`, and
+`hops`, `expandable`, additive `expansionState`, additive `expansionEvidenceAvailable`, `riskLevel`, `riskColor`, and
 `scoreLedger`, alongside coverage and truncation. Account entities additively expose `databaseStatus`,
 read from the account's routed MT4/MT5 risk-system database in the relationship-core status batch;
 it never uses a local ledger action or changes the cached expansion payload. The additive

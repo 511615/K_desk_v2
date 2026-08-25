@@ -223,6 +223,8 @@ class RelationshipInspectionService:
             "score": round(float(node.get("score") or (100 if node.get("isSubject") else 0)), 1),
             "depth": int(node.get("hops") or node.get("depth") or 0),
             "expandable": bool(node.get("expandable", True)),
+            "expansion_state": text(node.get("expansionState") or "unvisited"),
+            "expansion_evidence_available": bool(node.get("expansionEvidenceAvailable")),
             "detail_url": self._detail_url(node),
         }
         tags, metrics, limitations = self._profile_tags(node, snapshot, risk, automation)

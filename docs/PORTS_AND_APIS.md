@@ -142,7 +142,8 @@ Development ports `8877/8866` are reserved for isolated testing and are stopped 
   returns score propagation, evidence ledger and truncation state without a remote graph scan
 - `GET /api/accounts/by-login/{login}/relationship-network?threshold=1..100&include_toxic=true` -
   the primary Kuzu request-projection interface opened from account detail; Toxic is opt-in and the
-  response returns recursively discovered scored entities, evidence ledger, source timeout coverage,
+  response returns recursively discovered scored entities, including additive per-account
+  `expansionState` and `expansionEvidenceAvailable` completion evidence, the evidence ledger, source timeout coverage,
   truncation and `inProgress`/`progress` state. Repeated equivalent requests join the active local
   expansion rather than launching duplicate remote scans.
 - `GET /api/hierarchy-products` - products from every configured route-backed physical source,

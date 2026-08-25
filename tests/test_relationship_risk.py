@@ -109,6 +109,17 @@ def test_relationship_risk_expands_real_evidence_until_score_falls_below_thresho
     assert "已实际扩展 3 个" in result["limitations"][1]
 
 
+def test_relationship_risk_marks_only_completed_accounts_as_expanded() -> None:
+    evidence = _EvidenceNetwork()
+    service = AccountRelationshipRiskService(evidence, _projection, lambda _login, _filters: {"peers": [], "coverage": []})
+
+    result = service.build("100", {"platform": "MT5", "server": "AC CN MT5"}, threshold=12)
+
+    states = {node["label"]: node["expansionState"] for node in result["entities"]}
+    assert states == {"100": "expanded", "200": "expanded", "300": "expanded"}
+    assert all(node["expansionEvidenceAvailable"] is True for node in result["entities"])
+
+
 def test_relationship_risk_without_a_global_deadline_expands_until_threshold() -> None:
     evidence = _EvidenceNetwork()
     service = AccountRelationshipRiskService(

@@ -7,8 +7,8 @@ apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/acco
 code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
-last_verified_version: 2.1.0
-last_verified_date: 2026-08-24
+last_verified_version: 2.1.2
+last_verified_date: 2026-08-25
 ---
 
 # Account relationship network
@@ -22,6 +22,10 @@ coverage, versioned behavior and automation tags, and at most eight explainable 
 Every recommendation is drawn from the current investigation snapshot and must have a complete path
 back to the investigation subject. Selecting a node never recomputes the graph layout. Profile reads
 are cached for ten minutes and superseded browser requests are cancelled and sequence-guarded.
+The profile is the first card in the Galaxy detail panel: account identity, propagated score, layer,
+database status and expansion progress are visually separated before the coverage and tag detail.
+An eligible score no longer reads as 继续扩散 after its evidence has already been queried. Completed
+nodes report 已完成扩散 · 无新增账户 only when the snapshot proves that outcome.
 
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
@@ -114,9 +118,10 @@ path instead of a full edge web. Selecting an overview account updates the detai
 account-to-evidence-to-peer view below.
 Node fill is a strict propagated-score gradient: the problem account is red, then high-score red,
 orange, gold and yellow-green low-score nodes; a node stopped by the threshold is green regardless of
-score. A completed account with no discovered account child retains its score colour but receives a
-large dark-green `叶` badge, meaning it was queried and is a terminal investigation leaf rather than
-an unexpanded node.
+score. A completed account with no discovered account child receives a large dark-green 叶 badge
+only when its additive expansionState=expanded and expansionEvidenceAvailable=true confirm that
+it was actually queried with available evidence. A score-eligible, pending or unvisited account never
+receives that badge merely because the current rendered graph has no child.
 Shape encodes entity state independently of score: a circle is a trading account, a hexagon is a concrete
 IB identity and a diamond is a threshold-stopped account. Arc-band color encodes evidence family,
 not score: CRM blue, LastIP purple, EA cyan, Copy pink, rebate gold, IB indigo, same-name teal and
