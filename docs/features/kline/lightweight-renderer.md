@@ -52,6 +52,11 @@ The account, symbol, cent-account scaling, price correction, time mode, missing-
 timeline fields use the existing contracts. Profit, volume and holding filters use the existing
 normalized order columns.
 
+The direct embedded chart loads the pinned Lightweight Charts 5.0.8 runtime through the account
+service's same-origin `/vendor/lightweight-charts-5.0.8.js` route. The account service fetches the
+pinned HTTPS artifact once, verifies its SHA-256 digest and retains the verified bytes in process.
+The browser therefore does not need direct public-CDN access to create the K-line canvas.
+
 ## Loading, empty and failure behavior
 
 `--offline-cache` fails with `QUOTE_CACHE_REQUIRED` when the mapping is missing and records

@@ -10,6 +10,7 @@ import kuzu
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
+import kdesk.api.account_app as account_app
 from kdesk.api.account_app import (
     RELATIONSHIP_DISCOVERY_TIMEOUT_SECONDS,
     RELATIONSHIP_SOURCE_TIMEOUT_SECONDS,
@@ -183,6 +184,33 @@ def test_account_inline_kline_is_served_by_account_service_not_the_job_api(tmp_p
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, max-age=60"
     assert "direct-lightweight-kline" in response.text
+
+
+def test_account_serves_lightweight_charts_from_a_same_origin_vendor_route(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(account_app, "_load_lightweight_charts_asset", lambda: b"window.LightweightCharts={};")
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.get("/vendor/lightweight-charts-5.0.8.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/javascript")
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert response.content == b"window.LightweightCharts={};"
+
+
+def test_account_vendor_route_hides_upstream_failure_details(tmp_path: Path, monkeypatch) -> None:
+    def fail_asset_load() -> bytes:
+        raise RuntimeError("private upstream path")
+
+    monkeypatch.setattr(account_app, "_load_lightweight_charts_asset", fail_asset_load)
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.get("/vendor/lightweight-charts-5.0.8.js")
+
+    assert response.status_code == 503
+    assert response.json() == {"ok": False, "error": "K 线图表库暂时不可用"}
 
 
 def test_historical_funds_api_replays_read_only_source_facts(tmp_path: Path, monkeypatch) -> None:

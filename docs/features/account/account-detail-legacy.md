@@ -198,7 +198,9 @@ submitting `/api/kline/generate-from-db`; its browser fetch opts out of stale do
 uses a page-load version query parameter. It
 does not render the former `所有订单` expandable table. A
 read-only `647773 / MT5 / AC GB MT5` verification must return a Lightweight Charts document from the
-direct endpoint.
+direct endpoint. That document loads the pinned Lightweight Charts 5.0.8 runtime through the
+same-origin `/vendor/lightweight-charts-5.0.8.js` account-service route, so the embedded browser
+does not require direct public-CDN access to create its canvas.
 Pure bracketed TP/SL/SO exit comments must not produce EA groups, and every returned member must
 carry a non-empty match clue in both the dialog and Excel report.
 The detail HTML includes the top-right Login search form, its status region and source-aware lookup

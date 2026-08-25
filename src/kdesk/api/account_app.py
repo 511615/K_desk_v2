@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import mimetypes
@@ -8,8 +9,11 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import unquote, urlsplit
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -53,6 +57,28 @@ from kdesk.settings import Settings
 from kdesk.settings import settings as default_settings
 
 logger = logging.getLogger("kdesk.account")
+
+LIGHTWEIGHT_CHARTS_VENDOR_URL = "https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"
+LIGHTWEIGHT_CHARTS_VENDOR_SHA256 = "bcdca2a528db7c9b386918c99c544bde3eda3f0204ec2d23a64411d4cb4686c9"
+_lightweight_charts_asset: bytes | None = None
+_lightweight_charts_asset_lock = Lock()
+
+
+def _load_lightweight_charts_asset() -> bytes:
+    """Fetch and retain the pinned chart runtime for same-origin direct charts."""
+    global _lightweight_charts_asset
+    if _lightweight_charts_asset is not None:
+        return _lightweight_charts_asset
+    with _lightweight_charts_asset_lock:
+        if _lightweight_charts_asset is not None:
+            return _lightweight_charts_asset
+        request = UrlRequest(LIGHTWEIGHT_CHARTS_VENDOR_URL, headers={"User-Agent": "K_desk/2.1"})
+        with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed HTTPS URL and pinned digest below.
+            asset = response.read()
+        if hashlib.sha256(asset).hexdigest() != LIGHTWEIGHT_CHARTS_VENDOR_SHA256:
+            raise RuntimeError("Lightweight Charts 静态资源校验失败")
+        _lightweight_charts_asset = asset
+        return asset
 
 # Relationship discovery runs behind a single-flight background coordinator. Do
 # not impose a request-wide deadline: slow, valid database reads may take minutes
@@ -263,6 +289,20 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
     assets = config.frontend_dist / "assets"
     if assets.exists():
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/vendor/lightweight-charts-5.0.8.js")
+    async def lightweight_charts_vendor() -> Response:
+        """Serve the chart runtime same-origin so embedded charts need no browser CDN access."""
+        try:
+            asset = await run_in_threadpool(_load_lightweight_charts_asset)
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Unable to load the pinned Lightweight Charts runtime: %s", exc)
+            raise HTTPException(status_code=503, detail="K 线图表库暂时不可用") from exc
+        return Response(
+            asset,
+            media_type="text/javascript",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
 
     @app.get("/health/live")
     def health_live() -> dict:

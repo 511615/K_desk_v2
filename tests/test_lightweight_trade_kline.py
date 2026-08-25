@@ -224,6 +224,15 @@ def test_lightweight_renderer_uses_profit_stack_mode_for_overlay_axis_and_crossh
     assert "const profitValues=profitPanelBars(closedRows)" in html
 
 
+def test_lightweight_renderer_loads_its_chart_library_from_the_local_account_service():
+    """The direct account chart must not require the browser to reach a public CDN."""
+    trades, bars, mapping = _fixture()
+    html = build_lightweight_html("10001", "10001_local_lightweight_charts", trades, bars, mapping)
+
+    assert '<script src="/vendor/lightweight-charts-5.0.8.js"></script>' in html
+    assert "https://unpkg.com/lightweight-charts" not in html
+
+
 def test_lightweight_renderer_reports_its_document_height_when_embedded():
     """An inline chart expands in the account page instead of adding an iframe scrollbar."""
     trades, bars, mapping = _fixture()

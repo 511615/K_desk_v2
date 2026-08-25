@@ -5,6 +5,23 @@
     "version": "2.1.4"
   },
   "paths": {
+    "/vendor/lightweight-charts-5.0.8.js": {
+      "get": {
+        "summary": "Lightweight Charts Vendor",
+        "description": "Serve the chart runtime same-origin so embedded charts need no browser CDN access.",
+        "operationId": "lightweight_charts_vendor_vendor_lightweight_charts_5_0_8_js_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "summary": "Health Live",
