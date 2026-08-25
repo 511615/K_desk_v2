@@ -26,9 +26,17 @@ profile cache separates an in-progress snapshot from a completed or truncated sn
 selected profile is re-read when background expansion reaches its terminal state and cannot retain a
 stale `pending` status after the graph header reports completion.
 The profile is the first card in the Galaxy detail panel: account identity, propagated score, layer,
-database status and expansion progress are visually separated before the coverage and tag detail.
+database status and expansion progress are visually separated before the tags and linked-account detail.
 An eligible score no longer reads as 继续扩散 after its evidence has already been queried. Completed
 nodes report 已完成扩散 · 无新增账户 only when the snapshot proves that outcome.
+
+The Galaxy page keeps its title bar to navigation and product identity only; it does not show a
+duplicated workflow hint or a rule-status sentence. Its filters form a compact, responsive control
+strip and the desktop workspace scales its three panels down without horizontal scrolling. The right
+panel places the selected account profile before the route caption and relation controls. The profile
+shows only the operator decisions—identity, routed database status, propagated score, layer and
+expansion outcome. Raw coverage dates, query-completeness prose and technical limitations remain in
+the auditable relation-evidence view and are not repeated as an account-profile card.
 
 Every visible evidence edge resolves to a stable normalized relation key and can be inspected without
 rerunning expansion. Exact duplicate evidence is removed. Multiple evidence families between the same
