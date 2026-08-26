@@ -13,14 +13,19 @@ type FixedSectorFrame = {
     hostSector: string
     centerX: number
     centerY: number
+    worldCenterX: number
+    worldCenterY: number
     anchorX: number
     anchorY: number
+    worldAnchorX: number
+    worldAnchorY: number
+    anchorInstanceId: string
     localRadius: number
     availableRadius: number
     fitsHost: boolean
     geometryScale: number
   }>
-  nodes: Array<{ layer: number; accountId: string; instanceId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number; visualRadius: number; drillable: boolean }>
+  nodes: Array<{ layer: number; accountId: string; instanceId: string; nodeType: string; sector: string; role: string; x: number; y: number; worldX: number; worldY: number; radius: number; worldRadius: number; visualRadius: number; drillable: boolean }>
   edges: Array<{ layer: number; id: string; type: string; sector: string; visualWidth: number }>
   sectors: Array<{ layer: number; id: string; accounts: number; evidence: number; x: number; y: number; safeX: number; safeY: number; expanded: boolean; visualStroke: number }>
   locatorAccountIds: string[]
@@ -117,10 +122,10 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
   expect(nested?.path).toEqual([subjectId, direct!.accountId])
   // A drilled account is the centre of its own local relationship space.
   // It must not inherit the original problem account's canvas centre.
-  expect(nested?.layers[1]?.centerX).toBeCloseTo(direct!.x, 0)
-  expect(nested?.layers[1]?.centerY).toBeCloseTo(direct!.y, 0)
-  expect(nested?.layers[1]?.anchorX).toBeCloseTo(direct!.x, 0)
-  expect(nested?.layers[1]?.anchorY).toBeCloseTo(direct!.y, 0)
+  expect(nested?.layers[1]?.worldCenterX).toBeCloseTo(direct!.worldX, 4)
+  expect(nested?.layers[1]?.worldCenterY).toBeCloseTo(direct!.worldY, 4)
+  expect(nested?.layers[1]?.worldAnchorX).toBeCloseTo(direct!.worldX, 4)
+  expect(nested?.layers[1]?.worldAnchorY).toBeCloseTo(direct!.worldY, 4)
   expect(nested?.layers[1]?.localRadius ?? 0).toBeGreaterThan(10)
   expect(nested?.layers[1]?.fitsHost).toBe(true)
   expect(nested?.layers[1]?.geometryScale ?? 1).toBeLessThan(nested?.layers[0]?.geometryScale ?? 0)
@@ -184,8 +189,11 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
   const zoomedEdge = zoomed!.edges.find(item => item.layer === edgeProbe!.layer && item.id === edgeProbe!.id)!
   expect(zoomed!.zoom.scale).toBeGreaterThan(zoomBefore)
   expect(zoomedProbe.visualRadius / zoomProbe!.visualRadius).toBeCloseTo(zoomRatio, 1)
-  expect(zoomedStroke.visualStroke / strokeProbe!.visualStroke).toBeCloseTo(zoomRatio, 1)
-  expect(zoomedEdge.visualWidth / edgeProbe!.visualWidth).toBeCloseTo(zoomRatio, 1)
+  // Geometry scales with the camera, but thin evidence and sector strokes cap
+  // at a readable screen width rather than becoming opaque blocks at deep
+  // infinite-canvas zoom.
+  expect(zoomedStroke.visualStroke).toBeCloseTo(Math.min(strokeProbe!.visualStroke * zoomRatio, 3), 1)
+  expect(zoomedEdge.visualWidth).toBeCloseTo(Math.min(edgeProbe!.visualWidth * zoomRatio, 3), 1)
 
   const zoomedNestedDirect = zoomed!.nodes.find(node => node.instanceId === nestedDirect!.instanceId)
   expect(zoomedNestedDirect).toBeTruthy()
@@ -197,10 +205,34 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
     const frame = window.__kdeskFixedSectorTestFrame?.()
     return Boolean(frame && frame.layers.length === 3 && frame.layers[2]?.focusAccountId === id && frame.nodes.some(node => node.layer === 2))
   }, nestedDirect!.accountId)).toBe(true)
+  // A successful recursive drill enters the child's local world. Its camera
+  // focus is retained across polling, while the outer world remains available
+  // by wheel zoom-out and drag pan.
   const deeper = await page.evaluate(() => window.__kdeskFixedSectorTestFrame?.())
-  expect(deeper?.layers[2]?.geometryScale ?? 1).toBeLessThan(deeper?.layers[1]?.geometryScale ?? 0)
-  expect(deeper?.nodes.some(node => node.layer === 0)).toBe(true)
-  expect(deeper?.nodes.some(node => node.layer === 1)).toBe(true)
+  expect(deeper?.zoom.scale ?? 0).toBeGreaterThan((zoomed!.zoom.scale ?? 0) * 1.5)
+  const focusedScale = deeper?.zoom.scale ?? 0
+  await page.waitForTimeout(1_500)
+  const focusedDeeper = await page.evaluate(() => window.__kdeskFixedSectorTestFrame?.())
+  expect(focusedDeeper?.zoom.scale ?? 0).toBeCloseTo(focusedScale, 4)
+  const stableDeeper = focusedDeeper
+  expect(stableDeeper?.layers[2]?.geometryScale ?? 1).toBeLessThan(stableDeeper?.layers[1]?.geometryScale ?? 0)
+  expect(stableDeeper?.layers.every(layer => layer.fitsHost)).toBe(true)
+  const deepest = stableDeeper?.layers[2]
+  // The parent display instance becomes the centre of its child world. It
+  // must not remain as a parent-sized node or parent edge on top of that
+  // world when the camera focuses into the child.
+  expect(stableDeeper?.nodes.some(node => node.layer === 1 && node.instanceId === deepest?.anchorInstanceId && node.role === 'direct')).toBe(false)
+  expect(stableDeeper?.nodes.some(node => node.layer === 2 && node.role === 'focus' && node.accountId === deepest?.focusAccountId)).toBe(true)
+  for (const layer of (stableDeeper?.layers ?? []).filter(layer => layer.nested)) {
+    const directNodes = (stableDeeper?.nodes ?? []).filter(node => node.layer === layer.index && node.role === 'direct')
+    expect(directNodes.length).toBeGreaterThan(0)
+    // Recursive content must scale with its local world. A fixed minimum node
+    // size would consume a deep child sector and make the next expansion
+    // impossible even though the canvas itself is continuously zoomable.
+    expect(Math.max(...directNodes.map(node => node.worldRadius)) / layer.localRadius).toBeLessThanOrEqual(0.07)
+  }
+  expect(stableDeeper?.nodes.some(node => node.layer === 0)).toBe(true)
+  expect(stableDeeper?.nodes.some(node => node.layer === 1)).toBe(true)
   const nestedChildLabel = await page.evaluate(id => String((data?.entities ?? []).find((node: { id: string }) => String(node.id) === id)?.label ?? ''), nestedDirect!.accountId)
   await expect(page.locator('#selected')).toContainText(nestedChildLabel)
   await expect(page.locator('#overviewNote')).toContainText('子扇区嵌入母扇区')

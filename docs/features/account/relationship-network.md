@@ -118,6 +118,15 @@ presentation range and geometry do not affect the snapshot, score, expansion, gl
 relation-detail IDs.
 Each drilled account is the local geometric centre of its own child projection, not an offset copy
 of the investigation subject. Its eight business sectors are reallocated around that clicked point;
+every nested node, account-status badge, local-centre halo, sector stroke and raw evidence line is
+derived from that child projection's geometry scale. Fixed-size visual minimums are not permitted in
+child worlds: details below overview scale are intentionally hidden until the operator zooms, while
+the account hit area remains separately usable. The layout reserves a scale-relative gutter around
+siblings and parent evidence, so a deeper eligible drill receives genuine local space instead of a
+full-size symbol being forced into an already occupied child sector.
+Selecting an eligible direct account also moves the camera into that new child world at a readable
+local scale; it does not discard any ancestor geometry. Operators can continuously wheel back out
+or pan to inspect the retained outer worlds, and snapshot polling must preserve that camera state.
 their radius is derived from the angular and radial clearance remaining inside the mother sector.
 Within every child sector, accounts occupy deterministic per-instance radial bands. This keeps
 the parent layer visible, prevents sibling child maps from collapsing toward the original centre, and

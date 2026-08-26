@@ -12,10 +12,14 @@ const fixedSectorDefinitions=[
   {id:'sync',label:'开平仓同步',color:'#fb7185'}, {id:'hedge',label:'反向对锁',color:'#f43f5e'},
 ];
 const fixedSectorTypes={same_crm_user:'center',same_name:'center',login_ip:'ip',client_id:'cid',ea_feature:'ea',copy_order:'copy',copy_group:'copy',rebate:'rebate',crm_owner:'ib',direct_ib:'ib',ib_owned_account:'ib',ib_direct_account:'ib',ib_identity:'ib',ib_direct_rebate:'ib',top_ib_group:'ib',toxic_sync_same:'sync',toxic_sync_opposite:'hedge'};
-let fixedSectorActive=false,fixedSectorHit={nodes:[],edges:[],sectors:[]},fixedSectorLocatorHits=[],fixedSectorPath=[],fixedSectorPathInstances=[],fixedSectorExpanded=new Map(),fixedSectorNeedsFit=true,fixedSectorLastLayers=[];
+let fixedSectorActive=false,fixedSectorHit={nodes:[],edges:[],sectors:[]},fixedSectorLocatorHits=[],fixedSectorPath=[],fixedSectorPathInstances=[],fixedSectorExpanded=new Map(),fixedSectorNeedsFit=true,fixedSectorLastLayers=[],fixedSectorFocusRequested='';
 // The fixed-sector graph is a continuous relationship world. Panning has no
 // boundary; the broad numeric range only avoids Canvas precision collapse.
-const fixedSectorZoomRange={min:.002,max:256};
+const fixedSectorZoomRange={min:.002,max:4096};
+// A child projection is a true smaller world, not a full-size graph squeezed
+// into its parent's account cell. Keep all geometry in world units so the
+// affine canvas camera can enlarge it later without introducing fixed-size UI.
+const fixedSectorRecursion={scale:.56,spaceShare:.62,nodeShare:.055,minWorldRadius:.0005,clearanceShare:.08};
 function fixedSectorZoomBounds(){return fixedSectorZoomRange}
 
 function fixedSectorNodes(){return(data?.entities||[]).filter(node=>node.type==='account'||node.type==='ib_user')}
@@ -130,21 +134,24 @@ function fixedSectorNestedSpace(parent,host,anchor){
   );
   // Existing outer-layer nodes and visible evidence lines reserve their own
   // clearance, so a local child map cannot cover a sibling or a parent edge.
+  // The reserve must itself shrink with the parent world. A former fixed
+  // three-unit gutter made a deep child report zero usable space.
+  const parentRadius=parent.localRadius||parent.outer;
+  const gutter=Math.max(fixedSectorRecursion.minWorldRadius,Math.min(3,parentRadius*fixedSectorRecursion.clearanceShare));
   let siblingClearance=Infinity;
   for(const item of parent.occurrences){
     if(item.id===anchor.id)continue;
-    siblingClearance=Math.min(siblingClearance,Math.max(0,Math.hypot(anchor.x-item.x,anchor.y-item.y)-item.size-3));
+    siblingClearance=Math.min(siblingClearance,Math.max(0,Math.hypot(anchor.x-item.x,anchor.y-item.y)-item.size-gutter));
   }
   let edgeClearance=Infinity;
   for(const edge of parent.edges){
     if(edge.to?.id===anchor.id)continue;
-    edgeClearance=Math.min(edgeClearance,Math.max(0,fixedSectorWorldDistanceToSegment(anchor,edge.from,edge.to)-3));
+    edgeClearance=Math.min(edgeClearance,Math.max(0,fixedSectorWorldDistanceToSegment(anchor,edge.from,edge.to)-gutter));
   }
   const available=Math.min(radialClearance,boundaryClearance,siblingClearance,edgeClearance);
-  // Keep a visible gutter for sector strokes and compact node badges. There
-  // is intentionally no artificial minimum: a constrained parent sector is
-  // allowed to become small and can be inspected with the continuous zoom.
-  const radius=Math.max(.5,available*.78);
+  // There is intentionally no layout-sized minimum. A constrained child is
+  // small in the overview and becomes inspectable only through camera zoom.
+  const radius=Math.max(0,available)*fixedSectorRecursion.spaceShare;
   return{radius,available,anchorRadius,anchorAngle};
 }
 function fixedSectorPlaceNestedItems(projection,expandedId){
@@ -176,14 +183,17 @@ function fixedSectorPlaceNestedItems(projection,expandedId){
   // in one sector; zoom makes deliberately tiny but valid layouts inspectable.
   let closest=Infinity;
   for(let left=0;left<placed.length;left++)for(let right=left+1;right<placed.length;right++)closest=Math.min(closest,Math.hypot(placed[left].x-placed[right].x,placed[left].y-placed[right].y));
-  const nodeRadius=Math.max(.18,Math.min(4.5,projection.localRadius*.085,closest*.42));
+  // Node size is a stable fraction of this local world. It must never inherit
+  // a large absolute minimum from an ancestor, otherwise deep sectors turn
+  // into overlapping badges and leave no budget for another expansion.
+  const nodeRadius=Math.max(fixedSectorRecursion.minWorldRadius,Math.min(projection.localRadius*fixedSectorRecursion.nodeShare,closest*.28));
   placed.forEach(point=>{point.size=nodeRadius});
 }
 function fixedSectorNestedProjection(focusId,parent,anchor,expandedId){
   const evidence=fixedSectorEvidence(focusId),host=parent.sectors.find(item=>item.id===anchor.sector);
   if(!host)return null;
-  const geometryScale=parent.geometryScale*.68;
-  const space=fixedSectorNestedSpace(parent,host,anchor),localRadius=space.radius*geometryScale,inner=localRadius*.22;
+  const geometryScale=parent.geometryScale*fixedSectorRecursion.scale;
+  const space=fixedSectorNestedSpace(parent,host,anchor),localRadius=space.radius*geometryScale,inner=localRadius*.18;
   evidence.sectors.forEach((sector,index)=>{
     sector.start=-Math.PI/2+index*Math.PI/4+.035;
     sector.end=-Math.PI/2+(index+1)*Math.PI/4-.035;
@@ -219,12 +229,44 @@ function fixedSectorFitLayers(layers,rect){
   view={scale:Math.max(.1,scale),x:rect.width/2-root.cx*scale,y:rect.height/2-root.cy*scale};
   fixedSectorNeedsFit=false;
 }
+function fixedSectorFocusDrilledLayer(layers,rect){
+  if(!fixedSectorFocusRequested)return;
+  const layer=layers[layers.length-1],projection=layer?.projection;
+  if(!projection||String(layer.focusId)!==String(fixedSectorFocusRequested))return;
+  // Entering an account is a local navigation action. Fit that account's
+  // child world into most of the board, while retaining every ancestor in the
+  // same unbounded coordinate system for a later wheel zoom-out or pan.
+  const localRadius=Math.max(fixedSectorRecursion.minWorldRadius,projection.outer);
+  const scale=Math.max(fixedSectorZoomRange.min,Math.min(fixedSectorZoomRange.max,Math.min(rect.width,rect.height)*.34/localRadius));
+  view={scale,x:rect.width*.5-projection.cx*scale,y:rect.height*.5-projection.cy*scale};
+  fixedSectorFocusRequested='';
+}
 function fixedSectorScreenPoint(point){return{x:view.x+point.x*view.scale,y:view.y+point.y*view.scale}}
-function fixedSectorCompactBadge(node,x,y,size){
+function fixedSectorStrokeWidth(worldWidth,maxPixels=3){return Math.min(worldWidth,maxPixels/Math.max(view.scale,.001))}
+function fixedSectorDrawNode(node,x,y,size){
+  ctx.beginPath();
+  const shape=nodeShape(node);
+  if(shape==='hexagon'){
+    for(let point=0;point<6;point++){
+      const angle=-Math.PI/2+point*Math.PI/3,px=x+Math.cos(angle)*size,py=y+Math.sin(angle)*size;
+      point?ctx.lineTo(px,py):ctx.moveTo(px,py);
+    }
+    ctx.closePath();
+  }else if(shape==='diamond'){
+    ctx.moveTo(x,y-size);ctx.lineTo(x+size,y);ctx.lineTo(x,y+size);ctx.lineTo(x-size,y);ctx.closePath();
+  }else ctx.arc(x,y,size,0,Math.PI*2);
+}
+function fixedSectorCompactBadge(node,x,y,size,geometryScale){
   if(node.type!=='account')return;
-  const action=localAction(node),radius=Math.max(2,Math.min(4.2,size*.62));
-  ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='rgba(11,18,32,.92)';ctx.fill();ctx.strokeStyle=actionTheme(action);ctx.lineWidth=.8;ctx.stroke();
-  ctx.fillStyle=actionTheme(action);ctx.font='600 '+Math.max(4,Math.min(7,size*.8))+'px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(action,x,y+Math.max(1,size*.2));ctx.textAlign='start';
+  // Badges are detail, not a minimum-size replacement for the node. Hide
+  // them at overview scale and let the shared affine camera reveal them on
+  // zoom; this keeps a recursive child map legible and expandable.
+  if(size*view.scale<3)return;
+  const action=localAction(node),radius=size*.46;
+  ctx.beginPath();ctx.arc(x,y,radius,0,Math.PI*2);ctx.fillStyle='rgba(11,18,32,.92)';ctx.fill();ctx.strokeStyle=actionTheme(action);ctx.lineWidth=fixedSectorStrokeWidth(.7*geometryScale,2);ctx.stroke();
+  if(radius*view.scale>=4){
+    ctx.fillStyle=actionTheme(action);ctx.font='600 '+(size*.62)+'px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(action,x,y+size*.18);ctx.textAlign='start';
+  }
 }
 function fixedSectorRenderLocator(){
   const locator=document.getElementById('galaxyLocator'),context=locator?.getContext('2d');if(!locator||!context)return;
@@ -264,10 +306,13 @@ function fixedSectorCanDrill(node,layerIndex){
 }
 function fixedSectorPaintNode(layer,node,point,radius,sector,role){
   if(!node)return;
-  drawNode(node,point.x,point.y,radius);ctx.fillStyle=color(node);ctx.fill();ctx.strokeStyle=node.id===selectedId?'#fff':'#bde7ff';ctx.lineWidth=1.2;ctx.stroke();
-  if(layer.projection.nested)fixedSectorCompactBadge(node,point.x,point.y,radius);else drawActionBadge(node,point.x,point.y,radius);
+  const geometryScale=layer.projection.geometryScale||1;
+  // Use the local shape painter rather than the Galaxy global drawNode
+  // wrapper, which deliberately doubles node sizes for the legacy view.
+  fixedSectorDrawNode(node,point.x,point.y,radius);ctx.fillStyle=color(node);ctx.fill();ctx.strokeStyle=node.id===selectedId?'#fff':'#bde7ff';ctx.lineWidth=fixedSectorStrokeWidth(.9*geometryScale,2);ctx.stroke();
+  fixedSectorCompactBadge(node,point.x,point.y,radius,geometryScale);
   const screen=fixedSectorScreenPoint(point);
-  fixedSectorHit.nodes.push({layer:layer.index,node,instanceId:String(point.id||''),x:screen.x,y:screen.y,radius:Math.max(4,(radius+2.5)*view.scale),visualRadius:Math.max(.1,radius*view.scale),sector,role,drillable:role==='direct'&&fixedSectorCanDrill(node,layer.index)});
+  fixedSectorHit.nodes.push({layer:layer.index,node,instanceId:String(point.id||''),x:screen.x,y:screen.y,worldX:point.x,worldY:point.y,radius:Math.max(4,(radius+2.5)*view.scale),worldRadius:radius,visualRadius:Math.max(.1,radius*view.scale),sector,role,drillable:role==='direct'&&fixedSectorCanDrill(node,layer.index)});
 }
 function fixedSectorConstrainHitTargets(){
   for(const hit of fixedSectorHit.nodes){
@@ -282,14 +327,24 @@ function fixedSectorConstrainHitTargets(){
 function fixedSectorRenderOverview(){
   if(!data)return;
   const rect=canvas.getBoundingClientRect(),layers=fixedSectorBuildLayers(Math.max(1,rect.width),Math.max(1,rect.height));
-  fixedSectorFitLayers(layers,rect);fixedSectorActive=true;fixedSectorLastLayers=layers;
+  fixedSectorFitLayers(layers,rect);fixedSectorFocusDrilledLayer(layers,rect);fixedSectorActive=true;fixedSectorLastLayers=layers;
+  // This canvas is shared with the legacy Galaxy renderer. Reset its device
+  // transform and alpha before every fixed-sector frame so a prior zoomed
+  // frame cannot remain as oversized coloured residue behind a child world.
+  const pixelRatio=devicePixelRatio||1;
+  ctx.setTransform(pixelRatio,0,0,pixelRatio,0,0);ctx.globalAlpha=1;ctx.clearRect(0,0,rect.width,rect.height);
   ctx.fillStyle='#101826';ctx.fillRect(0,0,rect.width,rect.height);ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);fixedSectorHit={nodes:[],edges:[],sectors:[]};
   for(const layer of layers){
     const p=layer.projection;
+    // Once a direct account owns a child world, the child world supplies its
+    // proportional centre marker. Repainting the same parent-sized instance
+    // (and its incoming parent edge) at that coordinate would obscure the
+    // child as soon as the camera focuses into it.
+    const childAnchorIds=new Set(layers.filter(next=>next.index===layer.index+1).map(next=>String(next.projection.anchor?.id||'')));
     for(const sector of p.sectors){
       const expanded=fixedSectorExpanded.get(layer.index)===sector.id,inner=sector.inner,outer=sector.outer;
       ctx.beginPath();ctx.arc(p.cx,p.cy,outer,sector.start,sector.end);ctx.arc(p.cx,p.cy,inner,sector.end,sector.start,true);ctx.closePath();
-      const sectorStroke=(expanded?2.2:1.15)*p.geometryScale;
+      const sectorStroke=fixedSectorStrokeWidth((expanded?2.2:1.15)*p.geometryScale,3);
       ctx.fillStyle=sector.evidence?(expanded?'rgba(40,94,190,.34)':p.nested?'rgba(30,58,138,.28)':'rgba(30,58,138,.16)'):'rgba(51,65,85,.08)';ctx.fill();ctx.strokeStyle=sector.color;ctx.lineWidth=sectorStroke;ctx.stroke();
       if(!p.nested&&p.scale*view.scale>=.46){
         const angle=(sector.start+sector.end)/2,labelPoint={x:p.cx+Math.cos(angle)*(outer+20),y:p.cy+Math.sin(angle)*(outer+20)};
@@ -299,7 +354,8 @@ function fixedSectorRenderOverview(){
       fixedSectorHit.sectors.push({layer:layer.index,id:sector.id,accounts:sector.accounts.size,evidence:sector.evidence,x:hitPoint.x,y:hitPoint.y,safeX:safePoint.x,safeY:safePoint.y,expanded,start:sector.start,end:sector.end,inner,outer,cx:p.cx,cy:p.cy,nested:p.nested,visualStroke:sectorStroke*view.scale});
     }
     for(const edge of p.edges){
-      const edgeWidth=2*p.geometryScale;
+      if(childAnchorIds.has(String(edge.to?.id||'')))continue;
+      const edgeWidth=fixedSectorStrokeWidth(2*p.geometryScale,3);
       ctx.beginPath();ctx.moveTo(edge.from.x,edge.from.y);ctx.lineTo(edge.to.x,edge.to.y);ctx.strokeStyle=p.sectors.find(item=>item.id===edge.sector)?.color||'#93c5fd';ctx.lineWidth=edgeWidth;ctx.stroke();
       fixedSectorHit.edges.push({layer:layer.index,edge,points:[fixedSectorScreenPoint(edge.from),fixedSectorScreenPoint(edge.to)],tolerance:Math.max(3,Math.min(12,Math.max(4,edgeWidth+3)*view.scale)),visualWidth:edgeWidth*view.scale});
     }
@@ -307,13 +363,16 @@ function fixedSectorRenderOverview(){
       fixedSectorPaintNode(layer,p.focus,{x:p.cx,y:p.cy},14,'center','focus');
       p.centerMembers.forEach(node=>fixedSectorPaintNode(layer,node,p.centerPoints.get(node.id),8,'center','center'));
     }else{
-      // Do not create a second selectable account instance.  This halo makes
-      // the clicked account visibly serve as the local centre of its child
-      // sectors while the original outer-layer node remains the hit target.
-      ctx.beginPath();ctx.arc(p.cx,p.cy,Math.max(3,p.inner*.7),0,Math.PI*2);
-      ctx.strokeStyle='#d9f3ff';ctx.lineWidth=1.1*p.geometryScale;ctx.stroke();
+      // A nested focus is a local, proportional centre node rather than a
+      // second parent-scale copy of the clicked account.
+      fixedSectorPaintNode(layer,p.focus,{id:'fixed-sector-focus|'+layer.index+'|'+p.focus.id,x:p.cx,y:p.cy},Math.max(fixedSectorRecursion.minWorldRadius,p.outer*.1),'center','focus');
+      const haloRadius=p.inner*.52;
+      if(haloRadius*view.scale>=1.2){
+        ctx.beginPath();ctx.arc(p.cx,p.cy,haloRadius,0,Math.PI*2);
+        ctx.strokeStyle='#d9f3ff';ctx.lineWidth=fixedSectorStrokeWidth(.8*p.geometryScale,2);ctx.stroke();
+      }
     }
-    p.occurrences.forEach(item=>fixedSectorPaintNode(layer,item.node,item,item.size,item.sector,'direct'));
+    p.occurrences.forEach(item=>{if(!childAnchorIds.has(String(item.id)))fixedSectorPaintNode(layer,item.node,item,item.size,item.sector,'direct')});
   }
   fixedSectorConstrainHitTargets();
   ctx.restore();fixedSectorRenderControls(layers);fixedSectorRenderLocator();
@@ -334,6 +393,7 @@ function fixedSectorSelectNode(hit){
     if(fixedSectorPath[fixedSectorPath.length-1]!==hit.node.id){
       fixedSectorPath.push(hit.node.id);
       fixedSectorPathInstances.push(hit.instanceId);
+      fixedSectorFocusRequested=String(hit.node.id);
     }
     for(const index of [...fixedSectorExpanded.keys()])if(index>=fixedSectorPath.length)fixedSectorExpanded.delete(index);
   }
@@ -359,13 +419,16 @@ window.__kdeskFixedSectorTestFrame=()=>({
     index:layer.index,focusAccountId:String(layer.focusId),scale:layer.projection.scale,nested:Boolean(layer.projection.nested),hostSector:layer.projection.hostSector||'',
     centerX:fixedSectorScreenPoint({x:layer.projection.cx,y:layer.projection.cy}).x,
     centerY:fixedSectorScreenPoint({x:layer.projection.cx,y:layer.projection.cy}).y,
+    worldCenterX:layer.projection.cx,worldCenterY:layer.projection.cy,
     anchorX:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).x,
     anchorY:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).y,
+    worldAnchorX:(layer.projection.anchor||{x:layer.projection.cx}).x,worldAnchorY:(layer.projection.anchor||{y:layer.projection.cy}).y,
+    anchorInstanceId:String(layer.projection.anchor?.id||''),
     localRadius:Number(layer.projection.localRadius||0),availableRadius:Number(layer.projection.availableRadius||0),
     fitsHost:layer.projection.fitsHost!==false,
     geometryScale:Number(layer.projection.geometryScale||1),
   })),
-  nodes:fixedSectorHit.nodes.map(item=>({layer:item.layer,accountId:String(item.node.id),instanceId:item.instanceId,nodeType:String(item.node.type),sector:item.sector,role:item.role,x:item.x,y:item.y,radius:item.radius,visualRadius:item.visualRadius,drillable:Boolean(item.drillable)})),
+  nodes:fixedSectorHit.nodes.map(item=>({layer:item.layer,accountId:String(item.node.id),instanceId:item.instanceId,nodeType:String(item.node.type),sector:item.sector,role:item.role,x:item.x,y:item.y,worldX:item.worldX,worldY:item.worldY,radius:item.radius,worldRadius:item.worldRadius,visualRadius:item.visualRadius,drillable:Boolean(item.drillable)})),
   edges:fixedSectorHit.edges.map(item=>({layer:item.layer,id:item.edge.id,type:String(item.edge.raw.type),sector:item.edge.sector,visualWidth:item.visualWidth})),
   sectors:fixedSectorHit.sectors.map(item=>({layer:item.layer,id:item.id,accounts:item.accounts,evidence:item.evidence,x:item.x,y:item.y,safeX:item.safeX,safeY:item.safeY,expanded:item.expanded,inner:item.inner,outer:item.outer,nested:item.nested,visualStroke:item.visualStroke})),
   locatorAccountIds:fixedSectorLocatorHits.map(item=>String(item.node.id)),

@@ -36,6 +36,14 @@ account drill inserts the next layer as child sectors inside that account's moth
 replacing the outer network. Sector and account navigation never submits another relationship
 expansion request, while its global locator continues to expose the complete deduplicated account set.
 It is rendered as a continuous canvas world: pointer-centred wheel zoom and unconstrained drag pan
+apply to the entire recursive projection. Nested fixed-sector visuals have no screen-sized node,
+badge or centre-halo minimum; each is a proportion of its own local world and is revealed by zoom
+only when it is large enough to be meaningful. The planner uses scale-relative sibling and evidence
+clearance so an eligible next-layer account is allocated local expansion space rather than being
+drawn over a prior-layer symbol.
+An eligible direct-account click focuses the camera on the newly created child world rather than
+leaving an operator at the parent overview scale; wheel zoom-out and drag pan keep all ancestor
+worlds continuously accessible, and background snapshot redraws do not reset that focus.
 transform every outer/inner sector and its evidence together, while double-click restores a complete
 fit. The broad 0.2%–256× numerical envelope is a Canvas safety guard, not a business or expansion
 limit, and compact default node radii leave dense evidence inspectable through zoom rather than
