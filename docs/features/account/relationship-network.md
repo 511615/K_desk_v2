@@ -108,6 +108,14 @@ original account ID and raw relation ID, so selecting a line opens the existing 
 global locator is deliberately not drilled down: it always shows every de-duplicated real account in
 the completed snapshot. The legacy
 `graph_type=galaxy` route keeps its star-track renderer unchanged.
+The fixed-area detailed graph is a continuous, pannable Canvas world rather than a bounded magnifier.
+Wheel zoom is pointer-centred and applies one affine transform to parent sectors, embedded child
+sectors, account instances and raw evidence lines together; drag pan has no world boundary and
+double-click re-fits the complete root projection. Its numerical range is deliberately broad
+(0.2%–256×) only to protect Canvas precision. The default fixed-sector node radii are compact so a
+dense direct layer is not visually dominant before an operator zooms into its mother sector. This
+presentation range and geometry do not affect the snapshot, score, expansion, global locator or
+relation-detail IDs.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

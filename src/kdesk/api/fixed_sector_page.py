@@ -13,6 +13,10 @@ const fixedSectorDefinitions=[
 ];
 const fixedSectorTypes={same_crm_user:'center',same_name:'center',login_ip:'ip',client_id:'cid',ea_feature:'ea',copy_order:'copy',copy_group:'copy',rebate:'rebate',crm_owner:'ib',direct_ib:'ib',ib_owned_account:'ib',ib_direct_account:'ib',ib_identity:'ib',ib_direct_rebate:'ib',top_ib_group:'ib',toxic_sync_same:'sync',toxic_sync_opposite:'hedge'};
 let fixedSectorActive=false,fixedSectorHit={nodes:[],edges:[],sectors:[]},fixedSectorLocatorHits=[],fixedSectorPath=[],fixedSectorExpanded=new Map(),fixedSectorNeedsFit=true,fixedSectorLastLayers=[];
+// The fixed-sector graph is a continuous relationship world. Panning has no
+// boundary; the broad numeric range only avoids Canvas precision collapse.
+const fixedSectorZoomRange={min:.002,max:256};
+function fixedSectorZoomBounds(){return fixedSectorZoomRange}
 
 function fixedSectorNodes(){return(data?.entities||[]).filter(node=>node.type==='account'||node.type==='ib_user')}
 function fixedSectorRoot(){return fixedSectorNodes().find(node=>node.isSubject)||fixedSectorNodes()[0]||null}
@@ -83,7 +87,7 @@ function fixedSectorPlaceRootItems(projection,expandedId){
       const column=index%columns,row=Math.floor(index/columns),rows=Math.ceil(items.length/columns);
       const angle=sector.start+span*(column+.5)/columns,progress=(row+.5)/rows;
       const radius=sector.inner+(sector.outer-sector.inner)*((expanded?.64:.70)+(expanded?.29:.23)*progress);
-      const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:expanded?9:7};
+      const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:expanded?7.2:5.8};
       projection.occurrences.push(point);
       if(expanded)item.edges.forEach(({raw,from})=>projection.edges.push({id:String(raw.id),raw,from:{node:from,...(projection.centerPoints.get(from.id)||{x:projection.cx,y:projection.cy})},to:point,sector:sector.id,directed:isDirectedRelation(raw.type)}));
     });
@@ -108,7 +112,7 @@ function fixedSectorNestedProjection(focusId,parent,anchor,expandedId){
       const column=index%columns,row=Math.floor(index/columns);
       const angle=sector.start+(sector.end-sector.start)*(column+.5)/columns;
       const radius=sector.inner+(sector.outer-sector.inner)*(row+.5)/rows;
-      const point={id:'fixed-sector-instance|'+focusId+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:Math.max(3,Math.min(6,4.7/Math.sqrt(Math.max(1,rows))))};
+      const point={id:'fixed-sector-instance|'+focusId+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:Math.max(2.5,Math.min(4.8,3.9/Math.sqrt(Math.max(1,rows))))};
       projection.occurrences.push(point);
       if(expanded)item.edges.forEach(({raw,from})=>projection.edges.push({id:String(raw.id),raw,from:{node:from,...(projection.centerPoints.get(from.id)||{x:anchor.x,y:anchor.y})},to:point,sector:sector.id,directed:isDirectedRelation(raw.type)}));
     });
@@ -165,7 +169,7 @@ function fixedSectorRenderControls(layers){
   if(note){
     note.replaceChildren();
     const text=document.createElement('span');
-    text.textContent='当前嵌套中心：'+(active?.label||'-')+'。外层始终保留并显示直接第 1 层账户；点击账户后，其下一层以子扇区嵌入所在母扇区，不跳转到另一张图。点击扇区仅展开该扇区的原始关系线和证据；左侧全局定位图始终显示全部已查询账户。';
+    text.textContent='无限画布 · 滚轮连续缩放 · 拖拽平移 · 双击适配全图。当前中心：'+(active?.label||'-')+'；外层保留，子扇区嵌入母扇区。';
     note.append(text);
     if(layers.length>1){
       const back=document.createElement('button');back.type='button';back.textContent='返回上一层';back.style.cssText='margin-left:10px;padding:3px 8px;border:1px solid #4da3ff;border-radius:4px;background:#102b48;color:#cfe9ff;cursor:pointer';
@@ -202,11 +206,11 @@ function fixedSectorRenderOverview(){
     }
     for(const edge of p.edges){
       ctx.beginPath();ctx.moveTo(edge.from.x,edge.from.y);ctx.lineTo(edge.to.x,edge.to.y);ctx.strokeStyle=p.sectors.find(item=>item.id===edge.sector)?.color||'#93c5fd';ctx.lineWidth=2/Math.max(.35,p.scale);ctx.stroke();
-      fixedSectorHit.edges.push({layer:layer.index,edge,points:[fixedSectorScreenPoint(edge.from),fixedSectorScreenPoint(edge.to)],tolerance:Math.max(7,11*view.scale)});
+      fixedSectorHit.edges.push({layer:layer.index,edge,points:[fixedSectorScreenPoint(edge.from),fixedSectorScreenPoint(edge.to)],tolerance:Math.max(5,Math.min(16,8*view.scale))});
     }
     if(!p.nested){
-      fixedSectorPaintNode(layer,p.focus,{x:p.cx,y:p.cy},19,'center','focus');
-      p.centerMembers.forEach(node=>fixedSectorPaintNode(layer,node,p.centerPoints.get(node.id),11,'center','center'));
+      fixedSectorPaintNode(layer,p.focus,{x:p.cx,y:p.cy},14,'center','focus');
+      p.centerMembers.forEach(node=>fixedSectorPaintNode(layer,node,p.centerPoints.get(node.id),8,'center','center'));
     }
     p.occurrences.forEach(item=>fixedSectorPaintNode(layer,item.node,item,item.size,item.sector,'direct'));
   }
@@ -246,8 +250,10 @@ window.__kdeskFixedSectorTestFrame=()=>({
   edges:fixedSectorHit.edges.map(item=>({layer:item.layer,id:item.edge.id,type:String(item.edge.raw.type),sector:item.edge.sector})),
   sectors:fixedSectorHit.sectors.map(item=>({layer:item.layer,id:item.id,accounts:item.accounts,evidence:item.evidence,x:item.x,y:item.y,expanded:item.expanded,inner:item.inner,outer:item.outer,nested:item.nested})),
   locatorAccountIds:fixedSectorLocatorHits.map(item=>String(item.node.id)),
+  zoom:{scale:Number(view.scale||0),min:fixedSectorZoomRange.min,max:fixedSectorZoomRange.max},
 });
 if(params.get('graph_type')==='fixed-sector'){
+  canvas.setAttribute('aria-label','可平移连续缩放的固定区域关系图');
   fitMapToBoard=function(){fixedSectorNeedsFit=true};
   renderOverview=fixedSectorRenderOverview;
   const fixedDetailBase=renderDetail;

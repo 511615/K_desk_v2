@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 type FixedSectorFrame = {
   revision: number
   inProgress: boolean
+  zoom: { scale: number; min: number; max: number }
   path: string[]
   layers: Array<{ index: number; focusAccountId: string; scale: number; nested: boolean; hostSector: string }>
   nodes: Array<{ layer: number; accountId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number }>
@@ -39,6 +40,37 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
   expect(before?.layers[0]?.focusAccountId).toBe(subjectId)
   const allAccountIds = await page.evaluate(() => [...new Set((data?.entities ?? []).filter((node: { type: string }) => node.type === 'account').map((node: { id: string }) => String(node.id)))])
   expect(new Set(before?.locatorAccountIds).size).toBe(allAccountIds.length)
+
+  // The fixed-area renderer is a navigable world, not a bounded magnifier.
+  // Both directions must pass the legacy Galaxy 10%-250% limits while every
+  // sector/node keeps the same world-space projection.
+  await page.evaluate(() => {
+    const canvas = document.getElementById('overview')!
+    const rect = canvas.getBoundingClientRect()
+    for (let index = 0; index < 18; index += 1) {
+      canvas.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: -120,
+        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      }))
+    }
+  })
+  await expect.poll(() => page.evaluate(() => window.__kdeskFixedSectorTestFrame?.().zoom.scale ?? 0)).toBeGreaterThan(2.5)
+  await page.evaluate(() => {
+    const canvas = document.getElementById('overview')!
+    const rect = canvas.getBoundingClientRect()
+    for (let index = 0; index < 48; index += 1) {
+      canvas.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: 120,
+        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      }))
+    }
+  })
+  await expect.poll(() => page.evaluate(() => window.__kdeskFixedSectorTestFrame?.().zoom.scale ?? 1)).toBeLessThan(0.1)
+  await page.evaluate(() => {
+    const canvas = document.getElementById('overview')!
+    canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+  })
+  await expect.poll(() => page.evaluate(() => window.__kdeskFixedSectorTestFrame?.().zoom.scale ?? 0)).toBeGreaterThan(0.1)
 
   const sector = before!.sectors.find(item => item.layer === 0 && item.evidence > 0 && item.accounts > 0)
   expect(sector).toBeTruthy()
@@ -80,7 +112,7 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
     }
   }
   await expect(page.locator('#selected')).toContainText(childLabel)
-  await expect(page.locator('#overviewNote')).toContainText('子扇区嵌入所在母扇区')
+  await expect(page.locator('#overviewNote')).toContainText('子扇区嵌入母扇区')
 
   const screenshot = testInfo.outputPath('fixed-sector-nested-relationship-network.png')
   await page.screenshot({ path: screenshot, fullPage: true })

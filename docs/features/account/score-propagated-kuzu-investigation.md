@@ -35,6 +35,11 @@ client-side drill-down over that one snapshot: its larger outer sectors retain d
 account drill inserts the next layer as child sectors inside that account's mother sector rather than
 replacing the outer network. Sector and account navigation never submits another relationship
 expansion request, while its global locator continues to expose the complete deduplicated account set.
+It is rendered as a continuous canvas world: pointer-centred wheel zoom and unconstrained drag pan
+transform every outer/inner sector and its evidence together, while double-click restores a complete
+fit. The broad 0.2%–256× numerical envelope is a Canvas safety guard, not a business or expansion
+limit, and compact default node radii leave dense evidence inspectable through zoom rather than
+overstating it at the initial fit.
 
 ## UI and behavior
 
