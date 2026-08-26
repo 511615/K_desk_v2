@@ -49,10 +49,13 @@ toggles a relation star-track or recomputes expansion.
 ## Relation display table
 
 Clicking a visible raw relationship edge opens the shared `关系展示表`; selecting a node continues to
-open only its account profile. The table is bound to the current snapshot revision and returns 409 on
-a stale revision. On the first stale response, the workspace refreshes its current graph snapshot and
-retries that exact edge once; a second conflict remains visible so the operator is never shown mixed
-revision evidence. It never starts relationship expansion, changes score, changes a same-CRM orbit, or
+open only its account profile. A completed snapshot keeps the table revision-bound. While background
+expansion is active, the client reads the newest snapshot so an ordinary edge click is not rejected
+only because the worker published a newer revision. On a stale response, the workspace refreshes and
+retries the exact edge once, then makes one latest-snapshot attempt. If the clicked edge itself has
+been replaced by newer evidence, the panel reports that the graph was synchronised and asks the
+operator to click the current visible line; it never exposes a raw 404/409 message or mixes evidence
+across revisions. It never starts relationship expansion, changes score, changes a same-CRM orbit, or
 repositions a node. Both the default focus workspace and explicit Galaxy workspace consume the same
 read-only table contract.
 
@@ -165,7 +168,11 @@ Galaxy canvas interaction is owned by one capture-phase dispatcher. It reads an 
 built after the last completed render and never invokes layout while classifying a click. Hit priority
 is the current visible account/IB node, relation-track boundary, relation edge, then blank canvas.
 The dispatcher consumes every canvas click before legacy compatibility listeners can act, so one
-gesture performs at most one expand, collapse, select or edge-inspection action. A collapsed relation
+gesture performs at most one expand, collapse, select or edge-inspection action. During incremental
+polling, returned account nodes may remain visible for orientation, but relationship lines are
+replaced from the newest snapshot rather than accumulated; an obsolete edge cannot remain as a false
+click target. Galaxy uses text progress only: the focus-view scan fan is not overlaid on the star map
+because its large wedge can be mistaken for a relationship line. A collapsed relation
 track has no synthetic anchor or member hit target. Clicking its boundary expands it; clicking the
 expanded boundary collapses it again. When a visible node has been moved by its component's
 star-track aggregation, the dispatcher first checks the current rendered coordinates and complete

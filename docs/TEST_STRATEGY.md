@@ -465,9 +465,12 @@ without group totals, explicit group paging, member de-duplication by route, IB 
 known/included/statistic coverage, rebate-share aggregation, multi-currency split and partial source
 coverage. Both focus-force and Galaxy pages must expose the shared table on an edge click, keep node
 clicks as profiles, preserve raw-evidence access and ensure a member-row click only selects/highlights
-the existing node without changing graph layout or community state. The first stale table request must
-refresh the graph and retry its exact raw edge once, while a repeated conflict stays visible. An
-expanded same-CRM band must use individual member endpoints only for recovered internal
+the existing node without changing graph layout or community state. A stale edge must synchronise the
+graph and show a non-technical update notice, while a current edge must yield a populated table.
+The browser regression uses the real 216056 investigation: it expands a same-CRM track, verifies
+member account labels and no more than that community's internal lines, waits for the terminal
+snapshot, then clicks a current IB line and verifies the populated table. The Galaxy scan fan must not
+overlay the star map. An expanded same-CRM band must use individual member endpoints only for recovered internal
 `same_crm_user` evidence; every other incident relation keeps one normal star-track projection.
 
 Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,

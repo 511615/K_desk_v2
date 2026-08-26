@@ -55,13 +55,14 @@ additional expansion or risk conclusion. Clicking a row highlights that account 
 expand or collapse its star-track community.
 
 The Galaxy and default focus renderer now share a click-only `关系展示表` adapter. An edge click opens
-the table with the selected raw edge and snapshot revision; a node click remains the lazy account
-profile. The IB rebate presentation is an adapter of that table rather than a separate inferred card:
+the table with the selected raw edge and snapshot revision when that revision is complete; while
+background expansion is active it reads the newest snapshot so a normal click is not invalidated by a
+worker revision. A node click remains the lazy account profile. The IB rebate presentation is an adapter of that table rather than a separate inferred card:
 it displays the returned total cohort denominator, current graph inclusion count and actual statistic
 count before any amount summary. Member row selection highlights the existing account only and never
-changes a track's expanded/collapsed state. A first stale table response refreshes the current graph
-snapshot and retries the same edge once; a repeated 409 remains visible rather than mixing revisions.
-The table keeps the raw `relation-detail` action available
+changes a track's expanded/collapsed state. A stale table response refreshes the current graph and
+retries the same edge, with one latest-snapshot fallback. If that exact edge was replaced meanwhile,
+the table shows a graph-synchronised notice instead of a technical 404/409 error. The table keeps the raw `relation-detail` action available
 and no relation-table response can add graph nodes, alter propagation or rebuild the layout.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
@@ -294,6 +295,11 @@ a visible node keeps node selection behavior. A collapsed Galaxy community is no
 itself is the aggregate. Its widened band boundary toggles the member projection in both directions,
 and hidden members are absent from node and edge hit targets. No presentation-only bridge or centroid
 circle is introduced for a collapsed track.
+
+Incremental Galaxy snapshots retain returned account nodes for orientation but replace the relation
+edge set with the newest snapshot, so an obsolete relationship cannot remain visible or be clicked.
+The Galaxy canvas intentionally has no radar fan: expansion progress is conveyed in text because a
+full-canvas scan wedge can be confused with a relationship edge.
 Close-angle edges use deterministic alternating curved lanes from each source. Their labels follow
 the curve midpoint, and hit testing samples the same quadratic path, so visual separation does not
 make the lines unclickable.

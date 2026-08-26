@@ -459,6 +459,9 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "群落" in page.text
     assert "function galaxyRelationshipCommunities" in page.text
     assert "function galaxySameCrmCommunity" in page.text
+    assert "if(relationKey(type)!=='same_crm_user')continue" in page.text
+    assert "const community=galaxySameCrmCommunity(node);if(!community)continue;const key=community.key" in page.text
+    assert "点击后展开或合并该同名账户群落" in page.text
     assert "function galaxyComponentVisualDepth" in page.text
     assert "function galaxyCommunityMemberships" in page.text
     assert "function galaxyOrbitOverlapBands" in page.text
@@ -593,10 +596,17 @@ def test_relationship_renderers_share_click_only_relation_display_table(tmp_path
         assert "关系展示表" in page.text
         assert "relationship-network/relation-display" in page.text
         assert "attempt===0&&current?.onSnapshotStale" in page.text
+        assert "function renderGraphUpdated()" in page.text
+        assert "current.onSnapshotStale(edgeId)" in page.text
+        assert "if(response.status===404&&current?.onSnapshotStale)" in page.text
     assert "onSelectMember:nodeId=>{if(S.by.has(nodeId))" in focus.text
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in focus.text
+    assert "snapshotVersion:S.data?.inProgress?undefined:S.data?.revision" in focus.text
     assert "inspectionLoadRelationEvidence=inspectionLoadRelation" in galaxy.text
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in galaxy.text
+    assert "snapshotVersion:data?.inProgress?undefined:data?.revision" in galaxy.text
+    assert "relationships=Array.isArray(next.relationships)&&next.relationships.length?next.relationships:(previous.relationships||[])" in galaxy.text
+    assert "radar.remove();" in galaxy.text
 
 
 def test_relationship_display_renderer_scripts_parse_in_node(tmp_path: Path) -> None:
