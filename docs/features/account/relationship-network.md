@@ -119,13 +119,19 @@ relation-detail IDs.
 Each drilled account is the local geometric centre of its own child projection, not an offset copy
 of the investigation subject. Its eight business sectors are reallocated around that clicked point;
 their radius is derived from the angular and radial clearance remaining inside the mother sector.
-Within every child sector, accounts occupy deterministic angular columns and radial bands. This keeps
+Within every child sector, accounts occupy deterministic per-instance radial bands. This keeps
 the parent layer visible, prevents sibling child maps from collapsing toward the original centre, and
 preserves the existing real-account and raw-relation IDs for profile and evidence interactions.
 The child radius is strictly capped by the nearest mother-sector annulus boundary, sector-ray
 boundary, visible parent evidence line and sibling account instance. Its child-node radius is then
 derived from the closest local pair across all business sectors, so a constrained sector shrinks
 under continuous zoom instead of crossing a boundary or overlapping another displayed account.
+The renderer reserves a distinct band even for an IB identity beside its mapped trading account, so
+either account can remain a valid local centre. A return to an account already on the open drill path
+is displayed and remains profile-selectable, but is not recursively cloned into an infinite cycle.
+Browser acceptance measures a real zoomed child map: account radius, evidence-line width and sector
+stroke must change by the same affine scale, and a still-eligible direct account must open the next
+embedded layer after that zoom.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

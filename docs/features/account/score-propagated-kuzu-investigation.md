@@ -42,11 +42,15 @@ limit, and compact default node radii leave dense evidence inspectable through z
 overstating it at the initial fit.
 Every account drill is centred on the clicked account itself. The child business sectors use the
 mother sector's available angular/radial clearance and distribute their direct accounts across
-deterministic local columns and bands, so nested evidence does not collapse back toward the original
+deterministic per-instance radial bands, so nested evidence does not collapse back toward the original
 problem-account centre or overlap sibling child maps.
 The local radius additionally reserves clearance to the mother-sector boundaries, visible parent
 evidence and sibling account instances. If available space is tight, nodes and child sectors scale
 down under the existing continuous zoom rather than exceeding the mother-sector boundary.
+The browser contract verifies the same transform for a child account point, its raw evidence line and
+its sector border, then clicks a non-threshold frontier after zoom to verify the next embedded layer.
+An already-open ancestor is a graph cycle, so it remains selectable for its profile without creating
+an unbounded recursive visual path.
 
 ## UI and behavior
 
