@@ -94,11 +94,17 @@ accounts are returned as one relation bundle whose sections remain separately au
 CRM identity is a collapsible account community; LastIP, CID, EA, Copy, rebate, IB and trade facts are
 always ordinary account-to-account or account-to-entity lines.
 `graph_type=fixed-sector` is a separate, explicit fixed-area relationship projection. Its renderer is
-loaded only for that route: the subject and same-CRM/same-name accounts remain in the centre, while
-IP, CID, EA, Copy, rebate, IB/CRM, synchronization and hedge evidence occupy their permanent
-business sectors. Each outer occurrence still retains the original account ID and raw relation ID, so
-selecting a node opens the existing profile and selecting a line opens the existing relation display.
-The legacy `graph_type=galaxy` route keeps its star-track renderer unchanged.
+loaded only for that route. It uses the complete already-read investigation snapshot, but initially
+shows only the current centre account's direct (first-layer) account points in their sectors. Selecting
+a sector reveals only that sector's raw evidence lines and expanded detail for those direct accounts.
+Selecting one of those accounts both opens
+its existing account profile and makes it the next sector centre; it does not issue a second expansion
+request or recompute scores. Same-CRM/same-name accounts remain in the centre rather than being copied
+into outer sectors. IP, CID, EA, Copy, rebate, IB/CRM, synchronization and hedge evidence retain their
+permanent business sectors. Each revealed occurrence retains the original account ID and raw relation
+ID, so selecting a line opens the existing relation display. The global locator is deliberately not
+drilled down: it always shows every de-duplicated real account in the completed snapshot. The legacy
+`graph_type=galaxy` route keeps its star-track renderer unchanged.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
