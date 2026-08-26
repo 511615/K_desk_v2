@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/fixed_sector_page.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -28,6 +28,9 @@ renderer is `focus-force`, the center-constrained investigation workspace. The o
 is retained only at `graph_type=galaxy`, and `graph_type=choose` retains the selector. Unknown or
 missing graph-type values resolve to `focus-force`. Without `account`, the page still supports the
 separate static local-file trial.
+`graph_type=fixed-sector` is an additional explicit account route. It retains the same read-only
+snapshot and scoring contract but injects the fixed-area sector projection; it does not fall through
+to the Galaxy renderer when the account link is opened from the home page.
 
 ## UI and behavior
 

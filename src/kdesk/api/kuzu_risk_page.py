@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from kdesk.api.fixed_sector_page import fixed_sector_assets
 from kdesk.api.relation_display_page import relation_display_assets
 
 
@@ -35,6 +36,7 @@ function galaxyPickHit(mouse,frame=galaxyHitFrame){
 function galaxyDispatchClick(event){
   event.preventDefault();event.stopImmediatePropagation();
   if(!data||copyInspector?.classList.contains('open'))return;
+  if(galaxyFixedSectorDispatch(event))return;
   const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},hit=galaxyPickHit(mouse);
   if(hit.kind==='node'){selectedId=hit.target.id;activeGroupKey=hit.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
   if(hit.kind==='group'){const groupKey=galaxyTrackToggleKey(hit.target);if(expandedRelationGroups.has(groupKey))expandedRelationGroups.delete(groupKey);else expandedRelationGroups.add(groupKey);activeGroupKey=groupKey;selectedEdgeKey='';renderOverview();renderDetail();return}
@@ -590,4 +592,4 @@ async function refreshRelationDisplaySnapshot(edgeId){const value=Math.max(1,Mat
 // job and made a perfectly valid clicked line look like a stale snapshot.
 const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{const relationDisplayEdge=inspectionRawRelation(edge)||edge;if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:inspectionQuery().toString(),snapshotVersion:data?.inProgress?undefined:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(relationDisplayEdge.id||''))}return inspectionLoadRelationEvidence(relationDisplayEdge)};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
-</script></body></html>""" + relation_display_assets()
+</script></body></html>""" + relation_display_assets() + fixed_sector_assets()

@@ -4,7 +4,7 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/fixed_sector_page.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -93,8 +93,12 @@ rerunning expansion. Exact duplicate evidence is removed. Multiple evidence fami
 accounts are returned as one relation bundle whose sections remain separately auditable. Only shared
 CRM identity is a collapsible account community; LastIP, CID, EA, Copy, rebate, IB and trade facts are
 always ordinary account-to-account or account-to-entity lines.
-Galaxy has no fixed business-sector renderer: that retired presentation is not loaded or reachable
-from the page, so it cannot replace ordinary relationship lines with synthetic sector routes.
+`graph_type=fixed-sector` is a separate, explicit fixed-area relationship projection. Its renderer is
+loaded only for that route: the subject and same-CRM/same-name accounts remain in the centre, while
+IP, CID, EA, Copy, rebate, IB/CRM, synchronization and hedge evidence occupy their permanent
+business sectors. Each outer occurrence still retains the original account ID and raw relation ID, so
+selecting a node opens the existing profile and selecting a line opens the existing relation display.
+The legacy `graph_type=galaxy` route keeps its star-track renderer unchanged.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
@@ -133,6 +137,9 @@ non-trade evidence such as CRM identity or current-IP evidence can still be inve
 The default renderer is the current center-constrained relationship workspace. The original galaxy
 renderer remains available only through explicit `graph_type=galaxy`; missing or stale graph-type
 values cannot silently return the legacy view.
+The graph-type chooser also exposes `graph_type=fixed-sector`; its route retains the account,
+platform and server query parameters and activates the fixed-area renderer rather than the Galaxy
+star-track renderer.
 
 ## UI and behavior
 

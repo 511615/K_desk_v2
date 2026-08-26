@@ -396,6 +396,19 @@ def test_kuzu_risk_legacy_galaxy_requires_explicit_graph_type(tmp_path: Path) ->
     assert "关系扩散扫描中" in page.text
     assert "MutationObserver" in page.text
     assert "repeatCount=\"indefinite\"" in page.text
+
+
+def test_kuzu_risk_fixed_sector_activates_the_fixed_area_projection(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        page = client.get("/kuzu-risk?account=302360&platform=MT5&server=DBG%20MT5&graph_type=fixed-sector")
+
+    assert page.status_code == 200
+    assert "fixedSectorDefinitions" in page.text
+    assert "fixedSectorRenderOverview" in page.text
+    assert "galaxyFixedSectorDispatch(event)" in page.text
+    assert "params.get('graph_type')==='fixed-sector'" in page.text
     assert "pointerEvents:'none'" in page.text
     assert "function positionRadar" in page.text
     assert "radarSweep.setAttribute('transform'" in page.text
@@ -520,8 +533,10 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "function galaxyVisualEndpointKey" in page.text
     assert "galaxyCanvas.addEventListener('click',galaxyDispatchClick,true)" in page.text
     assert "event.stopImmediatePropagation()" in page.text
-    assert "fixedSector" not in page.text
-    assert "固定区域关系网" not in page.text
+    # The fixed-area projection is shipped with the shared page, but its guard
+    # leaves the legacy Galaxy renderer untouched unless the explicit route is used.
+    assert "fixedSectorDefinitions" in page.text
+    assert "params.get('graph_type')==='fixed-sector'" in page.text
 
     picker = page.text.split("function galaxyPickHit", 1)[1].split("function galaxyDispatchClick", 1)[0]
     dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]
@@ -537,7 +552,7 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert "expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert picker.index("!expandedRelationGroups.has") < picker.index("frame.nodes") < picker.index("frame.edges")
-    assert "galaxyFixedSectorDispatch" not in dispatcher
+    assert "if(galaxyFixedSectorDispatch(event))return" in dispatcher
     assert "const groupKey=galaxyTrackToggleKey(hit.target)" in dispatcher
     assert "kind==='node'" in dispatcher
     assert "kind==='group'" in dispatcher

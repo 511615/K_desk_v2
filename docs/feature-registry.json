@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "0430746ac6e8",
+  "registryVersion": "ee56a3330a5d",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -66,6 +66,7 @@
         "src/kdesk/domain/ib_rebate_anomaly.py",
         "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/fixed_sector_page.py",
         "src/kdesk/api/kuzu_3d_preview_page.py",
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
@@ -144,6 +145,7 @@
       "code": [
         "legacy/apps/problem_account_registry/app.py",
         "src/kdesk/api/account_app.py",
+        "src/kdesk/api/fixed_sector_page.py",
         "src/kdesk/api/kuzu_3d_preview_page.py",
         "src/kdesk/api/kuzu_focus_workspace_page.py",
         "src/kdesk/api/kuzu_graph_type_page.py",
