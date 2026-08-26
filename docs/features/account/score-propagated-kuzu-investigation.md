@@ -31,9 +31,10 @@ separate static local-file trial.
 `graph_type=fixed-sector` is an additional explicit account route. It retains the same read-only
 snapshot and scoring contract but injects the fixed-area sector projection; it does not fall through
 to the Galaxy renderer when the account link is opened from the home page. The fixed-area page is a
-client-side drill-down over that one snapshot: sector and account navigation never submits another
-relationship expansion request, while its global locator continues to expose the complete deduplicated
-account set.
+client-side drill-down over that one snapshot: its larger outer sectors retain direct accounts, and an
+account drill inserts the next layer as child sectors inside that account's mother sector rather than
+replacing the outer network. Sector and account navigation never submits another relationship
+expansion request, while its global locator continues to expose the complete deduplicated account set.
 
 ## UI and behavior
 

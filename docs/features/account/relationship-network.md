@@ -97,13 +97,16 @@ always ordinary account-to-account or account-to-entity lines.
 loaded only for that route. It uses the complete already-read investigation snapshot, but initially
 shows only the current centre account's direct (first-layer) account points in their sectors. Selecting
 a sector reveals only that sector's raw evidence lines and expanded detail for those direct accounts.
-Selecting one of those accounts both opens
-its existing account profile and makes it the next sector centre; it does not issue a second expansion
-request or recompute scores. Same-CRM/same-name accounts remain in the centre rather than being copied
-into outer sectors. IP, CID, EA, Copy, rebate, IB/CRM, synchronization and hedge evidence retain their
-permanent business sectors. Each revealed occurrence retains the original account ID and raw relation
-ID, so selecting a line opens the existing relation display. The global locator is deliberately not
-drilled down: it always shows every de-duplicated real account in the completed snapshot. The legacy
+Selecting one of those accounts both opens its existing account profile and inserts that account's
+next direct layer as smaller child sectors inside the selected mother sector; it does not replace the
+outer layer, draw a connector into a separate canvas region, issue a second expansion request or
+recompute scores. Each parent sector reserves an inner radial area for those child sectors while its
+first-layer account points remain in the outer portion. Same-CRM/same-name accounts remain in the
+centre rather than being copied into outer sectors. IP, CID, EA, Copy, rebate, IB/CRM, synchronization
+and hedge evidence retain their permanent business sectors. Each revealed occurrence retains the
+original account ID and raw relation ID, so selecting a line opens the existing relation display. The
+global locator is deliberately not drilled down: it always shows every de-duplicated real account in
+the completed snapshot. The legacy
 `graph_type=galaxy` route keeps its star-track renderer unchanged.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.

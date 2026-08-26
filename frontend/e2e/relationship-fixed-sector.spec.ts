@@ -3,11 +3,11 @@ import { expect, test } from '@playwright/test'
 type FixedSectorFrame = {
   revision: number
   inProgress: boolean
-  focusAccountId: string
-  expandedSector: string
-  nodes: Array<{ accountId: string; nodeType: string; sector: string; x: number; y: number }>
-  edges: Array<{ id: string; type: string; sector: string }>
-  sectors: Array<{ id: string; accounts: number; accountIds: string[]; evidence: number; x: number; y: number; expanded: boolean }>
+  path: string[]
+  layers: Array<{ index: number; focusAccountId: string; scale: number; nested: boolean; hostSector: string }>
+  nodes: Array<{ layer: number; accountId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number }>
+  edges: Array<{ layer: number; id: string; type: string; sector: string }>
+  sectors: Array<{ layer: number; id: string; accounts: number; evidence: number; x: number; y: number; expanded: boolean }>
   locatorAccountIds: string[]
 }
 
@@ -17,48 +17,72 @@ declare global {
   }
 }
 
-test('fixed-sector account route activates the fixed-area relationship projection', async ({ page }, testInfo) => {
+test('fixed-sector preserves outer layer while a direct account opens a scaled nested layer', async ({ page }, testInfo) => {
   test.setTimeout(90_000)
+  const relationshipRequests: string[] = []
+  page.on('request', request => {
+    if (request.url().includes('/relationship-network?')) relationshipRequests.push(request.url())
+  })
 
   await page.goto('/kuzu-risk?account=216056&platform=MT5&server=AC%20CN%20MT5&graph_type=fixed-sector')
   await expect(page.locator('#overview')).toBeVisible()
   await expect.poll(
     () => page.evaluate(() => {
       const frame = window.__kdeskFixedSectorTestFrame?.()
-      return Boolean(frame && frame.focusAccountId && frame.nodes.some(node => node.sector !== 'center'))
+      return Boolean(frame && !frame.inProgress && frame.layers.length === 1 && frame.nodes.some(node => node.layer === 0 && node.role === 'direct'))
     }),
     { timeout: 60_000 },
   ).toBe(true)
 
-  const frame = await page.evaluate(() => window.__kdeskFixedSectorTestFrame?.())
+  const before = await page.evaluate(() => window.__kdeskFixedSectorTestFrame?.())
   const subjectId = await page.evaluate(() => String((data?.entities ?? []).find((node: { isSubject?: boolean }) => node.isSubject)?.id ?? ''))
-  expect(frame?.focusAccountId).toBe(subjectId)
-  expect(frame?.nodes.some(node => node.sector === 'center')).toBe(true)
+  expect(before?.layers[0]?.focusAccountId).toBe(subjectId)
   const allAccountIds = await page.evaluate(() => [...new Set((data?.entities ?? []).filter((node: { type: string }) => node.type === 'account').map((node: { id: string }) => String(node.id)))])
-  expect(new Set(frame?.locatorAccountIds).size).toBe(allAccountIds.length)
-  const accountEntityIds = new Set(await page.evaluate(() => (data?.entities ?? []).filter((node: { type: string }) => node.type === 'account').map((node: { id: string }) => String(node.id))))
-  const sector = frame!.sectors.find(item => item.evidence > 0 && item.accountIds.some(id => accountEntityIds.has(id)))
-  expect(sector).toBeTruthy()
+  expect(new Set(before?.locatorAccountIds).size).toBe(allAccountIds.length)
 
+  const sector = before!.sectors.find(item => item.layer === 0 && item.evidence > 0 && item.accounts > 0)
+  expect(sector).toBeTruthy()
   await page.evaluate(({ x, y }) => {
     const canvas = document.getElementById('overview')!, rect = canvas.getBoundingClientRect()
     canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: rect.left + x, clientY: rect.top + y }))
   }, sector!)
-  await expect.poll(() => page.evaluate(() => window.__kdeskFixedSectorTestFrame?.().expandedSector ?? '')).toBe(sector!.id)
-  await expect.poll(() => page.evaluate(id => window.__kdeskFixedSectorTestFrame?.().nodes.some(node => node.sector === id) ?? false, sector!.id)).toBe(true)
+  await expect.poll(() => page.evaluate(id => window.__kdeskFixedSectorTestFrame?.().sectors.some(item => item.layer === 0 && item.id === id && item.expanded) ?? false, sector!.id)).toBe(true)
+  await expect.poll(() => page.evaluate(() => (window.__kdeskFixedSectorTestFrame?.().edges ?? []).some(edge => edge.layer === 0))).toBe(true)
 
-  const child = await page.evaluate(id => window.__kdeskFixedSectorTestFrame?.().nodes.find(node => node.sector === id && node.nodeType === 'account'), sector!.id)
-  expect(child).toBeTruthy()
-  const childLabel = await page.evaluate(id => String((data?.entities ?? []).find((node: { id: string }) => String(node.id) === id)?.label ?? ''), child!.accountId)
+  const direct = await page.evaluate(id => window.__kdeskFixedSectorTestFrame?.().nodes.find(node => node.layer === 0 && node.sector === id && node.role === 'direct' && node.nodeType === 'account'), sector!.id)
+  expect(direct).toBeTruthy()
+  const childLabel = await page.evaluate(id => String((data?.entities ?? []).find((node: { id: string }) => String(node.id) === id)?.label ?? ''), direct!.accountId)
+  const requestCountBeforeDrill = relationshipRequests.length
   await page.evaluate(({ x, y }) => {
     const canvas = document.getElementById('overview')!, rect = canvas.getBoundingClientRect()
     canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: rect.left + x, clientY: rect.top + y }))
-  }, child!)
-  await expect.poll(() => page.evaluate(id => window.__kdeskFixedSectorTestFrame?.().focusAccountId ?? '', child!.accountId)).toBe(child!.accountId)
-  await expect(page.locator('#selected')).toContainText(childLabel)
-  await expect(page.locator('#overviewNote')).toContainText('点击扇区')
+  }, direct!)
+  await expect.poll(() => page.evaluate(id => {
+    const frame = window.__kdeskFixedSectorTestFrame?.()
+    return Boolean(frame && frame.layers.length === 2 && frame.layers[0]?.focusAccountId && frame.layers[1]?.focusAccountId === id && frame.nodes.some(node => node.layer === 0) && frame.nodes.some(node => node.layer === 1))
+  }, direct!.accountId)).toBe(true)
+  expect(relationshipRequests).toHaveLength(requestCountBeforeDrill)
 
-  const screenshot = testInfo.outputPath('fixed-sector-relationship-network.png')
+  const nested = await page.evaluate(() => window.__kdeskFixedSectorTestFrame?.())
+  expect(nested?.layers[0]?.focusAccountId).toBe(subjectId)
+  expect(nested?.layers[1]?.scale ?? 1).toBeLessThan(nested?.layers[0]?.scale ?? 0)
+  expect(nested?.layers[1]?.nested).toBe(true)
+  expect(nested?.layers[1]?.hostSector).toBe(sector!.id)
+  expect(nested?.path).toEqual([subjectId, direct!.accountId])
+  for (const layer of nested?.layers ?? []) {
+    const directNodes = (nested?.nodes ?? []).filter(node => node.layer === layer.index && node.role === 'direct')
+    for (let left = 0; left < directNodes.length; left += 1) {
+      for (let right = left + 1; right < directNodes.length; right += 1) {
+        const a = directNodes[left], b = directNodes[right]
+        if (a.sector !== b.sector) continue
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(10)
+      }
+    }
+  }
+  await expect(page.locator('#selected')).toContainText(childLabel)
+  await expect(page.locator('#overviewNote')).toContainText('子扇区嵌入所在母扇区')
+
+  const screenshot = testInfo.outputPath('fixed-sector-nested-relationship-network.png')
   await page.screenshot({ path: screenshot, fullPage: true })
-  await testInfo.attach('fixed-sector-relationship-network', { path: screenshot, contentType: 'image/png' })
+  await testInfo.attach('fixed-sector-nested-relationship-network', { path: screenshot, contentType: 'image/png' })
 })
