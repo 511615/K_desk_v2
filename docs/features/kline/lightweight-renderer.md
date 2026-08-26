@@ -82,11 +82,14 @@ open executions, and solves the price at which replayed account equity reaches z
 as `权益归零压力价` when the group stop-out threshold is absent; it is not labelled as a broker
 liquidation price. If a sourced group threshold is later added, the same solver can evaluate the
 margin-level boundary using that threshold.
-The active `仓位` pane carries its own in-chart legend: blue is the all-product open-position
-count and yellow is the all-product total lots. Those two series are not a margin-usage series;
-their labels remain visible above the pane so a user does not need to scroll to the page legend.
-The risk card calls its output `权益归零压力价` and explains that all other products are held at the
-selected timestamp's marks, distinguishing this scenario from a sourced broker Stop Out.
+The active `账户资金风险` pane carries its own in-chart legend and readout: blue is replayed
+all-product account Equity (`Balance + Credit + floating P/L`) and yellow is replayed used Margin.
+Both use account-currency money units, so they share one lower-pane scale. Moving the native
+crosshair updates the in-chart timestamp, Equity, Margin, Margin usage and Margin level, as well as
+the detailed all-product snapshot below. Position count and total lots remain snapshot fields; they
+are not plotted as a substitute for account risk. The risk card calls its output `权益归零压力价` and
+explains that all other products are held at the selected timestamp's marks, distinguishing this
+scenario from a sourced broker Stop Out.
 
 ## Loading, empty and failure behavior
 

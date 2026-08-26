@@ -158,17 +158,21 @@ def test_lightweight_renderer_calculates_a_portfolio_risk_boundary_without_guess
     assert "账户组强平阈值未导出" in html
 
 
-def test_lightweight_renderer_labels_the_all_product_position_pane_in_place():
-    """The lower position lines must be self-explanatory without scrolling."""
+def test_lightweight_renderer_uses_the_lower_pane_for_all_product_account_risk():
+    """The lower pane must show money/risk, not count and lot telemetry."""
     trades, bars, mapping = _fixture()
     html = build_lightweight_html("10001", "10001_position_labels", trades, bars, mapping)
 
-    assert 'id="positionPaneLegend"' in html
-    assert "蓝：全账户持仓笔数" in html
-    assert "黄：全账户总手数" in html
+    assert 'id="accountRiskPaneLegend"' in html
+    assert "蓝：全账户权益 Equity" in html
+    assert "黄：占用保证金 Margin" in html
+    assert 'id="accountRiskReadout"' in html
+    assert "账户资金风险" in html
     assert "组合风险边界（权益归零压力价）" in html
-    assert "$('positionPaneLegend').hidden=panel!=='position'" in html
-    assert "仓位使用率" not in html
+    assert "function accountRiskSeries()" in html
+    assert "accountEquity.applyOptions({visible:panel==='position'})" in html
+    assert "accountMarginSeries.applyOptions({visible:panel==='position'})" in html
+    assert "updateAccountSnapshotFromCrosshair(param)" in html
 
 
 def test_lightweight_renderer_keeps_current_positions_open_at_the_latest_quote():
@@ -272,7 +276,7 @@ def test_lightweight_renderer_draws_dynamic_bars_with_a_fixed_minimum_width():
     assert "chart.priceScale('profit').applyOptions({visible:true})" in html
     assert "priceScaleId:'volume',lastValueVisible:false,priceLineVisible:false" in html
     assert "panelSeries.profitZero?.priceToCoordinate(0)??active.priceToCoordinate(0)" in html
-    assert "panelSeries={profit,profitZero,volume}" in html
+    assert "panelSeries={profit,profitZero,volume,accountEquity,accountMarginSeries}" in html
     assert "const NATIVE_PANEL_BAR_COLOR='rgba(0,0,0,0)'" in html
     assert "closeMarkerPath.setAttribute('fill','#ff6575')" in html
     assert html.count("color:NATIVE_PANEL_BAR_COLOR") == 2
@@ -289,7 +293,7 @@ def test_lightweight_renderer_keeps_profit_axis_and_crosshair_value_in_the_price
     assert "function profitAxisValueFromCoordinate(paneY)" in html
     assert "profitAxisGeometry={maximum:axisMax,zero:base,positive:active.priceToCoordinate(axisMax),negative:active.priceToCoordinate(-axisMax)}" in html
     assert "profitAxisValueFromCoordinate(paneY)" in html
-    assert "chart.subscribeCrosshairMove(updateProfitCrosshair)" in html
+    assert "chart.subscribeCrosshairMove(param=>{updateProfitCrosshair(param);updateAccountSnapshotFromCrosshair(param)})" in html
     assert "chart.subscribeClick(updateProfitCrosshair)" in html
     assert "function updateProfitCrosshairFromPointer(event)" in html
     assert "event.clientY-host.getBoundingClientRect().top-geometry.top" in html
