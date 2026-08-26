@@ -22,4 +22,15 @@ if (-not $galaxy.Content.Contains('Kuzu 关联风险扩散')) { throw 'Explicit 
 
 $health = @(& (Join-Path $root 'scripts\health_check_prod.ps1') -AccountOnly:$AccountOnly)
 if (@($health | Where-Object { -not $_.Ready }).Count -gt 0) { throw 'Production readiness acceptance failed.' }
+$pnpm = Get-Command pnpm -ErrorAction Stop
+$previousE2eBaseUrl = $env:KDESK_E2E_BASE_URL
+try {
+    $env:KDESK_E2E_BASE_URL = 'http://127.0.0.1:8777'
+    Push-Location -LiteralPath (Join-Path $root 'frontend')
+    & $pnpm.Source exec playwright test e2e/relationship-galaxy.spec.ts
+    if ($LASTEXITCODE -ne 0) { throw "Deployed Galaxy relationship E2E failed with exit code $LASTEXITCODE." }
+} finally {
+    Pop-Location
+    $env:KDESK_E2E_BASE_URL = $previousE2eBaseUrl
+}
 Write-Output "Deployment verified: $($meta.version) $($meta.gitSha) focus-force default, galaxy compatibility."

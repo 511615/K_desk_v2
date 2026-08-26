@@ -88,7 +88,11 @@ if ($Mode -eq 'Release') {
     }
     Invoke-NativeChecked -FilePath $Python -Arguments @('scripts\verify_live_matrix.py', '--fixture', $fixture) -Label 'Read-only ten-server contract matrix'
     Invoke-NativeChecked -FilePath $Pnpm.Source -Arguments @('exec', 'playwright', 'install', 'chromium') -Label 'Playwright Chromium install' -WorkingDirectory (Join-Path $Root 'frontend')
-    Invoke-NativeChecked -FilePath $Pnpm.Source -Arguments @('test:e2e') -Label 'Production legacy-page E2E' -WorkingDirectory (Join-Path $Root 'frontend')
+    # Release preflight runs before the service is restarted, so it can only
+    # assert the legacy page against the currently deployed process. New
+    # runtime behaviour belongs in verify_deployed_release after the candidate
+    # process has started.
+    Invoke-NativeChecked -FilePath $Pnpm.Source -Arguments @('exec', 'playwright', 'test', 'e2e/legacy-account.spec.ts') -Label 'Production legacy-page E2E' -WorkingDirectory (Join-Path $Root 'frontend')
     & (Join-Path $Root 'scripts\health_check_prod.ps1') | ForEach-Object {
         if (-not $_.Ready) { throw "Production health check failed: $($_.Name) $($_.Status)" }
     }

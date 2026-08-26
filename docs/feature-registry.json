@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "registryVersion": "ccf6ebc075ce",
+  "registryVersion": "0d750a1d5949",
   "features": [
     {
       "feature_id": "ACC-DETAIL-001",
@@ -72,7 +72,9 @@
         "src/kdesk/api/kuzu_risk_page.py",
         "src/kdesk/api/relation_display_page.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
-        "legacy/apps/problem_account_registry/app.py"
+        "legacy/apps/problem_account_registry/app.py",
+        "scripts/verify_change.ps1",
+        "scripts/verify_deployed_release.ps1"
       ],
       "tests": [
         "tests/test_api.py",
@@ -157,7 +159,9 @@
         "src/kdesk/domain/relationship_graph.py",
         "src/kdesk/domain/relationship_propagation.py",
         "src/kdesk/infrastructure/kuzu_risk_graph.py",
-        "src/kdesk/settings.py"
+        "src/kdesk/settings.py",
+        "scripts/verify_change.ps1",
+        "scripts/verify_deployed_release.ps1"
       ],
       "tests": [
         "tests/test_api.py",

@@ -29,6 +29,8 @@ and only same-CRM controls can expand a relationship community.
 - Refresh/retry stale reads safely and render a graph-synchronised notice if the exact edge vanished.
 - Remove the Galaxy radar fan and retain text-only progress.
 - Add a real 216056 Playwright regression that opens a same-CRM track and an actual current IB line.
+- Run that runtime-specific Galaxy regression only after the candidate service starts; release
+  preflight continues to test the legacy page against the already deployed service.
 
 ## Impact
 
