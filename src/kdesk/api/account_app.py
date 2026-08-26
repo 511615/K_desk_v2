@@ -782,6 +782,7 @@ def create_account_app(app_settings: Settings | None = None) -> FastAPI:
             "focus-3d": render_kuzu_3d_preview_page,
             "focus-force": render_kuzu_focus_workspace_page,
             "galaxy": render_kuzu_risk_page,
+            "fixed-sector": render_kuzu_risk_page,
         }.get((graph_type or "focus-force").strip().lower(), render_kuzu_focus_workspace_page)
         return HTMLResponse(renderer(), headers={"Cache-Control": "no-store"})
 

@@ -25,8 +25,9 @@ already present in the graph.
 
 `/kuzu-risk?account={login}` is the account-detail relationship investigation screen. Its default
 renderer is `focus-force`, the center-constrained investigation workspace. The original galaxy page
-is retained only at `graph_type=galaxy`, and `graph_type=choose` retains the selector. Unknown or
-missing graph-type values resolve to `focus-force`. Without `account`, the page still supports the
+is retained only at `graph_type=galaxy`; the separate fixed-area relationship projection is available
+at `graph_type=fixed-sector`, and `graph_type=choose` retains the selector. Unknown or missing
+graph-type values resolve to `focus-force`. Without `account`, the page still supports the
 separate static local-file trial.
 
 ## UI and behavior
@@ -79,7 +80,8 @@ paired bundled Node runtime before it launches this browser acceptance test.
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
-the retired fixed-sector renderer is never loaded by Galaxy.
+the fixed-sector renderer activates only for its own explicit graph type, leaving Galaxy's track
+renderer unchanged.
 expanded state shows individual accounts with their numeric logins above the points. It restores
 original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
 rendered line keeps its source relation ID and opens the shared read-only relation display on click.

@@ -520,8 +520,9 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "function galaxyVisualEndpointKey" in page.text
     assert "galaxyCanvas.addEventListener('click',galaxyDispatchClick,true)" in page.text
     assert "event.stopImmediatePropagation()" in page.text
-    assert "fixedSector" not in page.text
-    assert "固定区域关系网" not in page.text
+    assert "const fixedSectorDefinitions=" in page.text
+    assert "function fixedSectorProjection" in page.text
+    assert "固定区域关系网" in page.text
 
     picker = page.text.split("function galaxyPickHit", 1)[1].split("function galaxyDispatchClick", 1)[0]
     dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]
@@ -534,7 +535,7 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert "expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert picker.index("!expandedRelationGroups.has") < picker.index("frame.nodes") < picker.index("frame.edges")
-    assert "galaxyFixedSectorDispatch" not in dispatcher
+    assert "if(galaxyFixedSectorDispatch(event))return;" in dispatcher
     assert "const groupKey=galaxyTrackToggleKey(hit.target)" in dispatcher
     assert "kind==='node'" in dispatcher
     assert "kind==='group'" in dispatcher
@@ -899,6 +900,23 @@ def test_kuzu_risk_has_an_additive_3d_preview_mode(tmp_path: Path) -> None:
     assert "拖动：旋转空间" in page.text
     assert "go('focus-force')" in page.text
     assert 'data-type="focus-3d"' in chooser.text
+
+
+def test_kuzu_risk_has_a_separate_fixed_sector_mode(tmp_path: Path) -> None:
+    app = create_account_app(make_test_settings(tmp_path))
+
+    with TestClient(app) as client:
+        chooser = client.get("/kuzu-risk?graph_type=choose")
+        fixed_sector = client.get("/kuzu-risk?account=302360&graph_type=fixed-sector")
+        galaxy = client.get("/kuzu-risk?account=302360&graph_type=galaxy")
+
+    assert chooser.status_code == fixed_sector.status_code == galaxy.status_code == 200
+    assert 'data-type="fixed-sector"' in chooser.text
+    assert "固定区域关系网" in chooser.text
+    assert "const fixedSectorDefinitions=" in fixed_sector.text
+    assert "if(params.get('graph_type')==='fixed-sector')" in fixed_sector.text
+    assert "const fixedSectorDefinitions=" in galaxy.text
+    assert "if(params.get('graph_type')==='fixed-sector')" in galaxy.text
 
 
 def test_kuzu_demo_reads_a_persisted_local_evidence_graph(tmp_path: Path) -> None:
