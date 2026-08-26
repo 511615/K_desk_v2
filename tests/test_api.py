@@ -608,7 +608,8 @@ def test_relationship_renderers_share_click_only_relation_display_table(tmp_path
         assert "attempt===0&&current?.onSnapshotStale" in page.text
         assert "function renderGraphUpdated()" in page.text
         assert "current.onSnapshotStale(edgeId)" in page.text
-        assert "if(response.status===404&&current?.onSnapshotStale)" in page.text
+        assert "if(response.status===404&&attempt===0&&current?.onSnapshotStale)" in page.text
+        assert "return open(edgeId,scope,page,1)" in page.text
     assert "onSelectMember:nodeId=>{if(S.by.has(nodeId))" in focus.text
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in focus.text
     assert "snapshotVersion:S.data?.inProgress?undefined:S.data?.revision" in focus.text

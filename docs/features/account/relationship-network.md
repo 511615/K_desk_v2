@@ -67,6 +67,8 @@ only when a live worker replaced the selected evidence; any technical relation-d
 a release failure. Its automated edge selection is restricted to a current raw source edge (an IB
 edge when directly drawable, otherwise the expanded same-CRM source edge), never a synthetic
 aggregate presentation edge.
+Both 409 and first-attempt 404 relation-display responses refresh the graph and retry that same raw
+edge once; the graph-synchronised notice is reserved for an edge that is still absent after refresh.
 The deployment verifier resolves Node from the bundled `pnpm` fallback runtime when a standalone
 PowerShell release session does not already expose `node` on `PATH`, so this browser acceptance test
 cannot be skipped by an environment-only failure.

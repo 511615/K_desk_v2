@@ -71,6 +71,8 @@ scenario after deployment metadata and readiness checks succeed. A graph-synchro
 valid live-race recovery result; a relation-display technical error is not. The browser check expands
 a same-CRM track and opens its current raw member line rather than a synthetic aggregate
 presentation edge.
+On either a first 409 or 404 table response, the client refreshes the current snapshot and retries
+the same raw relationship once before it may show the graph-synchronised notice.
 When the release shell has the bundled `pnpm` shim but no `node` command, the verifier resolves the
 paired bundled Node runtime before it launches this browser acceptance test.
 
