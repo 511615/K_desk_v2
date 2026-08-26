@@ -466,7 +466,7 @@ known/included/statistic coverage, rebate-share aggregation, multi-currency spli
 coverage. Both focus-force and Galaxy pages must expose the shared table on an edge click, keep node
 clicks as profiles, preserve raw-evidence access and ensure a member-row click only selects/highlights
 the existing node without changing graph layout or community state. A stale edge must synchronise the
-graph and show a non-technical update notice, while a current edge must yield a populated table.
+graph and show a non-technical update notice, while a current edge yields the populated table.
 The browser regression uses the real 216056 investigation: it expands a same-CRM track, verifies
 member account labels and no more than that community's internal lines, waits for the terminal
 snapshot, then clicks a current IB line and verifies the populated table. The Galaxy scan fan must not

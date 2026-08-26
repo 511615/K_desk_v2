@@ -31,6 +31,9 @@ and only same-CRM controls can expand a relationship community.
 - Add a real 216056 Playwright regression that opens a same-CRM track and an actual current IB line.
 - Run that runtime-specific Galaxy regression only after the candidate service starts; release
   preflight continues to test the legacy page against the already deployed service.
+- Treat the graph-synchronised notice as the expected safe outcome when a live worker replaces the
+  clicked edge during the browser interaction; technical relation-display error cards still fail the
+  regression.
 
 ## Impact
 

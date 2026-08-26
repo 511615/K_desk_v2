@@ -67,7 +67,8 @@ and no relation-table response can add graph nodes, alter propagation or rebuild
 
 Runtime Galaxy browser verification is deliberately post-restart: release preflight checks only the
 legacy page still served by the old process, then the candidate process must pass the real edge-click
-scenario after deployment metadata and readiness checks succeed.
+scenario after deployment metadata and readiness checks succeed. A graph-synchronised notice is a
+valid live-race recovery result; a relation-display technical error is not.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the

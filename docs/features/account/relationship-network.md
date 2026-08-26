@@ -62,7 +62,9 @@ read-only table contract.
 Release preflight keeps its browser check to the legacy page running on the currently deployed
 process. The real Galaxy edge-click regression runs after the candidate service has restarted and its
 metadata, readiness and source-root checks have passed; this prevents an old process from being used
-to judge newly introduced client behaviour.
+to judge newly introduced client behaviour. That regression accepts the graph-synchronised notice
+only when a live worker replaced the selected evidence; any technical relation-display error remains
+a release failure.
 
 An account-to-account edge defaults to **single mode**. It shows only that account's facts for the
 clicked relation and its original evidence; it must not report a member count, total P/L or averaged
