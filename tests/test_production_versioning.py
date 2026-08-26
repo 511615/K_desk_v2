@@ -73,6 +73,8 @@ def test_production_process_guards_skip_uninspectable_system_processes() -> None
     assert "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue" in stopper
     assert "Occupant:" in stopper
     assert "ExecutablePath" in stopper
+    assert "Get-KDeskSupervisorProcess" in stopper
+    assert "Stop-Process -Id $supervisor.ProcessId -Force" in stopper
 
 
 def test_production_launcher_pins_child_python_imports_to_main_source_tree() -> None:
