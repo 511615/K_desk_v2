@@ -552,6 +552,9 @@ def test_kuzu_risk_galaxy_expanded_community_draws_selectable_internal_evidence_
     assert "const showExpandedAccountLabel=node.type==='account'&&expandedRelationGroups.has(p.groupKey)" in page.text
     assert "function galaxyExpandedCommunityEvidenceEdges" in page.text
     assert "function galaxyExpandedEvidenceEndpointKey" in page.text
+    assert "const dx=to.x-from.x,dy=to.y-from.y,length=Math.hypot(dx,dy)||1,curved=Boolean(edge?.expandedCommunityEvidence)" in page.text
+    assert "if(!curved)return{from,to,control:{x:mx,y:my},length}" in page.text
+    assert "separation=Math.min(24,Math.max(10,length*.055))" in page.text
     assert "fromGroup!==toGroup" in page.text
     assert "expandedRelationGroups.has(fromGroup)" in page.text
     assert "relationKey(raw.type)!==community.type" in page.text

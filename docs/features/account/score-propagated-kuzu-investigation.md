@@ -83,6 +83,8 @@ normal star-track projection even while the band is expanded, so expansion canno
 arrows or stacked labels. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct lines and
 never become orbit communities. The Galaxy global locator is a uniform projection of this same
 detailed star-track layout, not an independent depth-circle placement.
+Normal relationship lines are straight between their visible endpoints. Only restored internal
+same-CRM member evidence can take a small, bounded local lane to keep parallel lines inspectable.
 
 The selector also exposes the isolated `focus-3d` preview. It is a Canvas projection of the same
 read-only snapshot: the subject remains at the sphere origin, each hop is distributed on a deterministic

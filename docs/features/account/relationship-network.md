@@ -106,6 +106,9 @@ star-track projection even while the band is expanded, preventing long cross-gra
 overlapping labels. LastIP, IB, EA, Copy and every other relation stay ordinary lines: they cannot
 become or enlarge an orbit community. Clicking the boundary again collapses the band. This is a
 layout-only projection and does not change evidence, propagation, score or expansion eligibility.
+Ordinary relationship lines use their direct endpoint path. Only a restored internal same-CRM member
+line may use a short local offset to distinguish parallel evidence; it is capped to the member span
+and cannot form a cross-graph arc.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is
