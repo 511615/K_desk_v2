@@ -618,6 +618,7 @@ def test_relationship_renderers_share_click_only_relation_display_table(tmp_path
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in galaxy.text
     assert "snapshotVersion:data?.inProgress?undefined:data?.revision" in galaxy.text
     assert "params:inspectionQuery().toString()" in galaxy.text
+    assert "const relationDisplayEdge=inspectionRawRelation(edge)||edge;" in galaxy.text
     assert "relationships=Array.isArray(next.relationships)&&next.relationships.length?next.relationships:(previous.relationships||[])" in galaxy.text
     assert "radar.remove();" in galaxy.text
 

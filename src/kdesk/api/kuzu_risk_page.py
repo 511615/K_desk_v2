@@ -481,13 +481,13 @@ function inspectionCachePut(cache,key,value){cache.set(key,{at:Date.now(),value}
 function inspectionSnapshotState(){return data?.inProgress?'progress':data?.truncated?'truncated':'complete'}
 function inspectionMetricValue(value){if(value===null||value===undefined||value==='')return'-';if(typeof value==='object')return Object.entries(value).filter(([,item])=>item!==null&&item!==undefined&&item!==''&&typeof item!=='object').map(([key,item])=>key+'='+item).join('；')||'已检测';return String(value)}
 function inspectionMetricsHtml(metrics){const entries=Object.entries(metrics||{}).filter(([,value])=>value!==null&&value!==undefined&&value!==''&&typeof value!=='object');return entries.length?'<div class="inspection-muted">'+entries.map(([key,value])=>inspectionEscape(key)+'：'+inspectionEscape(inspectionMetricValue(value))).join('；')+'</div>':''}
-function inspectionSelectedRawEdge(){
-  if(!selectedEdgeKey||!data)return null;
-  const visual=(typeof relationHitEdges!=='undefined'?relationHitEdges:[]).find(item=>item.id===selectedEdgeKey);
-  const raw=(data.relationships||[]).find(item=>item.id===selectedEdgeKey);if(raw)return raw;
-  if(!visual)return null;const source=String(visual.from?.id||''),targetId=String(visual.to?.id||''),kind=relationKey(visual.type),memberIds=new Set([source,targetId,...(visual.groupMembers||[]).map(item=>String(item?.id||item))].filter(Boolean));
+function inspectionRawRelation(edge){
+  if(!edge||!data)return null;
+  const requestedId=String(edge.id||''),raw=(data.relationships||[]).find(item=>item.id===requestedId);if(raw)return raw;
+  const source=String(edge.from?.id||edge.source||''),targetId=String(edge.to?.id||edge.target||''),kind=relationKey(edge.type),memberIds=new Set([source,targetId,...(edge.groupMembers||[]).map(item=>String(item?.id||item))].filter(Boolean));
   return (data.relationships||[]).find(item=>relationKey(item.type)===kind&&memberIds.has(String(item.source||''))&&memberIds.has(String(item.target||'')))||(data.relationships||[]).find(item=>relationKey(item.type)===kind&&(memberIds.has(String(item.source||''))||memberIds.has(String(item.target||''))))||null;
 }
+function inspectionSelectedRawEdge(){if(!selectedEdgeKey||!data)return null;const visual=(typeof relationHitEdges!=='undefined'?relationHitEdges:[]).find(item=>item.id===selectedEdgeKey);return inspectionRawRelation(visual||{id:selectedEdgeKey})}
 function inspectionCoverageHtml(coverage){const limits=(coverage?.limitations||[]).filter(Boolean);return `<div class="inspection-card"><b>数据覆盖</b><br>${inspectionEscape(coverage?.start||'-')} 至 ${inspectionEscape(coverage?.end||'-')}<br><span class="inspection-muted">${inspectionEscape(coverage?.status||'-')}</span>${limits.length?'<br><span class="inspection-warning">'+limits.map(inspectionEscape).join('；')+'</span>':''}</div>`}
 function inspectionRenderProfile(profile){
   const account=profile.account||{},tags=profile.tags||[],recommendations=profile.recommendations||[];
@@ -586,6 +586,6 @@ async function refreshRelationDisplaySnapshot(edgeId){const value=Math.max(1,Mat
 // location query does not contain the user-adjusted threshold/range/toxic
 // filters, so passing it here previously started a different default-threshold
 // job and made a perfectly valid clicked line look like a stale snapshot.
-const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:inspectionQuery().toString(),snapshotVersion:data?.inProgress?undefined:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
+const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{const relationDisplayEdge=inspectionRawRelation(edge)||edge;if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:inspectionQuery().toString(),snapshotVersion:data?.inProgress?undefined:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(relationDisplayEdge.id||''))}return inspectionLoadRelationEvidence(relationDisplayEdge)};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
 </script></body></html>""" + relation_display_assets()

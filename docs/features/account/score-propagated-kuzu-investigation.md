@@ -72,6 +72,9 @@ populated relation display table from a current same-CRM raw member line; a grap
 notice or technical relation-display error fails acceptance.
 On either a first 409 or 404 table response, the client refreshes the current snapshot and retries
 the same raw relationship once before it may show the graph-synchronised notice.
+When a visible Galaxy path is presentation-only, the click handler resolves its endpoints and
+relationship type to the current raw evidence edge before opening the relation table; synthetic
+`root|...` path identifiers are never sent to a detail endpoint.
 When the release shell has the bundled `pnpm` shim but no `node` command, the verifier resolves the
 paired bundled Node runtime before it launches this browser acceptance test.
 

@@ -157,6 +157,9 @@ clicking the boundary expands that community into its member accounts, visible a
 individual raw evidence edges, and clicking it again collapses only that community. A transparent widened stroke makes the boundary
 hit target usable without changing the visible ring width. The evidence panel repeats the same
 expand/collapse control and states the member count, highest status and highest propagated score.
+When a visible path is presentation-only, the click is resolved to the matching current raw evidence
+edge by endpoint and relationship type before the relationship table opens; a synthetic path ID is
+never requested as a detail record.
 Initial view fitting includes every returned ring, manual wheel zoom can reach 5%, and later polling
 does not reset a user-adjusted zoom or pan position.
 
