@@ -5,7 +5,18 @@ type FixedSectorFrame = {
   inProgress: boolean
   zoom: { scale: number; min: number; max: number }
   path: string[]
-  layers: Array<{ index: number; focusAccountId: string; scale: number; nested: boolean; hostSector: string }>
+  layers: Array<{
+    index: number
+    focusAccountId: string
+    scale: number
+    nested: boolean
+    hostSector: string
+    centerX: number
+    centerY: number
+    anchorX: number
+    anchorY: number
+    localRadius: number
+  }>
   nodes: Array<{ layer: number; accountId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number }>
   edges: Array<{ layer: number; id: string; type: string; sector: string }>
   sectors: Array<{ layer: number; id: string; accounts: number; evidence: number; x: number; y: number; expanded: boolean }>
@@ -101,6 +112,13 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
   expect(nested?.layers[1]?.nested).toBe(true)
   expect(nested?.layers[1]?.hostSector).toBe(sector!.id)
   expect(nested?.path).toEqual([subjectId, direct!.accountId])
+  // A drilled account is the centre of its own local relationship space.
+  // It must not inherit the original problem account's canvas centre.
+  expect(nested?.layers[1]?.centerX).toBeCloseTo(direct!.x, 0)
+  expect(nested?.layers[1]?.centerY).toBeCloseTo(direct!.y, 0)
+  expect(nested?.layers[1]?.anchorX).toBeCloseTo(direct!.x, 0)
+  expect(nested?.layers[1]?.anchorY).toBeCloseTo(direct!.y, 0)
+  expect(nested?.layers[1]?.localRadius ?? 0).toBeGreaterThan(10)
   for (const layer of nested?.layers ?? []) {
     const directNodes = (nested?.nodes ?? []).filter(node => node.layer === layer.index && node.role === 'direct')
     for (let left = 0; left < directNodes.length; left += 1) {

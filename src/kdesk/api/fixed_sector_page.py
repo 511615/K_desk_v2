@@ -93,30 +93,52 @@ function fixedSectorPlaceRootItems(projection,expandedId){
     });
   }
 }
+function fixedSectorNestedRadius(parent,host,anchor){
+  // A child world must fit inside the sector cell that contains its anchor.
+  // The angular and radial clearances are both measured from that *local*
+  // anchor, so sibling expansions cannot collapse back onto the root centre.
+  const anchorRadius=Math.hypot(anchor.x-parent.cx,anchor.y-parent.cy);
+  const halfSpan=Math.max(.045,(host.end-host.start)*.5-.025);
+  const angularClearance=anchorRadius*Math.sin(halfSpan)*.72;
+  const radialClearance=Math.min(
+    Math.max(0,anchorRadius-host.inner),
+    Math.max(0,host.outer-anchorRadius),
+  )*.72;
+  const sectorScale=Math.max(14,(host.outer-host.inner)*.34);
+  return Math.max(14,Math.min(angularClearance,radialClearance,sectorScale));
+}
+function fixedSectorPlaceNestedItems(projection,expandedId){
+  for(const sector of projection.sectors){
+    const expanded=expandedId===sector.id,items=[...sector.items.values()],span=sector.end-sector.start;
+    const columns=Math.max(1,Math.min(4,Math.ceil(Math.sqrt(items.length))));
+    const rows=Math.max(1,Math.ceil(items.length/columns));
+    items.forEach((item,index)=>{
+      const column=index%columns,row=Math.floor(index/columns);
+      // Keep a margin around the local centre and sector boundaries.  The
+      // columns fan across the business-sector angle; rows occupy distinct
+      // radial bands, which guarantees a stable, non-overlapping placement.
+      const angle=sector.start+span*(column+.5)/columns;
+      const radius=sector.inner+(sector.outer-sector.inner)*(.24+.66*(row+.5)/rows);
+      const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:Math.max(2.35,Math.min(4.5,projection.localRadius*.052/Math.sqrt(Math.max(1,rows))))};
+      projection.occurrences.push(point);
+      if(expanded)item.edges.forEach(({raw,from})=>projection.edges.push({id:String(raw.id),raw,from:{node:from,...(projection.centerPoints.get(from.id)||{x:projection.cx,y:projection.cy})},to:point,sector:sector.id,directed:isDirectedRelation(raw.type)}));
+    });
+  }
+}
 function fixedSectorNestedProjection(focusId,parent,anchor,expandedId){
   const evidence=fixedSectorEvidence(focusId),host=parent.sectors.find(item=>item.id===anchor.sector);
   if(!host)return null;
-  const span=host.end-host.start,range=host.outer-host.inner,start=host.inner+range*.07,end=host.outer-range*.31;
-  const totalWeight=evidence.sectors.reduce((sum,sector)=>sum+Math.max(1,sector.items.size),0);
-  let cursor=start;
-  for(const sector of evidence.sectors){
-    const width=(end-start)*Math.max(1,sector.items.size)/totalWeight;
-    sector.start=host.start+.018;sector.end=host.end-.018;
-    sector.inner=cursor;sector.outer=Math.max(cursor+2,cursor+width-1);cursor+=width;
-  }
-  const projection={...evidence,cx:parent.cx,cy:parent.cy,inner:host.inner,outer:host.outer,scale:parent.scale*.72,nested:true,hostSector:host.id,anchor,centerMembers:[],centerPoints:new Map([[focusId,{x:anchor.x,y:anchor.y}]]),occurrences:[],edges:[]};
-  for(const sector of projection.sectors){
-    const expanded=expandedId===sector.id,items=[...sector.items.values()];
-    const columns=Math.max(1,Math.ceil(Math.sqrt(items.length))),rows=Math.max(1,Math.ceil(items.length/columns));
-    items.forEach((item,index)=>{
-      const column=index%columns,row=Math.floor(index/columns);
-      const angle=sector.start+(sector.end-sector.start)*(column+.5)/columns;
-      const radius=sector.inner+(sector.outer-sector.inner)*(row+.5)/rows;
-      const point={id:'fixed-sector-instance|'+focusId+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:Math.max(2.5,Math.min(4.8,3.9/Math.sqrt(Math.max(1,rows))))};
-      projection.occurrences.push(point);
-      if(expanded)item.edges.forEach(({raw,from})=>projection.edges.push({id:String(raw.id),raw,from:{node:from,...(projection.centerPoints.get(from.id)||{x:anchor.x,y:anchor.y})},to:point,sector:sector.id,directed:isDirectedRelation(raw.type)}));
-    });
-  }
+  const localRadius=fixedSectorNestedRadius(parent,host,anchor),inner=Math.max(4,localRadius*.22);
+  evidence.sectors.forEach((sector,index)=>{
+    sector.start=-Math.PI/2+index*Math.PI/4+.035;
+    sector.end=-Math.PI/2+(index+1)*Math.PI/4-.035;
+    sector.inner=inner;sector.outer=localRadius;
+  });
+  // Each drill-down becomes a new local centre at the clicked account.  The
+  // original layer remains painted underneath; this projection is a compact
+  // radial child map constrained by the available mother-sector clearance.
+  const projection={...evidence,cx:anchor.x,cy:anchor.y,inner,outer:localRadius,localRadius,scale:parent.scale*.72,nested:true,hostSector:host.id,anchor,centerMembers:[],centerPoints:new Map([[focusId,{x:anchor.x,y:anchor.y}]]),occurrences:[],edges:[]};
+  fixedSectorPlaceNestedItems(projection,expandedId);
   return projection;
 }
 function fixedSectorBuildLayers(w,h){
@@ -211,6 +233,12 @@ function fixedSectorRenderOverview(){
     if(!p.nested){
       fixedSectorPaintNode(layer,p.focus,{x:p.cx,y:p.cy},14,'center','focus');
       p.centerMembers.forEach(node=>fixedSectorPaintNode(layer,node,p.centerPoints.get(node.id),8,'center','center'));
+    }else{
+      // Do not create a second selectable account instance.  This halo makes
+      // the clicked account visibly serve as the local centre of its child
+      // sectors while the original outer-layer node remains the hit target.
+      ctx.beginPath();ctx.arc(p.cx,p.cy,Math.max(3,p.inner*.7),0,Math.PI*2);
+      ctx.strokeStyle='#d9f3ff';ctx.lineWidth=1.1/Math.max(.35,p.scale);ctx.stroke();
     }
     p.occurrences.forEach(item=>fixedSectorPaintNode(layer,item.node,item,item.size,item.sector,'direct'));
   }
@@ -245,7 +273,14 @@ fixedSectorLocator?.addEventListener('click',event=>{
 },true);
 window.__kdeskFixedSectorTestFrame=()=>({
   revision:Number(data?.revision||0),inProgress:Boolean(data?.inProgress),path:[...fixedSectorPath],
-  layers:fixedSectorLastLayers.map(layer=>({index:layer.index,focusAccountId:String(layer.focusId),scale:layer.projection.scale,nested:Boolean(layer.projection.nested),hostSector:layer.projection.hostSector||''})),
+  layers:fixedSectorLastLayers.map(layer=>({
+    index:layer.index,focusAccountId:String(layer.focusId),scale:layer.projection.scale,nested:Boolean(layer.projection.nested),hostSector:layer.projection.hostSector||'',
+    centerX:fixedSectorScreenPoint({x:layer.projection.cx,y:layer.projection.cy}).x,
+    centerY:fixedSectorScreenPoint({x:layer.projection.cx,y:layer.projection.cy}).y,
+    anchorX:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).x,
+    anchorY:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).y,
+    localRadius:Number(layer.projection.localRadius||0),
+  })),
   nodes:fixedSectorHit.nodes.map(item=>({layer:item.layer,accountId:String(item.node.id),nodeType:String(item.node.type),sector:item.sector,role:item.role,x:item.x,y:item.y,radius:item.radius})),
   edges:fixedSectorHit.edges.map(item=>({layer:item.layer,id:item.edge.id,type:String(item.edge.raw.type),sector:item.edge.sector})),
   sectors:fixedSectorHit.sectors.map(item=>({layer:item.layer,id:item.id,accounts:item.accounts,evidence:item.evidence,x:item.x,y:item.y,expanded:item.expanded,inner:item.inner,outer:item.outer,nested:item.nested})),

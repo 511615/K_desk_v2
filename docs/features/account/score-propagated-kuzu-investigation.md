@@ -40,6 +40,10 @@ transform every outer/inner sector and its evidence together, while double-click
 fit. The broad 0.2%–256× numerical envelope is a Canvas safety guard, not a business or expansion
 limit, and compact default node radii leave dense evidence inspectable through zoom rather than
 overstating it at the initial fit.
+Every account drill is centred on the clicked account itself. The child business sectors use the
+mother sector's available angular/radial clearance and distribute their direct accounts across
+deterministic local columns and bands, so nested evidence does not collapse back toward the original
+problem-account centre or overlap sibling child maps.
 
 ## UI and behavior
 

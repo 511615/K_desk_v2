@@ -116,6 +116,12 @@ double-click re-fits the complete root projection. Its numerical range is delibe
 dense direct layer is not visually dominant before an operator zooms into its mother sector. This
 presentation range and geometry do not affect the snapshot, score, expansion, global locator or
 relation-detail IDs.
+Each drilled account is the local geometric centre of its own child projection, not an offset copy
+of the investigation subject. Its eight business sectors are reallocated around that clicked point;
+their radius is derived from the angular and radial clearance remaining inside the mother sector.
+Within every child sector, accounts occupy deterministic angular columns and radial bands. This keeps
+the parent layer visible, prevents sibling child maps from collapsing toward the original centre, and
+preserves the existing real-account and raw-relation IDs for profile and evidence interactions.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 
