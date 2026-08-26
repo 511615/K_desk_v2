@@ -4,7 +4,7 @@ title: Score-propagated Kuzu relationship investigation
 module: account
 status: active
 apis: ["GET /kuzu-risk", "GET /api/kuzu-risk/graph", "GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
-code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/fixed_sector_page.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
+code: ["legacy/apps/problem_account_registry/app.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_process.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/domain/relationship_propagation.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "src/kdesk/settings.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_propagation.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py"]
 depends_on: ["ACC-REL-001", "ACC-REL-002", "TOX-POSITION-001", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -25,9 +25,8 @@ already present in the graph.
 
 `/kuzu-risk?account={login}` is the account-detail relationship investigation screen. Its default
 renderer is `focus-force`, the center-constrained investigation workspace. The original galaxy page
-is retained only at `graph_type=galaxy`; the separate fixed-area relationship projection is available
-at `graph_type=fixed-sector`, and `graph_type=choose` retains the selector. Unknown or missing
-graph-type values resolve to `focus-force`. Without `account`, the page still supports the
+is retained only at `graph_type=galaxy`, and `graph_type=choose` retains the selector. Unknown or
+missing graph-type values resolve to `focus-force`. Without `account`, the page still supports the
 separate static local-file trial.
 
 ## UI and behavior
@@ -68,10 +67,9 @@ and no relation-table response can add graph nodes, alter propagation or rebuild
 
 Runtime Galaxy browser verification is deliberately post-restart: release preflight checks only the
 legacy page still served by the old process, then the candidate process must pass the real edge-click
-scenario after deployment metadata and readiness checks succeed. A graph-synchronised notice is a
-valid live-race recovery result; a relation-display technical error is not. The browser check expands
-a same-CRM track and opens its current raw member line rather than a synthetic aggregate
-presentation edge.
+scenario after deployment metadata and readiness checks succeed. The browser check requires a
+populated relation display table from a current same-CRM raw member line; a graph-synchronised
+notice or technical relation-display error fails acceptance.
 On either a first 409 or 404 table response, the client refreshes the current snapshot and retries
 the same raw relationship once before it may show the graph-synchronised notice.
 When the release shell has the bundled `pnpm` shim but no `node` command, the verifier resolves the
@@ -80,9 +78,8 @@ paired bundled Node runtime before it launches this browser acceptance test.
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
-the fixed-sector renderer activates only for its own explicit graph type, leaving Galaxy's track
-renderer unchanged.
-expanded state shows individual accounts with their numeric logins above the points. It restores
+only same-name/CRM communities receive an orbit; all other relation types remain ordinary lines.
+The expanded state shows individual accounts with their numeric logins above the points. It restores
 original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
 rendered line keeps its source relation ID and opens the shared read-only relation display on click.
 It never adds every incident raw account/IB edge to the canvas: cross-community facts retain their

@@ -59,6 +59,9 @@ prohibited. After restart, `verify_deployed_release.ps1` checks Git SHA, version
 branch, profile and critical route contracts.
 The production stop script terminates the Uvicorn supervisor as well as its listening worker. This
 prevents a worker-only stop from being immediately respawned with the previous in-memory release.
+The production web launchers do not request a one-worker Uvicorn supervisor; the single service
+process keeps the promoted checkout's explicit `PYTHONPATH` and cannot silently import a sibling
+development worktree.
 The verifier accepts the abbreviated Git SHA exposed by `/api/meta` only when it prefixes the
 intended release commit.
 The relationship-network isolation pilot may use a named `feature/acc-rel-*` branch from `dev`,

@@ -83,6 +83,7 @@ def test_production_launcher_pins_child_python_imports_to_main_source_tree() -> 
 
     assert '$env:PYTHONPATH = Join-Path $Root "src"' in launcher
     assert '$env:PYTHONNOUSERSITE = "1"' in launcher
+    assert '"--workers", "1"' not in launcher
 
 
 def test_worker_runtime_heartbeat_markers_are_used_for_queue_readiness() -> None:

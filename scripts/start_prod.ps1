@@ -212,9 +212,9 @@ function Start-KDeskProductionProcess {
         -RedirectStandardError (Join-Path $LogDir "$Name.err.log")
 }
 
-Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kdesk.api.account_app" -Arguments @("-m", "uvicorn", "kdesk.api.account_app:app", "--host", "127.0.0.1", "--port", "8777", "--workers", "1")
+Start-KDeskProductionProcess -Name "account-web" -Port 8777 -ExpectedModule "kdesk.api.account_app" -Arguments @("-m", "uvicorn", "kdesk.api.account_app:app", "--host", "127.0.0.1", "--port", "8777")
 if (-not $AccountOnly) {
-    Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766", "--workers", "1")
+    Start-KDeskProductionProcess -Name "kline-web" -Port 8766 -ExpectedModule "kdesk.api.kline_app" -Arguments @("-m", "uvicorn", "kdesk.api.kline_app:app", "--host", "127.0.0.1", "--port", "8766")
 
     $queuePlans = @(
         @{ Queue = "interactive"; Count = 1 },

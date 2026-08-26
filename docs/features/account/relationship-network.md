@@ -4,7 +4,7 @@ title: Account relationship network
 module: account
 status: active
 apis: ["GET /api/accounts/by-login/{login}/relationship-network", "GET /api/accounts/by-login/{login}/relationship-network/node-profile", "GET /api/accounts/by-login/{login}/relationship-network/relation-detail", "GET /api/accounts/by-login/{login}/relationship-network/relation-display"]
-code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/fixed_sector_page.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
+code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/relationship_expansion.py", "src/kdesk/application/relationship_inspection.py", "src/kdesk/application/relationship_risk.py", "src/kdesk/application/trade_relationship_detection.py", "src/kdesk/domain/ib_rebate_anomaly.py", "src/kdesk/domain/relationship_graph.py", "src/kdesk/api/account_app.py", "src/kdesk/api/kuzu_3d_preview_page.py", "src/kdesk/api/kuzu_focus_workspace_page.py", "src/kdesk/api/kuzu_graph_type_page.py", "src/kdesk/api/kuzu_risk_page.py", "src/kdesk/api/relation_display_page.py", "src/kdesk/infrastructure/kuzu_risk_graph.py", "legacy/apps/problem_account_registry/app.py", "scripts/verify_change.ps1", "scripts/verify_deployed_release.ps1"]
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
@@ -131,19 +131,10 @@ The `关系网络` button on the legacy account-detail page opens
 The button remains visible for a confirmed account route even when it has no completed order, so
 non-trade evidence such as CRM identity or current-IP evidence can still be investigated.
 The default renderer is the current center-constrained relationship workspace. The original galaxy
-renderer remains available only through explicit `graph_type=galaxy`; `graph_type=fixed-sector`
-opens the separate fixed-area relationship projection; missing or stale graph-type values cannot
-silently return the legacy view.
+renderer remains available only through explicit `graph_type=galaxy`; missing or stale graph-type
+values cannot silently return the legacy view.
 
 ## UI and behavior
-
-`固定区域关系网` preserves the source graph, propagation score and evidence APIs while changing only
-the detailed-graph projection. The problem account and its transitive same-name/same-CRM family are
-shown in the centre. IP, CID, EA, copy, rebate, IB/CRM, synchronized-trade and hedge facts each use
-a permanent outer sector. A real account may appear in several non-centre sectors; its centre-family
-node is not duplicated outside. Every rendered line keeps the raw relation ID: node click selects
-the account profile and line click opens the existing relation-detail display. The global locator
-remains deduplicated by real account ID. The original Galaxy renderer is unaffected.
 
 The default workspace has a global locator, a center-constrained detailed graph and an evidence
 panel. It receives a presentation-only relationship-entity projection: repeated account pairs are
