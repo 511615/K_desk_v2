@@ -71,6 +71,8 @@ scenario after deployment metadata and readiness checks succeed. A graph-synchro
 valid live-race recovery result; a relation-display technical error is not. The browser check expands
 a same-CRM track and opens its current raw member line rather than a synthetic aggregate
 presentation edge.
+When the release shell has the bundled `pnpm` shim but no `node` command, the verifier resolves the
+paired bundled Node runtime before it launches this browser acceptance test.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the

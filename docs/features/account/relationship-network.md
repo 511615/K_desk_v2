@@ -67,6 +67,9 @@ only when a live worker replaced the selected evidence; any technical relation-d
 a release failure. Its automated edge selection is restricted to a current raw source edge (an IB
 edge when directly drawable, otherwise the expanded same-CRM source edge), never a synthetic
 aggregate presentation edge.
+The deployment verifier resolves Node from the bundled `pnpm` fallback runtime when a standalone
+PowerShell release session does not already expose `node` on `PATH`, so this browser acceptance test
+cannot be skipped by an environment-only failure.
 
 An account-to-account edge defaults to **single mode**. It shows only that account's facts for the
 clicked relation and its original evidence; it must not report a member count, total P/L or averaged

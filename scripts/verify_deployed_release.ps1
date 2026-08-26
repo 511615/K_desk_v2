@@ -23,6 +23,20 @@ if (-not $galaxy.Content.Contains('Kuzu 关联风险扩散')) { throw 'Explicit 
 $health = @(& (Join-Path $root 'scripts\health_check_prod.ps1') -AccountOnly:$AccountOnly)
 if (@($health | Where-Object { -not $_.Ready }).Count -gt 0) { throw 'Production readiness acceptance failed.' }
 $pnpm = Get-Command pnpm -ErrorAction Stop
+$node = Get-Command node -ErrorAction SilentlyContinue
+if ($null -eq $node) {
+    # Codex supplies pnpm as a fallback shim. Its paired Node runtime is a sibling
+    # of the dependencies directory, but it is not guaranteed to be in PATH for
+    # a standalone production PowerShell invocation.
+    $pnpmDirectory = Split-Path -Parent $pnpm.Source
+    $dependencyRoot = Split-Path -Parent (Split-Path -Parent $pnpmDirectory)
+    $nodeDirectory = Join-Path $dependencyRoot 'node\bin'
+    if (Test-Path -LiteralPath (Join-Path $nodeDirectory 'node.exe') -PathType Leaf) {
+        $env:PATH = "$nodeDirectory;$env:PATH"
+        $node = Get-Command node -ErrorAction SilentlyContinue
+    }
+}
+if ($null -eq $node) { throw 'Deployed Galaxy E2E requires Node.js, but no Node runtime is available.' }
 $previousE2eBaseUrl = $env:KDESK_E2E_BASE_URL
 try {
     $env:KDESK_E2E_BASE_URL = 'http://127.0.0.1:8777'
