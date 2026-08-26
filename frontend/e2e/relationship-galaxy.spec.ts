@@ -76,7 +76,7 @@ test('Galaxy opens a populated relation table from an expanded same-CRM member l
   await expect(display.locator('h2')).toContainText('关系展示表', { timeout: 20_000 })
   const title = await display.locator('h2').textContent()
   if (title?.includes('图谱已更新')) {
-    await expect(display).toContainText('请点击当前可见关系线')
+    await expect(display).toContainText('关系图已经同步')
   } else {
     await expect(display.locator('.relation-display-coverage')).toBeVisible()
     await expect(display.locator('.relation-display-error')).toHaveCount(0)
