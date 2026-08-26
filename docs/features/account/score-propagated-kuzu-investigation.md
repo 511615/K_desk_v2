@@ -44,6 +44,9 @@ Every account drill is centred on the clicked account itself. The child business
 mother sector's available angular/radial clearance and distribute their direct accounts across
 deterministic local columns and bands, so nested evidence does not collapse back toward the original
 problem-account centre or overlap sibling child maps.
+The local radius additionally reserves clearance to the mother-sector boundaries, visible parent
+evidence and sibling account instances. If available space is tight, nodes and child sectors scale
+down under the existing continuous zoom rather than exceeding the mother-sector boundary.
 
 ## UI and behavior
 

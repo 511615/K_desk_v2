@@ -122,6 +122,10 @@ their radius is derived from the angular and radial clearance remaining inside t
 Within every child sector, accounts occupy deterministic angular columns and radial bands. This keeps
 the parent layer visible, prevents sibling child maps from collapsing toward the original centre, and
 preserves the existing real-account and raw-relation IDs for profile and evidence interactions.
+The child radius is strictly capped by the nearest mother-sector annulus boundary, sector-ray
+boundary, visible parent evidence line and sibling account instance. Its child-node radius is then
+derived from the closest local pair across all business sectors, so a constrained sector shrinks
+under continuous zoom instead of crossing a boundary or overlapping another displayed account.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

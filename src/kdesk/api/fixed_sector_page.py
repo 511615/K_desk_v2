@@ -79,13 +79,25 @@ function fixedSectorRootProjection(w,h,focusId,expandedId){
   fixedSectorPlaceRootItems(projection,expandedId);
   return projection;
 }
+function fixedSectorBalancedFraction(index,total){
+  if(total<=1)return .5;
+  const middle=Math.floor((total-1)*.5);
+  if(index===0)return(middle+.5)/total;
+  const distance=Math.ceil(index*.5);
+  let slot=index%2?middle-distance:middle+distance;
+  if(slot<0||slot>=total)slot=index%2?middle+distance:middle-distance;
+  return(Math.max(0,Math.min(total-1,slot))+.5)/total;
+}
 function fixedSectorPlaceRootItems(projection,expandedId){
   for(const sector of projection.sectors){
     const expanded=expandedId===sector.id,items=[...sector.items.values()],span=sector.end-sector.start;
     const columns=Math.max(1,Math.min(4,Math.ceil(Math.sqrt(items.length))));
     items.forEach((item,index)=>{
-      const column=index%columns,row=Math.floor(index/columns),rows=Math.ceil(items.length/columns);
-      const angle=sector.start+span*(column+.5)/columns,progress=(row+.5)/rows;
+      const row=Math.floor(index/columns),rows=Math.ceil(items.length/columns);
+      // Every parent evidence ray receives a distinct angle. Otherwise an
+      // outer row can draw through an inner account and leave no valid child
+      // space for drilling that account.
+      const angle=sector.start+span*fixedSectorBalancedFraction(index,items.length),progress=(row+.5)/rows;
       const radius=sector.inner+(sector.outer-sector.inner)*((expanded?.64:.70)+(expanded?.29:.23)*progress);
       const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:expanded?7.2:5.8};
       projection.occurrences.push(point);
@@ -93,42 +105,78 @@ function fixedSectorPlaceRootItems(projection,expandedId){
     });
   }
 }
-function fixedSectorNestedRadius(parent,host,anchor){
-  // A child world must fit inside the sector cell that contains its anchor.
-  // The angular and radial clearances are both measured from that *local*
-  // anchor, so sibling expansions cannot collapse back onto the root centre.
-  const anchorRadius=Math.hypot(anchor.x-parent.cx,anchor.y-parent.cy);
-  const halfSpan=Math.max(.045,(host.end-host.start)*.5-.025);
-  const angularClearance=anchorRadius*Math.sin(halfSpan)*.72;
+function fixedSectorWorldDistanceToSegment(point,start,end){
+  const dx=end.x-start.x,dy=end.y-start.y,length2=dx*dx+dy*dy;
+  if(!length2)return Math.hypot(point.x-start.x,point.y-start.y);
+  const ratio=Math.max(0,Math.min(1,((point.x-start.x)*dx+(point.y-start.y)*dy)/length2));
+  return Math.hypot(point.x-(start.x+dx*ratio),point.y-(start.y+dy*ratio));
+}
+function fixedSectorNestedSpace(parent,host,anchor){
+  // A child world must fit wholly inside the sector cell that contains its
+  // anchor. Measure the exact clearance to both annulus circles and both ray
+  // boundaries at the anchor's actual angle, not at the mother-sector middle.
+  const dx=anchor.x-parent.cx,dy=anchor.y-parent.cy,anchorRadius=Math.hypot(dx,dy);
+  let anchorAngle=Math.atan2(dy,dx);
+  while(anchorAngle<host.start)anchorAngle+=Math.PI*2;
+  while(anchorAngle>host.end)anchorAngle-=Math.PI*2;
   const radialClearance=Math.min(
     Math.max(0,anchorRadius-host.inner),
     Math.max(0,host.outer-anchorRadius),
-  )*.72;
-  const sectorScale=Math.max(14,(host.outer-host.inner)*.34);
-  return Math.max(14,Math.min(angularClearance,radialClearance,sectorScale));
+  );
+  const boundaryClearance=Math.min(
+    Math.max(0,anchorRadius*Math.sin(Math.max(0,anchorAngle-host.start))),
+    Math.max(0,anchorRadius*Math.sin(Math.max(0,host.end-anchorAngle))),
+  );
+  // Existing outer-layer nodes and visible evidence lines reserve their own
+  // clearance, so a local child map cannot cover a sibling or a parent edge.
+  let siblingClearance=Infinity;
+  for(const item of parent.occurrences){
+    if(item.id===anchor.id)continue;
+    siblingClearance=Math.min(siblingClearance,Math.max(0,Math.hypot(anchor.x-item.x,anchor.y-item.y)-item.size-3));
+  }
+  let edgeClearance=Infinity;
+  for(const edge of parent.edges){
+    if(edge.to?.id===anchor.id)continue;
+    edgeClearance=Math.min(edgeClearance,Math.max(0,fixedSectorWorldDistanceToSegment(anchor,edge.from,edge.to)-3));
+  }
+  const available=Math.min(radialClearance,boundaryClearance,siblingClearance,edgeClearance);
+  // Keep a visible gutter for sector strokes and compact node badges. There
+  // is intentionally no artificial minimum: a constrained parent sector is
+  // allowed to become small and can be inspected with the continuous zoom.
+  const radius=Math.max(.5,available*.78);
+  return{radius,available,anchorRadius,anchorAngle};
 }
 function fixedSectorPlaceNestedItems(projection,expandedId){
+  const placed=[];
   for(const sector of projection.sectors){
     const expanded=expandedId===sector.id,items=[...sector.items.values()],span=sector.end-sector.start;
     const columns=Math.max(1,Math.min(4,Math.ceil(Math.sqrt(items.length))));
     const rows=Math.max(1,Math.ceil(items.length/columns));
     items.forEach((item,index)=>{
-      const column=index%columns,row=Math.floor(index/columns);
+      const row=Math.floor(index/columns);
       // Keep a margin around the local centre and sector boundaries.  The
       // columns fan across the business-sector angle; rows occupy distinct
       // radial bands, which guarantees a stable, non-overlapping placement.
-      const angle=sector.start+span*(column+.5)/columns;
+      const angle=sector.start+span*fixedSectorBalancedFraction(index,items.length);
       const radius=sector.inner+(sector.outer-sector.inner)*(.24+.66*(row+.5)/rows);
-      const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:Math.max(2.35,Math.min(4.5,projection.localRadius*.052/Math.sqrt(Math.max(1,rows))))};
+      const point={id:'fixed-sector-instance|'+projection.focus.id+'|'+sector.id+'|'+item.node.id,node:item.node,x:projection.cx+Math.cos(angle)*radius,y:projection.cy+Math.sin(angle)*radius,sector:sector.id,detail:expanded,size:0};
       projection.occurrences.push(point);
+      placed.push(point);
       if(expanded)item.edges.forEach(({raw,from})=>projection.edges.push({id:String(raw.id),raw,from:{node:from,...(projection.centerPoints.get(from.id)||{x:projection.cx,y:projection.cy})},to:point,sector:sector.id,directed:isDirectedRelation(raw.type)}));
     });
   }
+  // Derive the account radius from the closest pair across the complete local
+  // projection. This protects adjacent business-sector edges as well as rows
+  // in one sector; zoom makes deliberately tiny but valid layouts inspectable.
+  let closest=Infinity;
+  for(let left=0;left<placed.length;left++)for(let right=left+1;right<placed.length;right++)closest=Math.min(closest,Math.hypot(placed[left].x-placed[right].x,placed[left].y-placed[right].y));
+  const nodeRadius=Math.max(.18,Math.min(4.5,projection.localRadius*.085,closest*.42));
+  placed.forEach(point=>{point.size=nodeRadius});
 }
 function fixedSectorNestedProjection(focusId,parent,anchor,expandedId){
   const evidence=fixedSectorEvidence(focusId),host=parent.sectors.find(item=>item.id===anchor.sector);
   if(!host)return null;
-  const localRadius=fixedSectorNestedRadius(parent,host,anchor),inner=Math.max(4,localRadius*.22);
+  const space=fixedSectorNestedSpace(parent,host,anchor),localRadius=space.radius,inner=localRadius*.22;
   evidence.sectors.forEach((sector,index)=>{
     sector.start=-Math.PI/2+index*Math.PI/4+.035;
     sector.end=-Math.PI/2+(index+1)*Math.PI/4-.035;
@@ -137,7 +185,7 @@ function fixedSectorNestedProjection(focusId,parent,anchor,expandedId){
   // Each drill-down becomes a new local centre at the clicked account.  The
   // original layer remains painted underneath; this projection is a compact
   // radial child map constrained by the available mother-sector clearance.
-  const projection={...evidence,cx:anchor.x,cy:anchor.y,inner,outer:localRadius,localRadius,scale:parent.scale*.72,nested:true,hostSector:host.id,anchor,centerMembers:[],centerPoints:new Map([[focusId,{x:anchor.x,y:anchor.y}]]),occurrences:[],edges:[]};
+  const projection={...evidence,cx:anchor.x,cy:anchor.y,inner,outer:localRadius,localRadius,availableRadius:space.available,fitsHost:localRadius<=space.available+.001,scale:parent.scale*.72,nested:true,hostSector:host.id,anchor,centerMembers:[],centerPoints:new Map([[focusId,{x:anchor.x,y:anchor.y}]]),occurrences:[],edges:[]};
   fixedSectorPlaceNestedItems(projection,expandedId);
   return projection;
 }
@@ -206,7 +254,17 @@ function fixedSectorPaintNode(layer,node,point,radius,sector,role){
   drawNode(node,point.x,point.y,radius);ctx.fillStyle=color(node);ctx.fill();ctx.strokeStyle=node.id===selectedId?'#fff':'#bde7ff';ctx.lineWidth=1.2;ctx.stroke();
   if(layer.projection.nested)fixedSectorCompactBadge(node,point.x,point.y,radius);else drawActionBadge(node,point.x,point.y,radius);
   const screen=fixedSectorScreenPoint(point);
-  fixedSectorHit.nodes.push({layer:layer.index,node,x:screen.x,y:screen.y,radius:Math.max(7,(radius+5)*view.scale),sector,role});
+  fixedSectorHit.nodes.push({layer:layer.index,node,x:screen.x,y:screen.y,radius:Math.max(4,(radius+2.5)*view.scale),visualRadius:Math.max(.1,radius*view.scale),sector,role});
+}
+function fixedSectorConstrainHitTargets(){
+  for(const hit of fixedSectorHit.nodes){
+    let nearest=Infinity;
+    for(const other of fixedSectorHit.nodes){
+      if(other===hit)continue;
+      nearest=Math.min(nearest,Math.hypot(hit.x-other.x,hit.y-other.y));
+    }
+    if(Number.isFinite(nearest))hit.radius=Math.min(hit.radius,Math.max(2.5,nearest*.44));
+  }
 }
 function fixedSectorRenderOverview(){
   if(!data)return;
@@ -242,6 +300,7 @@ function fixedSectorRenderOverview(){
     }
     p.occurrences.forEach(item=>fixedSectorPaintNode(layer,item.node,item,item.size,item.sector,'direct'));
   }
+  fixedSectorConstrainHitTargets();
   ctx.restore();fixedSectorRenderControls(layers);fixedSectorRenderLocator();
 }
 function fixedSectorPointInSector(point,sector){
@@ -280,8 +339,9 @@ window.__kdeskFixedSectorTestFrame=()=>({
     anchorX:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).x,
     anchorY:fixedSectorScreenPoint(layer.projection.anchor||{x:layer.projection.cx,y:layer.projection.cy}).y,
     localRadius:Number(layer.projection.localRadius||0),
+    fitsHost:layer.projection.fitsHost!==false,
   })),
-  nodes:fixedSectorHit.nodes.map(item=>({layer:item.layer,accountId:String(item.node.id),nodeType:String(item.node.type),sector:item.sector,role:item.role,x:item.x,y:item.y,radius:item.radius})),
+  nodes:fixedSectorHit.nodes.map(item=>({layer:item.layer,accountId:String(item.node.id),nodeType:String(item.node.type),sector:item.sector,role:item.role,x:item.x,y:item.y,radius:item.radius,visualRadius:item.visualRadius})),
   edges:fixedSectorHit.edges.map(item=>({layer:item.layer,id:item.edge.id,type:String(item.edge.raw.type),sector:item.edge.sector})),
   sectors:fixedSectorHit.sectors.map(item=>({layer:item.layer,id:item.id,accounts:item.accounts,evidence:item.evidence,x:item.x,y:item.y,expanded:item.expanded,inner:item.inner,outer:item.outer,nested:item.nested})),
   locatorAccountIds:fixedSectorLocatorHits.map(item=>String(item.node.id)),

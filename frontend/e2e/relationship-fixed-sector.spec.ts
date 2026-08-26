@@ -16,8 +16,9 @@ type FixedSectorFrame = {
     anchorX: number
     anchorY: number
     localRadius: number
+    fitsHost: boolean
   }>
-  nodes: Array<{ layer: number; accountId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number }>
+  nodes: Array<{ layer: number; accountId: string; nodeType: string; sector: string; role: string; x: number; y: number; radius: number; visualRadius: number }>
   edges: Array<{ layer: number; id: string; type: string; sector: string }>
   sectors: Array<{ layer: number; id: string; accounts: number; evidence: number; x: number; y: number; expanded: boolean }>
   locatorAccountIds: string[]
@@ -119,6 +120,7 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
   expect(nested?.layers[1]?.anchorX).toBeCloseTo(direct!.x, 0)
   expect(nested?.layers[1]?.anchorY).toBeCloseTo(direct!.y, 0)
   expect(nested?.layers[1]?.localRadius ?? 0).toBeGreaterThan(10)
+  expect(nested?.layers[1]?.fitsHost).toBe(true)
   for (const layer of nested?.layers ?? []) {
     const directNodes = (nested?.nodes ?? []).filter(node => node.layer === layer.index && node.role === 'direct')
     for (let left = 0; left < directNodes.length; left += 1) {
@@ -126,6 +128,7 @@ test('fixed-sector preserves outer layer while a direct account opens a scaled n
         const a = directNodes[left], b = directNodes[right]
         if (a.sector !== b.sector) continue
         expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(10)
+        expect(Math.hypot(a.x - b.x, a.y - b.y) - a.visualRadius - b.visualRadius).toBeGreaterThanOrEqual(0)
       }
     }
   }
