@@ -531,6 +531,9 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "frame.groups" in picker
     assert "frame.edges" in picker
     assert "const groupHit=hit=>" in picker
+    assert "let nearestEdge=null,nearestEdgeDistance=Infinity" in picker
+    assert "distance<=hit.tolerance&&distance<=nearestEdgeDistance" in picker
+    assert "if(nearestEdge)return{kind:'edge',target:nearestEdge.edge}" in picker
     assert "!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert "expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
     assert picker.index("!expandedRelationGroups.has") < picker.index("frame.nodes") < picker.index("frame.edges")

@@ -26,7 +26,9 @@ function galaxyPickHit(mouse,frame=galaxyHitFrame){
   const groupHit=hit=>{const dx=mouse.x-hit.center.x,dy=mouse.y-hit.center.y;return Math.abs(Math.hypot(dx,dy)-hit.radius)<=hit.tolerance&&galaxyHitAngleBetween(Math.atan2(dy,dx),hit.start,hit.end)};
   for(const hit of frame.groups)if(!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit))return{kind:'group',target:hit.group};
   for(const hit of frame.nodes)if(Math.hypot(mouse.x-hit.x,mouse.y-hit.y)<=hit.radius)return{kind:'node',target:hit.node,groupKey:hit.groupKey||''};
-  for(const hit of frame.edges)if(galaxyScreenDistanceToPath(mouse,hit.path)<=hit.tolerance)return{kind:'edge',target:hit.edge};
+  let nearestEdge=null,nearestEdgeDistance=Infinity;
+  for(const hit of frame.edges){const distance=galaxyScreenDistanceToPath(mouse,hit.path);if(distance<=hit.tolerance&&distance<=nearestEdgeDistance){nearestEdge=hit;nearestEdgeDistance=distance}}
+  if(nearestEdge)return{kind:'edge',target:nearestEdge.edge};
   for(const hit of frame.groups)if(expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit))return{kind:'group',target:hit.group};
   return{kind:'empty',target:null};
 }

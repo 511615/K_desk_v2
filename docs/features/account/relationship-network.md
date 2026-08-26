@@ -8,7 +8,7 @@ code: ["src/kdesk/application/relationship_network.py", "src/kdesk/application/r
 tests: ["tests/test_api.py", "tests/test_ib_rebate_anomaly.py", "tests/test_kuzu_risk_graph.py", "tests/test_relationship_graph.py", "tests/test_relationship_inspection.py", "tests/test_relationship_risk.py", "tests/test_trade_relationship_detection.py", "legacy/apps/problem_account_registry/test_app.py"]
 depends_on: ["ACC-DETAIL-001", "ACC-SEARCH-001", "AUT-COPY-001", "AUT-EA-001", "AUT-FOLLOWER-001", "FIN-REBATE-001", "ACC-REL-003", "TOX-PUSH-001", "TOX-HEDGE-001"]
 last_verified_version: 2.1.4
-last_verified_date: 2026-08-25
+last_verified_date: 2026-08-26
 ---
 
 # Account relationship network
@@ -189,6 +189,9 @@ the investigation subject are rendered without changing community expansion stat
 Galaxy canvas interaction is owned by one capture-phase dispatcher. It reads an immutable hit map
 built after the last completed render and never invokes layout while classifying a click. Hit priority
 is the current visible account/IB node, relation-track boundary, relation edge, then blank canvas.
+When visible relation hit areas overlap, the dispatcher selects the nearest painted relation path;
+an equally close later-painted path wins. A click on an expanded same-CRM evidence line therefore
+opens that line's raw `same_crm_user` evidence rather than an earlier IB/route path that crosses it.
 The dispatcher consumes every canvas click before legacy compatibility listeners can act, so one
 gesture performs at most one expand, collapse, select or edge-inspection action. During incremental
 polling, returned account nodes may remain visible for orientation, but relationship lines are

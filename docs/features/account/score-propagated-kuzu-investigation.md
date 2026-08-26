@@ -152,8 +152,9 @@ similarity. Repeated order pairs are evidence details of one peer relationship, 
 The compatibility canvas has one authoritative capture-phase click dispatcher backed by a frozen
 post-render hit frame. It does not recompute or mutate ring layout during hit testing. A visible
 account or IB node always takes precedence over either collapsed or expanded boundaries; boundaries
-take precedence over edges. The node target uses its complete painted radius and a small pointer
-allowance. Every click is consumed by this
+take precedence over edges. Overlapping edge hit areas choose the nearest painted path, with the
+later-painted path breaking an exact tie, so an expanded same-CRM line cannot open a crossing IB
+root path. The node target uses its complete painted radius and a small pointer allowance. Every click is consumed by this
 dispatcher, including blank clicks, so older compatibility listeners cannot cause double toggles,
 stale-coordinate misses or a node selection and group toggle from the same gesture.
 Clicking a visible copy-order edge opens an on-demand, read-only modal. Its first tab is scoped to
