@@ -520,6 +520,8 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     assert "function galaxyVisualEndpointKey" in page.text
     assert "galaxyCanvas.addEventListener('click',galaxyDispatchClick,true)" in page.text
     assert "event.stopImmediatePropagation()" in page.text
+    assert "fixedSector" not in page.text
+    assert "固定区域关系网" not in page.text
 
     picker = page.text.split("function galaxyPickHit", 1)[1].split("function galaxyDispatchClick", 1)[0]
     dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]

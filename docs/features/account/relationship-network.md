@@ -88,6 +88,8 @@ rerunning expansion. Exact duplicate evidence is removed. Multiple evidence fami
 accounts are returned as one relation bundle whose sections remain separately auditable. Only shared
 CRM identity is a collapsible account community; LastIP, CID, EA, Copy, rebate, IB and trade facts are
 always ordinary account-to-account or account-to-entity lines.
+Galaxy has no fixed business-sector renderer: that retired presentation is not loaded or reachable
+from the page, so it cannot replace ordinary relationship lines with synthetic sector routes.
 The business presentation calls a shared CRM identity `同名账户` and removes SQL, table names, internal
 CRM keys and unnecessary personal identifiers from both the profile and relation-detail contracts.
 

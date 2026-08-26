@@ -75,6 +75,7 @@ presentation edge.
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
+the retired fixed-sector renderer is never loaded by Galaxy.
 expanded state shows individual accounts with their numeric logins above the points. It restores
 original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
 rendered line keeps its source relation ID and opens the shared read-only relation display on click.
