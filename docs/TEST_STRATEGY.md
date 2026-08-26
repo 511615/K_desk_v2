@@ -469,9 +469,10 @@ the existing node without changing graph layout or community state. A stale edge
 graph and show a non-technical update notice, while a current edge yields the populated table.
 The browser regression uses the real 216056 investigation: it expands a same-CRM track, verifies
 member account labels and no more than that community's internal lines, waits for the terminal
-snapshot, then clicks a current IB line and verifies the populated table. The Galaxy scan fan must not
-overlay the star map. An expanded same-CRM band must use individual member endpoints only for recovered internal
-`same_crm_user` evidence; every other incident relation keeps one normal star-track projection.
+snapshot, then clicks a current same-CRM member line and verifies the populated table. The Galaxy scan
+fan must not overlay the star map. An expanded same-CRM band must use individual member endpoints only
+for recovered internal `same_crm_user` evidence; every other incident relation keeps one normal
+star-track projection.
 
 Both readiness endpoints, one live interactive Worker and one live discovery Worker, account 302360 legacy detail HTML, account 7798437 finance, Live3,
 DBG MT5 Live2 account 5200101 routing/finance/orders, rebate, copy/EA, Toxic job recovery, K-line

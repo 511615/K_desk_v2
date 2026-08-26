@@ -68,22 +68,21 @@ and no relation-table response can add graph nodes, alter propagation or rebuild
 Runtime Galaxy browser verification is deliberately post-restart: release preflight checks only the
 legacy page still served by the old process, then the candidate process must pass the real edge-click
 scenario after deployment metadata and readiness checks succeed. A graph-synchronised notice is a
-valid live-race recovery result; a relation-display technical error is not.
+valid live-race recovery result; a relation-display technical error is not. The browser check expands
+a same-CRM track and opens its current raw member line rather than a synthetic aggregate
+presentation edge.
 
 Only same-CRM relationship communities are collapsed by default. Their boundary is clickable and
 toggles a local presentation state without restarting the investigation: collapsed state shows the
 member count, the highest member status in `TA > A > T > P > M > B` order and one aggregate edge;
 expanded state shows individual accounts with their numeric logins above the points. It restores
 original `same_crm_user` evidence only when both endpoints belong to that same expanded band; each
-rendered line retains its source relation ID and opens the ordinary auditable relation detail on
-click. It never adds every incident raw account/IB edge to the canvas: cross-community facts retain
-their normal star-track projection even while the band is expanded, so expansion cannot create
-cross-graph arrows or stacked labels.
-LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct lines and never become orbit
-communities. The right evidence panel exposes the same action for keyboard-accessible use.
-The Galaxy global locator is a uniform projection of this same detailed star-track layout, not an
-independent depth-circle placement: every account preserves its detailed-view direction, orbit and
-relative position around the subject while collapsed-track members remain available in the overview.
+rendered line keeps its source relation ID and opens the shared read-only relation display on click.
+It never adds every incident raw account/IB edge to the canvas: cross-community facts retain their
+normal star-track projection even while the band is expanded, so expansion cannot create cross-graph
+arrows or stacked labels. LastIP, CID, EA, Copy, rebate, IB and trade facts remain direct lines and
+never become orbit communities. The Galaxy global locator is a uniform projection of this same
+detailed star-track layout, not an independent depth-circle placement.
 
 The selector also exposes the isolated `focus-3d` preview. It is a Canvas projection of the same
 read-only snapshot: the subject remains at the sphere origin, each hop is distributed on a deterministic

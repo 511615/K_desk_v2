@@ -525,14 +525,19 @@ def test_kuzu_risk_galaxy_uses_one_immutable_click_dispatcher(tmp_path: Path) ->
     dispatcher = page.text.split("function galaxyDispatchClick", 1)[1].split("const ungroupedSelectedBranch", 1)[0]
     assert "ringLayout(" not in picker
     assert "ringLayout(" not in dispatcher
-    assert picker.index("frame.nodes") < picker.index("frame.groups")
-    assert picker.index("frame.groups") < picker.index("frame.edges")
-    assert "const liveNode=galaxyLiveNodeHit(mouse);if(liveNode)" in dispatcher
+    assert "frame.nodes" in picker
+    assert "frame.groups" in picker
+    assert "frame.edges" in picker
+    assert "const groupHit=hit=>" in picker
+    assert "!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
+    assert "expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit)" in picker
+    assert picker.index("!expandedRelationGroups.has") < picker.index("frame.nodes") < picker.index("frame.edges")
+    assert "galaxyFixedSectorDispatch" not in dispatcher
     assert "const groupKey=galaxyTrackToggleKey(hit.target)" in dispatcher
-    assert "expandedRelationGroups.has(groupKey)" in dispatcher
     assert "kind==='node'" in dispatcher
     assert "kind==='group'" in dispatcher
     assert "kind==='edge'" in dispatcher
+    assert "inspectionLoadRelation(hit.target);return" in dispatcher
     assert "galaxyVisualEndpointKey(edge?.from)" in page.text
     assert "galaxyVisualEndpointKey(edge?.to)" in page.text
 
@@ -602,9 +607,11 @@ def test_relationship_renderers_share_click_only_relation_display_table(tmp_path
     assert "onSelectMember:nodeId=>{if(S.by.has(nodeId))" in focus.text
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in focus.text
     assert "snapshotVersion:S.data?.inProgress?undefined:S.data?.revision" in focus.text
+    assert "params:relationDisplayParams()" in focus.text
     assert "inspectionLoadRelationEvidence=inspectionLoadRelation" in galaxy.text
     assert "onSnapshotStale:refreshRelationDisplaySnapshot" in galaxy.text
     assert "snapshotVersion:data?.inProgress?undefined:data?.revision" in galaxy.text
+    assert "params:inspectionQuery().toString()" in galaxy.text
     assert "relationships=Array.isArray(next.relationships)&&next.relationships.length?next.relationships:(previous.relationships||[])" in galaxy.text
     assert "radar.remove();" in galaxy.text
 

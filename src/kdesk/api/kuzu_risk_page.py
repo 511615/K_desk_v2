@@ -19,20 +19,24 @@ function galaxyScreenDistanceToSegment(point,start,end){const dx=end.x-start.x,d
 function galaxyScreenDistanceToPath(point,path){let best=Infinity;for(let index=1;index<path.length;index++)best=Math.min(best,galaxyScreenDistanceToSegment(point,path[index-1],path[index]));return best}
 function galaxyHitAngleBetween(angle,start,end){const norm=value=>(value+Math.PI*2)%(Math.PI*2),a=norm(angle),s=norm(start),e=norm(end);return s<=e?a>=s&&a<=e:a>=s||a<=e}
 function galaxyPickHit(mouse,frame=galaxyHitFrame){
+  // A collapsed track owns its boundary so it can be expanded, even where a
+  // compacted marker from another relation visually overlaps it. Once open,
+  // member evidence lines own the hit first; only an empty expanded boundary
+  // collapses the track. This keeps every visible member line inspectable.
+  const groupHit=hit=>{const dx=mouse.x-hit.center.x,dy=mouse.y-hit.center.y;return Math.abs(Math.hypot(dx,dy)-hit.radius)<=hit.tolerance&&galaxyHitAngleBetween(Math.atan2(dy,dx),hit.start,hit.end)};
+  for(const hit of frame.groups)if(!expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit))return{kind:'group',target:hit.group};
   for(const hit of frame.nodes)if(Math.hypot(mouse.x-hit.x,mouse.y-hit.y)<=hit.radius)return{kind:'node',target:hit.node,groupKey:hit.groupKey||''};
-  for(const hit of frame.groups){const dx=mouse.x-hit.center.x,dy=mouse.y-hit.center.y;if(Math.abs(Math.hypot(dx,dy)-hit.radius)<=hit.tolerance&&galaxyHitAngleBetween(Math.atan2(dy,dx),hit.start,hit.end))return{kind:'group',target:hit.group}}
   for(const hit of frame.edges)if(galaxyScreenDistanceToPath(mouse,hit.path)<=hit.tolerance)return{kind:'edge',target:hit.edge};
+  for(const hit of frame.groups)if(expandedRelationGroups.has(galaxyTrackToggleKey(hit.group))&&groupHit(hit))return{kind:'group',target:hit.group};
   return{kind:'empty',target:null};
 }
 function galaxyDispatchClick(event){
   event.preventDefault();event.stopImmediatePropagation();
   if(!data||copyInspector?.classList.contains('open'))return;
-  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top};
-  const liveNode=galaxyLiveNodeHit(mouse);if(liveNode){selectedId=liveNode.target.id;activeGroupKey=liveNode.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
-  const hit=galaxyPickHit(mouse);
+  const rect=galaxyCanvas.getBoundingClientRect(),mouse={x:event.clientX-rect.left,y:event.clientY-rect.top},hit=galaxyPickHit(mouse);
   if(hit.kind==='node'){selectedId=hit.target.id;activeGroupKey=hit.groupKey;activeType='';selectedEdgeKey='';selectedEdgeNodes=new Set();renderOverview();renderDetail();return}
   if(hit.kind==='group'){const groupKey=galaxyTrackToggleKey(hit.target);if(expandedRelationGroups.has(groupKey))expandedRelationGroups.delete(groupKey);else expandedRelationGroups.add(groupKey);activeGroupKey=groupKey;selectedEdgeKey='';renderOverview();renderDetail();return}
-  if(hit.kind==='edge'){selectedEdgeKey=hit.target.id;activeGroupKey=edgeCommunityKey(hit.target);renderOverview();renderDetail();if(relationKey(hit.target.type)==='copy_order')fetchCopyInspection(hit.target)}
+  if(hit.kind==='edge'){selectedEdgeKey=hit.target.id;activeGroupKey=edgeCommunityKey(hit.target);renderOverview();renderDetail();inspectionLoadRelation(hit.target);return}
 }
 function galaxyVisibleNodeHitPixels(node,scale){const depth=Math.min(4,accountDepth(node)),base=node.isSubject?19:node.type==='ib_user'?11:depth===1?10.5:depth===2?8.5:7,painted=base*2;return Math.max(nodeHitPixels(node,scale),(painted+7)*Math.max(scale,.01))}
 function galaxyRebuildHitFrame(){
@@ -578,6 +582,10 @@ const galaxyRenderDetailWithIbRebate=renderDetail;renderDetail=function(){galaxy
 // so a node selection cannot create a second, unsolicited aggregate panel.
 const galaxyRenderDetailWithRelationDisplay=renderDetail;renderDetail=function(){galaxyRenderDetailWithRelationDisplay();galaxyIbRebatePanel.hidden=true};
 async function refreshRelationDisplaySnapshot(edgeId){const value=Math.max(1,Math.min(100,Number(threshold.value)||20)),response=await fetch(apiUrl(value),{cache:'no-store'});if(!response.ok)throw new Error('关系图刷新失败');const next=await response.json();if(!next.ok)throw new Error((next.limitations||[])[0]||'关系图刷新失败');const nextNodes=(next.entities||[]).filter(item=>item.type==='account'||item.type==='ib_user');if(nextNodes.length||!data)data=galaxyMergeSnapshots(data,next);if(!data)return null;const edgeStillExists=!edgeId||(data.relationships||[]).some(edge=>String(edge.id||'')===String(edgeId));if(!edgeStillExists){selectedEdgeKey='';selectedEdgeNodes=new Set()}const hasSelected=(data.entities||[]).some(item=>item.id===selectedId);if(!hasSelected){selectedId=data.subjectId||(data.entities||[]).find(item=>item.isSubject)?.id||'';activeType='';view={scale:1,x:0,y:0}}fit();renderDetail();if(data.inProgress)queuePoll();return edgeStillExists?data?.revision:null}
-const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:params.toString(),snapshotVersion:data?.inProgress?undefined:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
+// Relation-display must use the exact expansion key currently rendered.  The
+// location query does not contain the user-adjusted threshold/range/toxic
+// filters, so passing it here previously started a different default-threshold
+// job and made a perfectly valid clicked line look like a stale snapshot.
+const inspectionLoadRelationEvidence=inspectionLoadRelation;inspectionLoadRelation=async edge=>{if(window.KdeskRelationDisplay&&target){return window.KdeskRelationDisplay.open({target,params:inspectionQuery().toString(),snapshotVersion:data?.inProgress?undefined:data?.revision,onSnapshotStale:refreshRelationDisplaySnapshot,onSelectMember:nodeId=>{if(!byId().has(nodeId))return;selectedId=nodeId;selectedEdgeKey='';selectedEdgeNodes=new Set();activeType='';renderOverview();renderDetail()}},String(edge.id||''))}return inspectionLoadRelationEvidence(edge)};
 window.addEventListener('pagehide',()=>{inspectionProfileController?.abort();inspectionRelationController?.abort()});
 </script></body></html>""" + relation_display_assets()

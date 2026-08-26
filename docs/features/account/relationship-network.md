@@ -64,7 +64,9 @@ process. The real Galaxy edge-click regression runs after the candidate service 
 metadata, readiness and source-root checks have passed; this prevents an old process from being used
 to judge newly introduced client behaviour. That regression accepts the graph-synchronised notice
 only when a live worker replaced the selected evidence; any technical relation-display error remains
-a release failure.
+a release failure. Its automated edge selection is restricted to a current raw source edge (an IB
+edge when directly drawable, otherwise the expanded same-CRM source edge), never a synthetic
+aggregate presentation edge.
 
 An account-to-account edge defaults to **single mode**. It shows only that account's facts for the
 clicked relation and its original evidence; it must not report a member count, total P/L or averaged
@@ -98,12 +100,12 @@ collapsed: the band label shows the complete component count while no member acc
 is drawn. Clicking the band boundary expands those members in the same band; every expanded account
 shows its numeric login above the point. The renderer restores the original `same_crm_user` evidence
 lines only when both endpoints are visible members of that same expanded band. Each such line keeps
-its source relation ID, so clicking it opens its auditable relation detail. It never draws every raw
-account/IB edge incident to a member: cross-community relations retain their normal star-track
-projection even while the band is expanded, preventing long cross-graph arrows and overlapping labels.
-Clicking the boundary again
-collapses the band. This is a layout-only projection and does not change evidence, propagation, score
-or expansion eligibility.
+its source relation ID, so clicking it opens the shared read-only relation display. It never redraws
+every raw account/IB edge incident to a member: cross-community relations retain their normal
+star-track projection even while the band is expanded, preventing long cross-graph arrows and
+overlapping labels. LastIP, IB, EA, Copy and every other relation stay ordinary lines: they cannot
+become or enlarge an orbit community. Clicking the boundary again collapses the band. This is a
+layout-only projection and does not change evidence, propagation, score or expansion eligibility.
 
 `跟单关系`, `开平仓同步` and `疑似对锁` remain distinct facts. Copy evidence requires an identified
 source/follower direction. Open/close synchronization is an undirected timing and behavior clue and is

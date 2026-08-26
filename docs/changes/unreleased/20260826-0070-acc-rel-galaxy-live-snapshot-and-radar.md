@@ -34,6 +34,13 @@ and only same-CRM controls can expand a relationship community.
 - Treat the graph-synchronised notice as the expected safe outcome when a live worker replaces the
   clicked edge during the browser interaction; technical relation-display error cards still fail the
   regression.
+- Make collapsed same-CRM boundaries win their own click target, then make an expanded band's source
+  evidence lines win before its boundary can collapse; this keeps both expansion and every visible
+  member evidence line deterministic.
+- Pass the exact live filter set (threshold, time range and Toxic option) to the relation-display
+  request, so a valid clicked edge cannot be judged stale by a different default expansion request.
+- Have the production browser check expand a same-CRM band and select a current raw same-CRM member
+  line, then require a populated shared relation table rather than a graph-update or technical error.
 
 ## Impact
 
